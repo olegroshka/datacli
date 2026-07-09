@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Environments
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Local data / caches (raw snapshots live in the btest sibling by default)
+/data/
+local_cache/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

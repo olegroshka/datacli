@@ -1,0 +1,32 @@
+[project]
+name = "datacli"
+version = "0.1.0"
+description = "Interactive data-operations shell + EODHD data-acquisition toolkit (extracted from btest)"
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.0",
+  "pyarrow>=14",
+  "requests>=2.31",
+  "cmd2>=2.4",
+  "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "black>=24.0",
+  "isort>=5.13",
+  "mypy>=1.10",
+  "pandas-stubs",
+]
+
+[tool.uv]
+# Runnable-scripts repo, not an installable package: uv manages the venv/deps
+# but does not try to build datacli itself.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.isort]
+profile = "black"
