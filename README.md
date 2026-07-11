@@ -240,8 +240,13 @@ See [`eodhd/README.md`](eodhd/README.md) for the full acquisition runbook
 
 ## Exploring the data
 
-Fast, entity-centric queries over the raw parquet — no SQL required. Each verb
-also works as a direct `eodhd/cli.py <verb>`.
+**Three ways to ask, in increasing flexibility:** entity verbs
+(`describe` / `find` / `rows` / `coverage`) for instant structured answers with no
+SQL; a raw **`sql`** escape hatch when you want full control; and the
+natural-language **[Raw Data Lab](#raw-data-lab-optional-llm-backed)** when you'd
+rather state the question than write the query. Everything runs over the raw parquet
+via a warm DuckDB connection, and each verb also works as a direct
+`eodhd/cli.py <verb>`.
 
 `find` fuzzy-searches tickers across every dataset:
 
@@ -305,74 +310,56 @@ many extra columns are riding along — handy after a provider adds fields.
 
 ## Raw Data Lab (optional, LLM-backed)
 
-A **grounded EDA copilot** for the pre-signal stage: ask the data questions in
-natural language and get back a *verified* answer with the exact query that
-produced it. The guiding rule is enforced in code, not the prompt — **the model
-never reports a number it didn't compute.** Every claim is backed by a read-only
-DuckDB query the agent had to write, run, and show. See
-[`lab/DESIGN.md`](lab/DESIGN.md) for the full design.
+A **grounded EDA copilot** for the pre-signal stage: state a question in plain
+English and get back a *verified* answer with the exact query behind every number.
+The rule is enforced in code, not the prompt — **the model never reports a number
+it didn't compute** (each claim is backed by a read-only query the agent had to
+write, run, and show). See [`lab/DESIGN.md`](lab/DESIGN.md) for the design.
 
 ```powershell
 uv sync --extra lab
-ollama pull qwen2.5-coder:7b        # local default; fits a 12GB GPU
+ollama pull qwen2.5-coder:7b        # free local model; fits a 12GB GPU
 ```
 
+**From a one-liner to a full investigation:**
+
 ```text
-eodhd> ask "which lanes have the worst dividend coverage, and why?"
-eodhd> agent macro-strategist "describe the current volatility regime from the tape"
-eodhd> investigate "post-dividend volume patterns in us_common"   # generator→skeptic→reporter
-eodhd> lab run coverage-audit --verify        # playbook -> reproducible report
-eodhd> lab agents          # the persona roster
-eodhd> lab skills          # the EDA playbooks
-eodhd> lab config          # models / budget / cache / provider status
+eodhd> ask "which lanes have the worst dividend coverage, and why?"      # quick grounded Q&A
+eodhd> agent microstructure "rank us_common by Amihud illiquidity this year"
+eodhd> agent macro-strategist "relate uk_eu drawdowns to the 10Y-2Y curve and HY spreads"
+eodhd> investigate "post-dividend volume patterns in us_common"          # generator→skeptic→reporter
+eodhd> lab run coverage-audit --verify         # a saved playbook -> reproducible report
+eodhd> lab agents · lab skills · lab config     # roster · playbooks · models/budget/keys
 ```
 
 - **Grounded loop** — plan → SQL → **read-only guard** → execute → narrate; the
-  answer shows each query and its result. A hard SQL guard rejects anything that
-  isn't a single `SELECT`/`WITH`.
-- **Personas & skills are files** — `lab/personas/*.toml` (role, model tier, tools)
-  and `lab/skills/*/SKILL.md` (EDA playbooks). Add one by dropping a file in. Ships
-  with `analyst`, `auditor`, `macro-strategist`, `microstructure`, `event-study`,
-  and a `skeptic` verifier — each scoped honestly to what EOD data can support.
-- **Verify & report** — `--verify` runs the **skeptic**, which independently
-  re-derives the numbers and issues a `CONFIRMED / REFUTED / UNCERTAIN` verdict;
-  `lab run` writes a **reproducible Markdown report** (embedded queries +
-  provenance) whose figures regenerate deterministically.
-- **Multi-agent investigations** — `investigate <topic>` runs a
-  **generator → skeptic → reporter** pipeline on one shared session budget, then
-  writes a combined report (synthesis + verified findings + verdict). The reporter
-  may only synthesise numbers the generator computed and the skeptic checked.
-- **Restricted code executor (opt-in)** — set `[lab].allow_python` and the `quant`
-  persona can run **restricted Python** on a query's result (subprocess + timeout +
-  restricted builtins/imports + no network) for distributions, correlations and a
-  plot that SQL can't express; figures embed in the report. Honestly a
-  *trusted-local* convenience, **not** a hardened security sandbox — off by default.
-- **Tiered, cost-aware models** — pick per persona (`local` Ollama, `cheap`,
-  `mid`, `strong`); the multi-agent pipeline routes different roles to different
-  models; and a persona can set `review_model` to do the SQL/reasoning legwork on
-  the cheap/local model but synthesise the FINAL answer with a stronger one
-  (grounded in the same evidence). A response cache and a hard per-session budget
-  keep spend bounded. API keys come from the environment, never from config.
-  - **Serious personas default to a serious model.** The investigation roles —
-    `skeptic`, `hypothesizer`, `reporter`, `macro-strategist`, `microstructure`,
-    `event-study` — run on Opus (`strong`) by default; the everyday `analyst` and
-    the mechanical `auditor` / `quant` stay on the free local model. Grounding
-    comes from the **SQL evidence, not the sampling temperature** — every number is
-    queried, so it's reproducible whatever the model does with prose. Opus/Sonnet
-    only accept `temperature=1`; LiteLLM runs with `drop_params=True` so a
-    `temperature=0` request is dropped rather than fatal. Override any persona's
-    `model` (or set `review_model` to do local legwork then synthesise on a
-    stronger tier) to trade cost for quality.
-
-- **Macro grounding (FRED + EODHD)** — `macro fetch --run` pulls **three** feeds
-  into read-only views: ~40 FRED market series (rates, curve, credit spreads, VIX,
-  FX, money, activity, conditions) → `macro`; EODHD cross-country indicators (GDP,
-  CPI, unemployment, real rates for a dozen countries) → `macro_country`; and EODHD
-  end-of-day index levels + FX (S&P 500, Nasdaq, FTSE, DAX, Nikkei, EUR/USD, …) →
-  `macro_market`. So the `macro-strategist` / `event-study` personas can join real
-  macro data to the equity tape instead of guessing. Fetches are **incremental**
-  (a failed series keeps its old data; `--full` overwrites). `macro list` /
-  `macro status` inspect it; `--provider fred|eodhd|all` selects the source.
+  answer shows each query and its result. The guard rejects anything that isn't a
+  single `SELECT`/`WITH`.
+- **A roster of lenses** — personas are files (`lab/personas/*.toml`): `analyst`,
+  `auditor`, `macro-strategist`, `microstructure`, `event-study`, `hypothesizer`,
+  `quant`, plus the `skeptic` and `reporter` — each scoped honestly to what EOD data
+  supports. Skills (`lab/skills/*/SKILL.md`) are reusable playbooks. Add your own by
+  dropping a file in.
+- **Verify, don't trust** — `investigate` runs a **generator → skeptic → reporter**
+  pipeline: the skeptic independently re-derives the numbers and votes
+  `CONFIRMED / REFUTED / UNCERTAIN`, then a **reproducible Markdown report**
+  (embedded queries + provenance) is written. One stage's model outage degrades to a
+  note — never a crashed run.
+- **Serious model where it matters** — the investigation roles default to **Opus**;
+  the everyday `analyst` and mechanical `auditor` / `quant` run on the **free local**
+  model. Grounding is temperature-independent (numbers are queried), so a strong
+  reasoning model is used freely. A per-session budget + response cache bound spend;
+  keys come from the environment, never config. Override any persona's `model` to
+  trade cost for quality.
+- **Macro join (FRED + EODHD)** — `macro fetch --run` pulls rates / curve / credit
+  spreads / VIX / FX (`macro`), cross-country GDP / CPI / unemployment
+  (`macro_country`), and index & FX levels (`macro_market`) into read-only views, so
+  the macro personas can join real macro data to the equity tape by date instead of
+  guessing.
+- **Restricted Python (opt-in)** — set `[lab].allow_python` and the `quant` persona
+  can run isolated Python (subprocess + timeout + no network) for stats and plots SQL
+  can't express. A *trusted-local* convenience, **not** a hardened sandbox — off by
+  default.
 
 Optional and lazily imported — the core shell runs without the `lab` extra.
 
