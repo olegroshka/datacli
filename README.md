@@ -353,6 +353,14 @@ eodhd> lab config          # models / budget / cache / provider status
   the cheap/local model but synthesise the FINAL answer with a stronger one
   (grounded in the same evidence). A response cache and a hard per-session budget
   keep spend bounded. API keys come from the environment, never from config.
+  - **Grounded steps honour `temperature=0`.** Reasoning tiers like Opus 4.8 and
+    Sonnet 5 only accept `temperature=1`, so a persona's grounded `model` is always
+    a temperature-0 tier (`local`/`cheap`) — the SQL and the numbers are
+    reproducible — while the temp-1 strong models are used **only** for the FINAL
+    synthesis via `review_model`, where non-determinism in the prose is harmless.
+    The `agents` roster shows this as `grounded → synthesis` (e.g. `cheap → strong`).
+    A test locks the invariant; a runtime note fires if you point a grounded model
+    at a temp-1-only tier.
 
 - **Macro grounding (FRED + EODHD)** — `macro fetch --run` pulls **three** feeds
   into read-only views: ~40 FRED market series (rates, curve, credit spreads, VIX,

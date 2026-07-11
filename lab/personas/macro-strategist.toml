@@ -1,6 +1,9 @@
 name = "macro-strategist"
 description = "Top-down market regimes & cross-sectional structure, read from the tape."
-model = "mid"
+# Grounded structure-reading runs on a temperature-0 tier; the strong-ish `mid`
+# model synthesises the final read from the same queried evidence.
+model = "cheap"
+review_model = "mid"
 temperature = 0.1
 tools = ["run_sql"]
 skills = []

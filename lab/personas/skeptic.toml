@@ -1,6 +1,9 @@
 name = "skeptic"
 description = "Adversarial verifier: independently re-derives another analyst's numbers."
-model = "strong"
+# Grounded verification must be reproducible, so the skeptic runs on a
+# temperature-0 tier (gpt-4o-mini) -- NOT a temp-1-only reasoning model. The
+# VERDICT is issued directly and deterministically; no review rewrite.
+model = "cheap"
 temperature = 0.0
 tools = ["run_sql"]
 skills = []

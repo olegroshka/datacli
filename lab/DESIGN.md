@@ -133,7 +133,9 @@ strong = "anthropic/claude-opus-4-8"
 ```toml
 name = "analyst"
 description = "Grounded EDA analyst for pre-signal data exploration."
-model = "mid"                     # a tier name from [lab.models] (or a raw model id)
+model = "local"                   # grounded tier: must honour temperature=0
+# review_model = "strong"         # optional: synthesise the FINAL answer with a
+                                  # temp-1 reasoning model, grounded in the evidence
 temperature = 0.0
 tools  = ["run_sql", "schema", "catalog_lookup", "list_lanes"]
 skills = ["coverage-audit", "distribution-profile", "corporate-action-consistency"]
@@ -148,6 +150,16 @@ audit raw data; you do NOT design trading signals. Hard rules:
 
 `lab/personas/auditor.toml` is the same shape with `model = "cheap"` (or `"local"`)
 and a role focused on coverage, missingness, and universe/state/output mismatches.
+
+**Grounded temperature invariant.** A persona's `model` runs the grounded loop at
+`temperature`, so it must be a tier that *honours* `temperature=0` — `local`
+(Ollama) or `cheap` (gpt-4o-mini). Reasoning tiers such as `mid` (Sonnet 5) and
+`strong` (Opus 4.8) only accept `temperature=1`, so they belong in `review_model`,
+which writes the FINAL synthesis from fixed evidence (non-determinism in the prose
+is harmless). `config.honors_temperature_zero()` encodes the classification, a test
+locks the invariant across the roster, and `LLM.complete` warns once if a grounded
+call lands on a temp-1-only model. LiteLLM runs with `drop_params=True` so a stray
+`temperature=0` on a temp-1 model is dropped rather than fatal.
 
 ### Skill — `lab/skills/coverage-audit/SKILL.md`
 

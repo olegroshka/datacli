@@ -26,6 +26,25 @@ DEFAULT_MODELS: dict[str, str] = {
     "strong": "anthropic/claude-opus-4-8",
 }
 
+# Reasoning tiers that only accept temperature=1 (they reject temperature=0). We
+# route grounded steps AROUND these so temperature=0 is honoured and the evidence
+# is reproducible; they are used only for the FINAL synthesis (`review_model`),
+# where non-determinism in the prose is acceptable.
+_TEMP1_PREFIX = ("o1", "o3", "o4", "gpt-5")
+_TEMP1_CONTAINS = ("claude-opus-4", "claude-sonnet-5")
+
+
+def honors_temperature_zero(model_id: str) -> bool:
+    """True if the model accepts ``temperature=0`` (i.e. can run deterministically).
+
+    Grounded reasoning must run on a model that honours ``temperature=0``; the
+    strong reasoning tiers that force ``temperature=1`` belong in ``review_model``.
+    """
+    mid = model_id.split("/", 1)[-1].lower()
+    if any(mid.startswith(prefix) for prefix in _TEMP1_PREFIX):
+        return False
+    return not any(token in mid for token in _TEMP1_CONTAINS)
+
 
 @dataclass(frozen=True)
 class Budget:

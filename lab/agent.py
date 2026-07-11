@@ -228,7 +228,10 @@ def _maybe_review(
         },
     ]
     try:
-        completion = llm.complete(messages, model=review, temperature=0.0)
+        # Synthesis: a strong temp-1 tier is expected here, so don't warn about it.
+        completion = llm.complete(
+            messages, model=review, temperature=0.0, deterministic=False
+        )
     except BudgetExceeded:
         return draft  # keep the draft rather than fail
     return completion.text.strip() or draft
