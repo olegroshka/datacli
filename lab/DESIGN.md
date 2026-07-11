@@ -1,6 +1,6 @@
 # Raw Data Lab — Design
 
-Status: **Phase 2 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
+Status: **Phase 2.5 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
 
 The Raw Data Lab turns datacli from a data-ops shell into a **grounded EDA
 copilot for the pre-signal stage** — the exploratory, data-quality, and
@@ -217,6 +217,11 @@ proceed. Nothing merges past a gate without a green review.
 - **Phase 2 — reports & skeptic.** `lab run <skill>` → reproducible
   markdown/notebook; an adversarial skeptic re-derives numeric claims before they
   enter a report. → *gate*
+- **Phase 2.5 — macro data adapter (FRED).** Widen grounding beyond the equity
+  tape: a registry of market-macro series, a fetcher to parquet, and `macro` views
+  the lab layers onto the eodhd connection. The macro-strategist / event-study
+  personas may join rates / curve / credit spreads / VIX / FX to the price data.
+  → *gate*
 - **Phase 3 — multi-agent & sandboxed Python.** Generator→Skeptic→Reporter
   handoffs; a resource-limited, network-off Python executor for richer profiling
   and plots; optional MCP server exposing the tools to external clients. → *gate*

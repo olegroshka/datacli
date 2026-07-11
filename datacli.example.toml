@@ -27,3 +27,12 @@ local  = "ollama/qwen2.5-coder:7b"  # fits a 12GB GPU; strong at text-to-SQL
 cheap  = "openai/gpt-4o-mini"
 mid    = "anthropic/claude-sonnet-5"
 strong = "anthropic/claude-opus-4-8"
+
+# ---------------------------------------------------------------------------
+# Macro data adapter (FRED). Needs a free FRED_API_KEY in the environment.
+# `macro fetch --run` pulls the registered series (macro/registry.py) into parquet
+# and the lab exposes them as `macro` views. Defaults to a `macro` sibling of the
+# eodhd data root; override here.
+# ---------------------------------------------------------------------------
+[macro]
+# data_root = "C:/path/to/your/data/raw/macro"

@@ -332,6 +332,11 @@ eodhd> lab config          # models / budget / cache / provider status
   `mid`, `strong`); a response cache and a hard per-session budget keep spend
   bounded. API keys come from the environment, never from config.
 
+- **Macro grounding (FRED)** — `macro fetch --run` (needs a free `FRED_API_KEY`)
+  pulls rates, the yield curve, credit spreads, VIX and FX into `macro` views, so
+  the `macro-strategist` / `event-study` personas can join real macro series to the
+  equity tape instead of guessing. `macro list` / `macro status` inspect it.
+
 Optional and lazily imported — the core shell runs without the `lab` extra.
 
 ## Configuration & where data lives

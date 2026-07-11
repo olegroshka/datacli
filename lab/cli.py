@@ -238,7 +238,7 @@ def _run_agent(
     from lab import report as lab_report
     from lab import verify as lab_verify
     from lab.models import LLM
-    from lab.tools import Tools, schema_context
+    from lab.tools import Tools
 
     console = _render.make_console()
     if not question.strip():
@@ -268,10 +268,12 @@ def _run_agent(
     import explore_eodhd  # type: ignore[import-not-found]
     import schema as sch  # type: ignore[import-not-found]
 
+    from lab import data as lab_data
+
     llm = LLM(cfg)  # shared across analyst + skeptic -> one session budget
-    con = explore_eodhd.connect()
+    con = lab_data.connect()  # eodhd views + macro (if fetched)
     tools = Tools(con)
-    schema_text = schema_context()
+    schema_text = lab_data.schema_text(con)
     provenance = {
         "persona": persona.name,
         "model": cfg.resolve_model(persona.model),

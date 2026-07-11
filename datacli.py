@@ -137,6 +137,13 @@ SOURCES: dict[str, SourcePlugin] = {"eodhd": EodhdPlugin()}
 class DataCli(cmd2.Cmd):
     """Interactive data-operations shell."""
 
+    # We replace cmd2's built-in `macro` (command-recording) with our data command.
+    # Neutralise its argparse subcommands so cmd2's subcommand registration doesn't
+    # try to attach `macro create/delete/list` to our non-argparse do_macro.
+    _macro_create = None  # type: ignore[assignment]
+    _macro_delete = None  # type: ignore[assignment]
+    _macro_list = None  # type: ignore[assignment]
+
     def __init__(self) -> None:
         # Register '/' as a shortcut that expands to nothing, so the leading slash
         # is optional (`/qc` == `qc`) for BOTH execution and tab-completion --
@@ -154,7 +161,6 @@ class DataCli(cmd2.Cmd):
         self._apply_prompt()
         for noisy in (
             "edit",
-            "macro",
             "run_pyscript",
             "run_script",
             "shell",
@@ -246,6 +252,12 @@ class DataCli(cmd2.Cmd):
         import lab.cli as lab_cli
 
         lab_cli.main(["agent", *self._argv(statement)])
+
+    def do_macro(self, statement: object) -> None:
+        """FRED macro data adapter:  macro list | status | fetch [--run]"""
+        import macro.cli as macro_cli
+
+        macro_cli.main(self._argv(statement))
 
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
@@ -366,6 +378,11 @@ class DataCli(cmd2.Cmd):
 
         return self._by_position(
             text, line, begidx, endidx, {1: tuple(registry.load_personas())}
+        )
+
+    def complete_macro(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(
+            text, line, begidx, endidx, {1: ("list", "status", "fetch")}
         )
 
     def complete_lab(self, text: str, line: str, begidx: int, endidx: int) -> Any:
