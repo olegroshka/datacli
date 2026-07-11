@@ -17,6 +17,8 @@ data_root = "C:/path/to/your/data/raw/eodhd"
 [lab]
 default_persona = "analyst"
 # cache_dir = ".lab_cache"          # relative to the repo; git-ignored
+# allow_python = false              # opt-in restricted code executor (plots/stats).
+                                    # Trusted-local convenience, NOT a security sandbox.
 
 [lab.budget]
 per_session_usd = 1.00              # hard ceiling; the agent stops when reached

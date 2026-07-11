@@ -75,6 +75,12 @@ def cmd_config(argv: list[str]) -> int:
     )
     table.add_row("cache", cache_val)
     table.add_row("reports", Text(str(cfg.reports_dir), style="dim"))
+    pyexec = (
+        Text("enabled (restricted, trusted-local)", style="yellow")
+        if cfg.allow_python
+        else Text("disabled — set [lab].allow_python to enable", style="dim")
+    )
+    table.add_row("python exec", pyexec)
     engine = Text("litellm", style="green" if _litellm_installed() else "red")
     if not _litellm_installed():
         engine.append("  — not installed (uv sync --extra lab)", style="dim")
@@ -297,11 +303,15 @@ def _run_agent(
             tools=tools,
             schema_text=schema_text,
             provenance=provenance,
+            allow_python=cfg.allow_python,
+            figure_dir=cfg.reports_dir / "figures",
         )
     except Exception as exc:  # model/connection errors -> friendly, not a traceback
         console.print(f"[red]{type(exc).__name__}[/red]: {exc}")
         return 1
     _render_answer(console, bundle, persona.name)
+    for fig in bundle.figures:
+        console.print(f"[dim]figure -> {fig}[/dim]")
 
     verdict = None
     if verify:
@@ -395,6 +405,8 @@ def _run_pipeline(topic: str, generator_name: str, *, report: bool = True) -> in
             tools=tools,
             schema_text=schema_text,
             provenance=prov,
+            allow_python=cfg.allow_python,
+            figure_dir=cfg.reports_dir / "figures",
         )
     except Exception as exc:
         console.print(f"[red]{type(exc).__name__}[/red]: {exc}")

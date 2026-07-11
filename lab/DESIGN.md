@@ -1,6 +1,6 @@
 # Raw Data Lab — Design
 
-Status: **Phase 3a complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
+Status: **Phase 3 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
 
 The Raw Data Lab turns datacli from a data-ops shell into a **grounded EDA
 copilot for the pre-signal stage** — the exploratory, data-quality, and
@@ -227,12 +227,16 @@ proceed. Nothing merges past a gate without a green review.
 - **Phase 3a — multi-agent pipeline.** `investigate <topic>` runs
   generator → skeptic → reporter (shared session budget, grounded synthesis) into a
   combined reproducible report. → *gate (done)*
-- **Phase 3b — richer analysis (pending a design call).** A *restricted* local
-  Python executor (subprocess + timeout + restricted builtins + soft network block)
-  for distributions/plots that SQL can't express -- scoped honestly as a
-  trusted-local tool, NOT a hardened security sandbox (hard to achieve on Windows).
-  Off by default. Optional MCP server exposing the read-only tools to external
-  clients. → *gate*
+- **Phase 3b — richer analysis (restricted executor).** A *restricted* local
+  Python executor (subprocess + wall-clock timeout + restricted builtins + import
+  whitelist + network block) runs analysis code on the last query's DataFrame for
+  distributions/plots SQL can't express; figures embed in the report. Off by
+  default (`[lab].allow_python`), gated per persona (`run_python` tool); the `quant`
+  persona uses it. Scoped honestly as a trusted-local tool, NOT a hardened security
+  sandbox. → *gate (done)*
+- **Later (optional).** MCP server exposing the read-only tools to external clients
+  (Claude Code / Cursor); incremental macro fetch; EODHD as a second FRED-style
+  time-series provider.
 
 ## 10. Risks & mitigations
 

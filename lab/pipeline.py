@@ -61,6 +61,8 @@ def investigate(
     tools: Any,
     schema_text: str,
     provenance: dict[str, Any] | None = None,
+    allow_python: bool = False,
+    figure_dir: Any = None,
 ) -> PipelineResult:
     base = dict(provenance or {})
 
@@ -71,6 +73,8 @@ def investigate(
         tools=tools,
         schema_text=schema_text,
         provenance={**base, "persona": generator.name, "role": "generator"},
+        allow_python=allow_python,
+        figure_dir=figure_dir,
     )
 
     if skeptic is not None:

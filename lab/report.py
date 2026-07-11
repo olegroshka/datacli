@@ -46,6 +46,16 @@ def _queries(findings: list[Finding], *, heading: str) -> list[str]:
     return lines
 
 
+def _figures(figures: list[str]) -> list[str]:
+    if not figures:
+        return []
+    lines = ["## Figures", ""]
+    for fig in figures:
+        name = Path(fig).name
+        lines += [f"![{name}](figures/{name})", ""]
+    return lines
+
+
 def build(
     question: str,
     answer: AnswerBundle,
@@ -75,6 +85,7 @@ def build(
     lines += ["## Answer", "", answer.narrative or "_(no answer)_", ""]
     lines += ["## Evidence", ""]
     lines += _queries(answer.findings, heading="Query")
+    lines += _figures(getattr(answer, "figures", []))
 
     if verdict is not None:
         lines += ["## Verification (skeptic)", "", f"**{verdict.label}**", ""]
@@ -114,6 +125,7 @@ def build_pipeline(result: Any, *, title: str, generated_at: str) -> str:
         "",
     ]
     lines += _queries(result.generator.findings, heading="Query")
+    lines += _figures(getattr(result.generator, "figures", []))
     lines += [
         "## Verification (skeptic)",
         "",

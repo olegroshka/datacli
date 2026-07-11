@@ -18,6 +18,7 @@ from lab.tools import Tools, result_to_text
 from lab.types import Finding
 
 _SQL_BLOCK = re.compile(r"```sql\s*(.+?)```", re.DOTALL | re.IGNORECASE)
+_PY_BLOCK = re.compile(r"```python\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 
 
 @dataclass
@@ -27,21 +28,35 @@ class AnswerBundle:
     steps: int = 0
     spent_usd: float = 0.0
     budget_hit: bool = False
+    figures: list[str] = field(default_factory=list)
 
 
-def _system_prompt(persona: Persona, schema_text: str, max_rows: int) -> str:
+def _system_prompt(
+    persona: Persona, schema_text: str, max_rows: int, *, python: bool
+) -> str:
+    py = (
+        "\n  2) a single ```python fenced block operating on `df` -- the LAST query's "
+        "result as a pandas DataFrame (pandas as pd, numpy as np, matplotlib.pyplot "
+        "as plt available). print() what you want returned; draw at most one figure. "
+        "The executor is restricted (no file/network); use it for stats/plots SQL "
+        "can't express, not to fetch data."
+        if python
+        else ""
+    )
+    final_num = "3" if python else "2"
     protocol = f"""
-You have ONE tool: read-only SQL over DuckDB views (each view has a `lane` column).
+Tools: read-only SQL over DuckDB views (each view has a `lane` column).{
+    " You may also run restricted Python on the last result." if python else ""}
 
 Answer with EXACTLY ONE of:
   1) a single ```sql fenced block with one read-only SELECT/WITH query -- I will run
-     it and return the columns and rows; or
-  2) a line starting with `FINAL:` followed by your grounded answer.
+     it and return the columns and rows;{py}
+  {final_num}) a line starting with `FINAL:` followed by your grounded answer.
 
 Rules:
 - Queries must be read-only (SELECT/WITH only); results are capped at {max_rows} rows.
-- Iterate: query, read the result, query again if needed, then FINAL.
-- NEVER put a number in FINAL that you did not see in a query result.
+- Iterate: query, read the result, query/analyse again if needed, then FINAL.
+- NEVER put a number in FINAL that you did not see in a query or python result.
 
 {schema_text}
 """.strip()
@@ -49,6 +64,9 @@ Rules:
 
 
 def _parse_action(text: str) -> tuple[str, str]:
+    py = _PY_BLOCK.search(text)
+    if py:
+        return "python", py.group(1).strip()
     match = _SQL_BLOCK.search(text)
     if match:
         return "sql", match.group(1).strip()
@@ -67,14 +85,19 @@ def run(
     schema_text: str,
     provenance: dict[str, Any] | None = None,
     max_steps: int = 5,
+    allow_python: bool = False,
+    figure_dir: Any = None,
 ) -> AnswerBundle:
     base = dict(provenance or {})
-    system = _system_prompt(persona, schema_text, tools.max_rows)
+    python_enabled = allow_python and "run_python" in persona.tools
+    system = _system_prompt(persona, schema_text, tools.max_rows, python=python_enabled)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": question},
     ]
     findings: list[Finding] = []
+    figures: list[str] = []
+    last_df: Any = None
 
     for step in range(1, max_steps + 1):
         try:
@@ -88,6 +111,7 @@ def run(
                 steps=step - 1,
                 spent_usd=llm.budget.spent_usd,
                 budget_hit=True,
+                figures=figures,
             )
 
         kind, payload = _parse_action(completion.text)
@@ -97,11 +121,28 @@ def run(
                 findings=findings,
                 steps=step,
                 spent_usd=llm.budget.spent_usd,
+                figures=figures,
             )
 
-        result = tools.run_sql(payload)
         messages.append({"role": "assistant", "content": completion.text})
+
+        if kind == "python":
+            feedback = _run_python_step(
+                payload,
+                last_df,
+                enabled=python_enabled,
+                figure_dir=figure_dir,
+                step=step,
+                figures=figures,
+            )
+            messages.append({"role": "user", "content": feedback})
+            continue
+
+        result = tools.run_sql(payload)
         if result.ok:
+            import pandas as pd
+
+            last_df = pd.DataFrame(result.rows, columns=result.columns)
             findings.append(
                 Finding(
                     claim="",
@@ -130,4 +171,36 @@ def run(
         findings=findings,
         steps=max_steps,
         spent_usd=llm.budget.spent_usd,
+        figures=figures,
     )
+
+
+def _run_python_step(
+    code: str,
+    last_df: Any,
+    *,
+    enabled: bool,
+    figure_dir: Any,
+    step: int,
+    figures: list[str],
+) -> str:
+    if not enabled:
+        return (
+            "Python execution is disabled. Use read-only SQL, or FINAL with what "
+            "you have."
+        )
+    if last_df is None:
+        return "Run a SQL query first; its result is provided to python as `df`."
+
+    from lab import pyexec
+
+    name = f"figure_{step}.png"
+    res = pyexec.run_code(code, last_df, figure_dir=figure_dir, figure_name=name)
+    if res.figure_path:
+        figures.append(res.figure_path)
+    if not res.ok:
+        return f"Python error: {res.error}\nFix it or FINAL with what you have."
+    note = res.stdout.strip() or "(no stdout)"
+    if res.figure_path:
+        note += f"\n[figure saved: {name}]"
+    return "Python result:\n" + note

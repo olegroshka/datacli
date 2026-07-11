@@ -40,6 +40,7 @@ class LabConfig:
     default_persona: str = "analyst"
     cache_dir: Path = REPO_ROOT / ".lab_cache"
     reports_dir: Path = REPO_ROOT / "lab_reports"
+    allow_python: bool = False  # opt-in restricted code executor (off by default)
     budget: Budget = field(default_factory=Budget)
     models: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_MODELS))
 
@@ -84,6 +85,7 @@ def load(path: Path = CONFIG_PATH) -> LabConfig:
         default_persona=str(section.get("default_persona", "analyst")),
         cache_dir=cache_path,
         reports_dir=reports_path,
+        allow_python=bool(section.get("allow_python", False)),
         budget=budget,
         models=models,
     )

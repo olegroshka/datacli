@@ -24,6 +24,7 @@ dev = [
 # core shell runs without it. `uv sync --extra lab` to enable the agents.
 lab = [
   "litellm>=1.50",
+  "matplotlib>=3.7",   # for the opt-in restricted code executor's plots
 ]
 
 [tool.uv]

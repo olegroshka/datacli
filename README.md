@@ -333,6 +333,11 @@ eodhd> lab config          # models / budget / cache / provider status
   **generator → skeptic → reporter** pipeline on one shared session budget, then
   writes a combined report (synthesis + verified findings + verdict). The reporter
   may only synthesise numbers the generator computed and the skeptic checked.
+- **Restricted code executor (opt-in)** — set `[lab].allow_python` and the `quant`
+  persona can run **restricted Python** on a query's result (subprocess + timeout +
+  restricted builtins/imports + no network) for distributions, correlations and a
+  plot that SQL can't express; figures embed in the report. Honestly a
+  *trusted-local* convenience, **not** a hardened security sandbox — off by default.
 - **Tiered, cost-aware models** — pick per persona (`local` Ollama, `cheap`,
   `mid`, `strong`); a response cache and a hard per-session budget keep spend
   bounded. API keys come from the environment, never from config.
