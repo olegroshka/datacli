@@ -328,6 +328,12 @@ def print_status(
     """
     from rich.text import Text
 
+    # Responsive: the full 10-column table needs ~132 cols. On narrower terminals
+    # drop the two least-critical columns (coverage ~ duplicates last_data for
+    # prices; fetched is metadata) so the essentials never truncate. Age + flag
+    # still carry the freshness signal.
+    wide = getattr(console, "width", 120) >= 132
+
     table = _render.minimal_table(
         title=f"EODHD status {_render.DIVIDER} as-of {as_of} "
         f"{_render.DIVIDER} stale >{stale_days}d"
@@ -335,8 +341,9 @@ def print_status(
     table.add_column("lane", no_wrap=True)
     table.add_column("dataset", no_wrap=True)
     table.add_column("last_data", no_wrap=True)
-    table.add_column("coverage", no_wrap=True)
-    table.add_column("fetched", no_wrap=True, style="dim")
+    if wide:
+        table.add_column("coverage", no_wrap=True)
+        table.add_column("fetched", no_wrap=True, style="dim")
     table.add_column("rows", justify="right", no_wrap=True)
     table.add_column("pairs", justify="right", no_wrap=True)
     table.add_column("age", justify="right", no_wrap=True)
@@ -363,18 +370,17 @@ def print_status(
         lane_cell = "" if r["lane"] == prev_lane else r["lane"]
         prev_lane = r["lane"]
 
-        table.add_row(
-            lane_cell,
-            dataset,
-            _date("last_data"),
-            _date("coverage"),
-            _fmt_fetched_short(r["fetched"]),
+        cells = [lane_cell, dataset, _date("last_data")]
+        if wide:
+            cells += [_date("coverage"), _fmt_fetched_short(r["fetched"])]
+        cells += [
             _render.fmt_compact(r["rows"]),
             _render.fmt_int(r["pairs"]),
             _render.age_cell(r["stale_days"]),
             _render.flag_cell(_flag(r)),
             _render.state_cell(r["status"]),
-        )
+        ]
+        table.add_row(*cells)
 
     console.print(table)
 
