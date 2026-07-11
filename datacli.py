@@ -138,7 +138,13 @@ class DataCli(cmd2.Cmd):
     """Interactive data-operations shell."""
 
     def __init__(self) -> None:
-        super().__init__(allow_cli_args=False)
+        # Register '/' as a shortcut that expands to nothing, so the leading slash
+        # is optional (`/qc` == `qc`) for BOTH execution and tab-completion --
+        # cmd2 resolves `/qc us_<tab>` to the qc completer natively.
+        super().__init__(
+            allow_cli_args=False,
+            shortcuts={**cmd2.DEFAULT_SHORTCUTS, "/": ""},
+        )
         self.current: str | None = None
         self.intro = (
             "datacli -- data operations shell. Type 'sources' to list, "
@@ -157,14 +163,6 @@ class DataCli(cmd2.Cmd):
         ):
             if noisy not in self.hidden_commands:
                 self.hidden_commands.append(noisy)
-
-    # ----- slash-optional: strip a leading '/' before cmd2 parses ----------- #
-    def onecmd_plus_hooks(self, line, *args, **kwargs):  # type: ignore[override]
-        if isinstance(line, str):
-            stripped = line.lstrip()
-            if stripped.startswith("/"):
-                line = stripped[1:]
-        return super().onecmd_plus_hooks(line, *args, **kwargs)
 
     def _apply_prompt(self) -> None:
         self.prompt = f"{self.current}> " if self.current else "data> "
@@ -227,7 +225,7 @@ class DataCli(cmd2.Cmd):
         # (cls/clear) actually resets the buffer, which is what users expect.
         os.system("cls" if os.name == "nt" else "clear")
 
-    def do_exit(self, statement: object) -> bool:
+    def do_exit(self, statement: Any) -> bool:
         """Exit the shell (alias for quit)."""
         return bool(self.do_quit(statement))
 
@@ -284,6 +282,66 @@ class DataCli(cmd2.Cmd):
     def do_sql(self, statement: object) -> None:
         """Raw DuckDB query over the datasets:  sql "select ..." """
         self._dispatch("sql", statement)
+
+    # ----- tab-completion (known lanes / datasets / sub-commands) ------------ #
+    _LANES = (*LANES, "all")
+    _QC_DATASETS = ("prices", "dividends", "splits")
+    _ROW_DATASETS = ("prices", "dividends", "splits", "fundamentals")
+    _CONFIG_ACTIONS = ("show", "get", "set")
+    _FETCH_FLAGS = (
+        "--fast",
+        "--run",
+        "--days",
+        "--datasets",
+        "--with-fundamentals",
+        "--no-universe",
+        "--keep-going",
+        "--full-refresh",
+        "--to",
+        "--limit",
+        "--tickers",
+    )
+
+    def _arg_pos(self, line: str, begidx: int, endidx: int) -> int:
+        """1-based position of the argument being completed (the command is 0)."""
+        tokens, _ = self.tokens_for_completion(line, begidx, endidx)
+        return max(len(tokens) - 1, 0)
+
+    def _by_position(
+        self,
+        text: str,
+        line: str,
+        begidx: int,
+        endidx: int,
+        by_pos: dict[int, tuple[str, ...]],
+    ) -> Any:
+        """Complete against the choice list for the current positional argument."""
+        choices = by_pos.get(self._arg_pos(line, begidx, endidx), ())
+        return self.basic_complete(text, line, begidx, endidx, choices)
+
+    def complete_qc(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(
+            text, line, begidx, endidx, {1: self._LANES, 2: self._QC_DATASETS}
+        )
+
+    def complete_status(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(text, line, begidx, endidx, {1: self._LANES})
+
+    def complete_rows(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(text, line, begidx, endidx, {2: self._ROW_DATASETS})
+
+    def complete_config(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(
+            text, line, begidx, endidx, {1: self._CONFIG_ACTIONS, 2: ("data-root",)}
+        )
+
+    def complete_fetch(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self.basic_complete(
+            text, line, begidx, endidx, [*self._LANES, *self._FETCH_FLAGS]
+        )
+
+    def complete_source(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self.basic_complete(text, line, begidx, endidx, [*SOURCES, *LOAD_ONLY])
 
 
 def main() -> int:

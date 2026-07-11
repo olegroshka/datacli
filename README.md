@@ -58,7 +58,10 @@ eodhd> /fetch --fast --run      # bulk refresh (minutes, not hours)
 eodhd> /qc                      # raw-data quality triage (all lanes)
 eodhd> /qc us_common splits     # ... drill into one lane + dataset
 ```
-The leading `/` is optional. `help` lists commands; `quit` exits. Explore verbs
+The leading `/` is optional. `help` lists commands; `quit` (or `exit`) leaves;
+`clear` wipes the screen. **Tab-completion** knows the known sets — `qc us_<tab>`
+completes lanes, `qc us_common <tab>` completes datasets, and `status`/`rows`/
+`config`/`fetch`/`source` complete their arguments too. Explore verbs
 (`describe`/`find`/`rows`/`coverage`/`sql`) run in-process against a warm DuckDB
 connection, so repeated queries are snappy.
 
