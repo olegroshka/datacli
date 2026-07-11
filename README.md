@@ -413,10 +413,15 @@ Design principles:
 ## Development
 
 ```powershell
-uv run pytest -q          # run the test suite
+uv sync --extra dev --extra lab   # tests + the lab agents in one venv
+uv run pytest -q                  # run the test suite (needs the dev extra)
 uv run black . ; uv run isort .   # format
 uv run mypy eodhd datacli.py      # type-check
 ```
+
+> Combine extras: `uv sync --extra lab` alone drops the dev deps (pytest), which
+> makes `uv run pytest` skip the DuckDB-backed tests. Use
+> `uv sync --extra dev --extra lab` for the full dev + agents environment.
 
 **Black-box scenario harness** — `scripts/blackbox.py` drives the real commands as
 subprocesses and checks their output; it's both a CI-style test and a slow-motion
