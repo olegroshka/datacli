@@ -21,6 +21,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import difflib
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -43,6 +44,8 @@ DELEGATED: dict[str, str] = {
 # Scripts behind the positional-scoped commands (status/qc take `[lane] [dataset]`).
 STATUS_SCRIPT = "status_eodhd.py"
 QC_SCRIPT = "report_eodhd_raw_quality.py"
+# Datasets QC can drill into (mirrors report_eodhd_raw_quality.py's --dataset).
+QC_DATASETS = ("prices", "dividends", "splits")
 
 # Entity-centric exploration verbs, all handled by explore_eodhd.py (DuckDB).
 EXPLORE_COMMANDS = ("describe", "find", "rows", "coverage", "sql", "schema", "reindex")
@@ -465,9 +468,33 @@ def _leading_positionals(argv: list[str]) -> tuple[list[str], list[str]]:
     return argv[:i], argv[i:]
 
 
+def _bad_choice(kind: str, value: str, choices: tuple[str, ...]) -> None:
+    """Print a friendly, styled error with a 'did you mean' hint (not argparse's
+    full-usage dump), so a shell typo like ``qc us_common divivdends`` reads well.
+    """
+    from rich.text import Text
+
+    console = _render.make_console()
+    msg = Text()
+    msg.append("unknown ", style="red")
+    msg.append(kind, style="red")
+    msg.append(f" '{value}'", style="bold red")
+    near = difflib.get_close_matches(value, choices, n=1)
+    if near:
+        msg.append("  — did you mean ", style="dim")
+        msg.append(near[0], style="green")
+        msg.append("?", style="dim")
+    console.print(msg)
+    console.print(Text(f"choices: {', '.join(choices)}", style="dim"))
+
+
 def cmd_status(argv: list[str]) -> int:
     """`status [lane] [--flags]` -> status_eodhd.py with --lane translated."""
     pos, rest = _leading_positionals(argv)
+    lanes = (*LANES, "all")
+    if pos and pos[0] not in lanes:
+        _bad_choice("lane", pos[0], lanes)
+        return 2
     forwarded = (["--lane", pos[0]] if pos else []) + rest
     return delegate(STATUS_SCRIPT, forwarded)
 
@@ -476,8 +503,16 @@ def cmd_qc(argv: list[str]) -> int:
     """`qc [lane] [dataset] [--flags]` -> report_eodhd_raw_quality.py.
 
     First positional is the lane, second the dataset drill-down; both optional.
+    Validated up front so a typo yields a friendly hint, not an argparse dump.
     """
     pos, rest = _leading_positionals(argv)
+    lanes = (*LANES, "all")
+    if pos and pos[0] not in lanes:
+        _bad_choice("lane", pos[0], lanes)
+        return 2
+    if len(pos) > 1 and pos[1] not in QC_DATASETS:
+        _bad_choice("dataset", pos[1], QC_DATASETS)
+        return 2
     forwarded: list[str] = []
     if pos:
         forwarded += ["--lane", pos[0]]

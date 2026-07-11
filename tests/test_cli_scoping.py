@@ -56,3 +56,30 @@ def test_cmd_status_translates_lane(monkeypatch: object) -> None:
     calls = _capture(monkeypatch)
     cli.cmd_status(["uk_eu"])
     assert calls == [(cli.STATUS_SCRIPT, ["--lane", "uk_eu"])]
+
+
+def test_cmd_qc_rejects_bad_dataset_without_delegating(monkeypatch: object) -> None:
+    calls = _capture(monkeypatch)
+    rc = cli.cmd_qc(["us_common", "divivdends"])  # typo
+    assert rc == 2
+    assert calls == []  # never forwarded to the audit script
+
+
+def test_cmd_qc_rejects_bad_lane(monkeypatch: object) -> None:
+    calls = _capture(monkeypatch)
+    rc = cli.cmd_qc(["us_comon"])  # typo
+    assert rc == 2
+    assert calls == []
+
+
+def test_cmd_status_rejects_bad_lane(monkeypatch: object) -> None:
+    calls = _capture(monkeypatch)
+    rc = cli.cmd_status(["wibble"])
+    assert rc == 2
+    assert calls == []
+
+
+def test_qc_all_is_a_valid_lane(monkeypatch: object) -> None:
+    calls = _capture(monkeypatch)
+    cli.cmd_qc(["all", "prices"])
+    assert calls == [(cli.QC_SCRIPT, ["--lane", "all", "--dataset", "prices"])]
