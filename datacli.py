@@ -230,10 +230,22 @@ class DataCli(cmd2.Cmd):
         return bool(self.do_quit(statement))
 
     def do_lab(self, statement: object) -> None:
-        """Raw Data Lab (grounded EDA copilot):  lab config"""
+        """Raw Data Lab management:  lab config | agents | skills | run <skill>"""
         import lab.cli as lab_cli  # lazy: keeps shell startup free of lab deps
 
         lab_cli.main(self._argv(statement))
+
+    def do_ask(self, statement: object) -> None:
+        """Ask the default lab persona a grounded question:  ask "worst coverage?" """
+        import lab.cli as lab_cli
+
+        lab_cli.main(["ask", *self._argv(statement)])
+
+    def do_agent(self, statement: object) -> None:
+        """Ask a named persona:  agent auditor "check us_common splits" """
+        import lab.cli as lab_cli
+
+        lab_cli.main(["agent", *self._argv(statement)])
 
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
@@ -349,8 +361,27 @@ class DataCli(cmd2.Cmd):
     def complete_source(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self.basic_complete(text, line, begidx, endidx, [*SOURCES, *LOAD_ONLY])
 
+    def complete_agent(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        from lab import registry
+
+        return self._by_position(
+            text, line, begidx, endidx, {1: tuple(registry.load_personas())}
+        )
+
     def complete_lab(self, text: str, line: str, begidx: int, endidx: int) -> Any:
-        return self._by_position(text, line, begidx, endidx, {1: ("config",)})
+        pos = self._arg_pos(line, begidx, endidx)
+        if pos == 1:
+            return self.basic_complete(
+                text, line, begidx, endidx, ("config", "agents", "skills", "run")
+            )
+        tokens, _ = self.tokens_for_completion(line, begidx, endidx)
+        if pos == 2 and len(tokens) > 1 and tokens[1] == "run":
+            from lab import registry
+
+            return self.basic_complete(
+                text, line, begidx, endidx, tuple(registry.load_skills())
+            )
+        return self.basic_complete(text, line, begidx, endidx, ())
 
 
 def main() -> int:

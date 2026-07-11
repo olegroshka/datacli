@@ -54,6 +54,7 @@ questions — all behind a single REPL with tab-completion.
 - [Data acquisition](#data-acquisition-status--fetch--qc) ·
   [Exploring the data](#exploring-the-data)
 - [Schema & versioning](#schema--versioning) ·
+  [Raw Data Lab](#raw-data-lab-optional-llm-backed) ·
   [Configuration](#configuration--where-data-lives)
 - [Architecture](#architecture) · [Development](#development) ·
   [Provenance](#provenance)
@@ -292,6 +293,40 @@ eodhd> reindex       # rebuild the query catalog after fetching new data
 
 `schema` reports, per dataset, which canonical columns are present/missing and how
 many extra columns are riding along — handy after a provider adds fields.
+
+## Raw Data Lab (optional, LLM-backed)
+
+A **grounded EDA copilot** for the pre-signal stage: ask the data questions in
+natural language and get back a *verified* answer with the exact query that
+produced it. The guiding rule is enforced in code, not the prompt — **the model
+never reports a number it didn't compute.** Every claim is backed by a read-only
+DuckDB query the agent had to write, run, and show. See
+[`lab/DESIGN.md`](lab/DESIGN.md) for the full design.
+
+```powershell
+uv sync --extra lab
+ollama pull qwen2.5-coder:7b        # local default; fits a 12GB GPU
+```
+
+```text
+eodhd> ask "which lanes have the worst dividend coverage, and why?"
+eodhd> agent auditor "flag corporate-action anomalies in us_common"
+eodhd> lab run coverage-audit
+eodhd> lab agents          # the persona roster        (analyst, auditor, …)
+eodhd> lab skills          # the EDA playbooks
+eodhd> lab config          # models / budget / cache / provider status
+```
+
+- **Grounded loop** — plan → SQL → **read-only guard** → execute → narrate; the
+  answer shows each query and its result. A hard SQL guard rejects anything that
+  isn't a single `SELECT`/`WITH`.
+- **Personas & skills are files** — `lab/personas/*.toml` (role, model tier, tools)
+  and `lab/skills/*/SKILL.md` (EDA playbooks). Add one by dropping a file in.
+- **Tiered, cost-aware models** — pick per persona (`local` Ollama, `cheap`,
+  `mid`, `strong`); a response cache and a hard per-session budget keep spend
+  bounded. API keys come from the environment, never from config.
+
+Optional and lazily imported — the core shell runs without the `lab` extra.
 
 ## Configuration & where data lives
 
