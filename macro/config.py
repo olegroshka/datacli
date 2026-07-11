@@ -13,7 +13,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "datacli.toml"
-OBSERVATIONS = "observations.parquet"
+
+FRED_PARQUET = "fred_observations.parquet"
+EODHD_PARQUET = "eodhd_indicators.parquet"
+OBSERVATIONS = FRED_PARQUET  # back-compat (Phase 2.5)
 
 _EODHD = REPO_ROOT / "eodhd"
 if str(_EODHD) not in sys.path:
@@ -42,5 +45,13 @@ def macro_root() -> Path:
     return Path(override) if override else (_eodhd_root().parent / "macro")
 
 
-def observations_path() -> Path:
-    return macro_root() / OBSERVATIONS
+def fred_path() -> Path:
+    return macro_root() / FRED_PARQUET
+
+
+def eodhd_path() -> Path:
+    return macro_root() / EODHD_PARQUET
+
+
+def observations_path() -> Path:  # back-compat
+    return fred_path()

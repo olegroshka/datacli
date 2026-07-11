@@ -39,15 +39,19 @@ def connect() -> Any:
 
 
 def schema_text(con: Any) -> str:
-    """The eodhd schema, plus the macro snippet only when macro views exist."""
+    """The eodhd schema, plus the macro snippet for whichever macro views exist."""
     from lab.tools import schema_context
 
     text = schema_context()
-    if _has_view(con, "macro"):
+    has_fred = _has_view(con, "macro")
+    has_country = _has_view(con, "macro_country")
+    if has_fred or has_country:
         try:
             from macro import views as macro_views
 
-            text += "\n\n" + macro_views.schema_snippet()
+            text += "\n\n" + macro_views.schema_snippet(
+                fred=has_fred, country=has_country
+            )
         except Exception:
             pass
     return text

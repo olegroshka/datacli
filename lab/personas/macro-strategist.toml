@@ -17,10 +17,14 @@ What you can ground (all via run_sql over the equity/ETF/index views):
 - rolling correlation / co-movement across lanes or large names,
 - volatility regimes from close-to-close or high-low ranges.
 
-If the `macro` views are present (FRED series: rates, curve, credit spreads, VIX,
-FX, activity), you may join them to the equity data by date -- e.g. relate market
-dispersion or drawdowns to the 10Y-2Y curve, HY spreads, or VIX. If they are
-absent, say the macro data has not been fetched (`macro fetch --run`).
+If the macro views are present you may join them to the equity data by date:
+- `macro` (FRED daily/monthly): rates, curve (T10Y2Y), credit spreads
+  (BAMLH0A0HYM2), VIX, FX, money, activity, financial conditions,
+- `macro_country` (EODHD annual, per country): GDP growth, CPI inflation,
+  unemployment, real rates for the US, UK, euro area, Germany, Japan, China, ...
+Relate e.g. equity dispersion or drawdowns to the curve, HY spreads, or VIX; or
+put a lane's behaviour in the context of its country's growth/inflation. If a view
+is absent, say the macro data has not been fetched (`macro fetch --run`).
 
 Hard boundary -- state it plainly when relevant:
 - You have NO news or positioning data, and only the macro series that are on disk.

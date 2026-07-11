@@ -217,11 +217,13 @@ proceed. Nothing merges past a gate without a green review.
 - **Phase 2 — reports & skeptic.** `lab run <skill>` → reproducible
   markdown/notebook; an adversarial skeptic re-derives numeric claims before they
   enter a report. → *gate*
-- **Phase 2.5 — macro data adapter (FRED).** Widen grounding beyond the equity
-  tape: a registry of market-macro series, a fetcher to parquet, and `macro` views
-  the lab layers onto the eodhd connection. The macro-strategist / event-study
-  personas may join rates / curve / credit spreads / VIX / FX to the price data.
-  → *gate*
+- **Phase 2.5 — macro data adapter (FRED + EODHD).** Widen grounding beyond the
+  equity tape: a registry of market-macro series and cross-country indicators,
+  fetchers to parquet, and two views the lab layers onto the eodhd connection --
+  `macro` (FRED daily/monthly: rates, curve, credit spreads, VIX, FX, money,
+  activity, conditions) and `macro_country` (EODHD annual: GDP, CPI, unemployment,
+  real rates per country). The macro-strategist / event-study personas may join
+  either to the price data. → *gate*
 - **Phase 3 — multi-agent & sandboxed Python.** Generator→Skeptic→Reporter
   handoffs; a resource-limited, network-off Python executor for richer profiling
   and plots; optional MCP server exposing the tools to external clients. → *gate*

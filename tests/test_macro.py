@@ -26,7 +26,18 @@ def test_registry_has_market_series() -> None:
 
 def test_config_paths() -> None:
     assert macro_config.macro_root().name == "macro"
-    assert macro_config.observations_path().name == "observations.parquet"
+    assert macro_config.fred_path().name == "fred_observations.parquet"
+    assert macro_config.eodhd_path().name == "eodhd_indicators.parquet"
+
+
+def test_registry_has_both_providers() -> None:
+    assert len(reg.FRED_SERIES) >= 30  # expanded set
+    assert "gdp_growth_annual" in reg.EODHD_INDICATORS
+    assert {"USA", "GBR", "EMU"} <= set(reg.EODHD_COUNTRIES)
+    # every (country, indicator) pair is enumerated for fetching
+    assert len(reg.eodhd_pairs()) == len(reg.EODHD_COUNTRIES) * len(
+        reg.EODHD_INDICATORS
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -100,7 +111,7 @@ def test_macro_views_register_and_query(tmp_path: Path) -> None:
         key="k",
     )
     con = duckdb.connect()
-    assert views.register(con, root=tmp_path) is True
+    assert views.register(con, root=tmp_path)["macro"] is True
     # the joined `macro` view enriches observations with registry metadata
     cat = con.execute(
         "SELECT category FROM macro WHERE series_id = 'DGS10' LIMIT 1"
@@ -113,12 +124,70 @@ def test_macro_views_register_and_query(tmp_path: Path) -> None:
 def test_register_noop_without_data(tmp_path: Path) -> None:
     duckdb = pytest.importorskip("duckdb")
     con = duckdb.connect()
-    assert views.register(con, root=tmp_path) is False  # no parquet yet
+    assert views.register(con, root=tmp_path) == {
+        "macro": False,
+        "macro_country": False,
+    }
 
 
 def test_schema_snippet_lists_views() -> None:
     snippet = views.schema_snippet()
-    assert "macro(series_id" in snippet and "categories:" in snippet
+    assert "macro(series_id" in snippet and "macro_country(country" in snippet
+    # can describe just one surface
+    fred_only = views.schema_snippet(country=False)
+    assert "macro_country" not in fred_only
+
+
+# --------------------------------------------------------------------------- #
+# EODHD provider (mocked HTTP) + macro_country view
+# --------------------------------------------------------------------------- #
+_EODHD_PAYLOAD = [
+    {"Date": "2020-01-01", "Value": "2.5"},
+    {"Date": "2021-01-01", "Value": "."},  # missing -> skipped
+    {"Date": "2022-01-01", "Value": "3.1"},
+]
+
+
+def test_eodhd_fetch_indicator_parses() -> None:
+    from macro import eodhd
+
+    out = eodhd.fetch_indicator(
+        _Session(_EODHD_PAYLOAD), "USA", "gdp_growth_annual", "k"
+    )
+    assert out == [("2020-01-01", 2.5), ("2022-01-01", 3.1)]
+
+
+def test_eodhd_refresh_and_country_view(tmp_path: Path) -> None:
+    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("pyarrow")
+    from macro import eodhd
+
+    result = eodhd.refresh(
+        [("USA", "gdp_growth_annual"), ("GBR", "gdp_growth_annual")],
+        run=True,
+        root=tmp_path,
+        session=_Session(_EODHD_PAYLOAD),
+        key="k",
+    )
+    assert result["series_with_data"] == 2 and result["rows"] == 4
+    con = duckdb.connect()
+    assert views.register(con, root=tmp_path)["macro_country"] is True
+    cols = [
+        d[0] for d in con.execute("SELECT * FROM macro_country LIMIT 0").description
+    ]
+    assert cols == [
+        "country",
+        "country_name",
+        "indicator",
+        "indicator_name",
+        "category",
+        "date",
+        "value",
+    ]
+    name = con.execute(
+        "SELECT country_name FROM macro_country WHERE country = 'USA' LIMIT 1"
+    ).fetchone()
+    assert name == ("United States",)
 
 
 # --------------------------------------------------------------------------- #

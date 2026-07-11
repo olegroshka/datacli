@@ -332,10 +332,13 @@ eodhd> lab config          # models / budget / cache / provider status
   `mid`, `strong`); a response cache and a hard per-session budget keep spend
   bounded. API keys come from the environment, never from config.
 
-- **Macro grounding (FRED)** — `macro fetch --run` (needs a free `FRED_API_KEY`)
-  pulls rates, the yield curve, credit spreads, VIX and FX into `macro` views, so
-  the `macro-strategist` / `event-study` personas can join real macro series to the
-  equity tape instead of guessing. `macro list` / `macro status` inspect it.
+- **Macro grounding (FRED + EODHD)** — `macro fetch --run` pulls ~40 FRED market
+  series (rates, curve, credit spreads, VIX, FX, money, activity, conditions) into
+  a `macro` view, and EODHD cross-country indicators (GDP, CPI, unemployment, real
+  rates for a dozen countries) into a `macro_country` view, so the `macro-strategist`
+  / `event-study` personas can join real macro data to the equity tape instead of
+  guessing. `macro list` / `macro status` inspect it; `--provider fred|eodhd|all`
+  selects the source.
 
 Optional and lazily imported — the core shell runs without the `lab` extra.
 
