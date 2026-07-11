@@ -29,6 +29,13 @@ class EodhdIndicator:
     category: str
 
 
+@dataclass(frozen=True)
+class EodhdMarket:
+    symbol: str  # EODHD symbol, e.g. GSPC.INDX / EURUSD.FOREX
+    name: str
+    category: str
+
+
 # --------------------------------------------------------------------------- #
 # FRED: market / US macro time series
 # --------------------------------------------------------------------------- #
@@ -122,8 +129,29 @@ EODHD_COUNTRIES: dict[str, str] = {
 }
 
 
+# EODHD end-of-day market series (index levels, FX, benchmark rates) -- the
+# market-context complement to FRED's US series. Symbols use EODHD conventions.
+EODHD_MARKET: dict[str, EodhdMarket] = {
+    "GSPC.INDX": EodhdMarket("GSPC.INDX", "S&P 500", "index"),
+    "IXIC.INDX": EodhdMarket("IXIC.INDX", "Nasdaq Composite", "index"),
+    "DJI.INDX": EodhdMarket("DJI.INDX", "Dow Jones Industrial", "index"),
+    "FTSE.INDX": EodhdMarket("FTSE.INDX", "FTSE 100", "index"),
+    "GDAXI.INDX": EodhdMarket("GDAXI.INDX", "DAX", "index"),
+    "N225.INDX": EodhdMarket("N225.INDX", "Nikkei 225", "index"),
+    "HSI.INDX": EodhdMarket("HSI.INDX", "Hang Seng", "index"),
+    "EURUSD.FOREX": EodhdMarket("EURUSD.FOREX", "EUR/USD", "fx"),
+    "GBPUSD.FOREX": EodhdMarket("GBPUSD.FOREX", "GBP/USD", "fx"),
+    "USDJPY.FOREX": EodhdMarket("USDJPY.FOREX", "USD/JPY", "fx"),
+    "AUDUSD.FOREX": EodhdMarket("AUDUSD.FOREX", "AUD/USD", "fx"),
+}
+
+
 def fred_ids() -> list[str]:
     return list(FRED_SERIES)
+
+
+def eodhd_market_symbols() -> list[str]:
+    return list(EODHD_MARKET)
 
 
 def eodhd_pairs() -> list[tuple[str, str]]:

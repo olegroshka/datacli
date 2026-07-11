@@ -345,13 +345,15 @@ eodhd> lab config          # models / budget / cache / provider status
   (grounded in the same evidence). A response cache and a hard per-session budget
   keep spend bounded. API keys come from the environment, never from config.
 
-- **Macro grounding (FRED + EODHD)** — `macro fetch --run` pulls ~40 FRED market
-  series (rates, curve, credit spreads, VIX, FX, money, activity, conditions) into
-  a `macro` view, and EODHD cross-country indicators (GDP, CPI, unemployment, real
-  rates for a dozen countries) into a `macro_country` view, so the `macro-strategist`
-  / `event-study` personas can join real macro data to the equity tape instead of
-  guessing. `macro list` / `macro status` inspect it; `--provider fred|eodhd|all`
-  selects the source.
+- **Macro grounding (FRED + EODHD)** — `macro fetch --run` pulls **three** feeds
+  into read-only views: ~40 FRED market series (rates, curve, credit spreads, VIX,
+  FX, money, activity, conditions) → `macro`; EODHD cross-country indicators (GDP,
+  CPI, unemployment, real rates for a dozen countries) → `macro_country`; and EODHD
+  end-of-day index levels + FX (S&P 500, Nasdaq, FTSE, DAX, Nikkei, EUR/USD, …) →
+  `macro_market`. So the `macro-strategist` / `event-study` personas can join real
+  macro data to the equity tape instead of guessing. Fetches are **incremental**
+  (a failed series keeps its old data; `--full` overwrites). `macro list` /
+  `macro status` inspect it; `--provider fred|eodhd|all` selects the source.
 
 Optional and lazily imported — the core shell runs without the `lab` extra.
 

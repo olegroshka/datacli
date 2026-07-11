@@ -45,12 +45,13 @@ def schema_text(con: Any) -> str:
     text = schema_context()
     has_fred = _has_view(con, "macro")
     has_country = _has_view(con, "macro_country")
-    if has_fred or has_country:
+    has_market = _has_view(con, "macro_market")
+    if has_fred or has_country or has_market:
         try:
             from macro import views as macro_views
 
             text += "\n\n" + macro_views.schema_snippet(
-                fred=has_fred, country=has_country
+                fred=has_fred, country=has_country, market=has_market
             )
         except Exception:
             pass

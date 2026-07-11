@@ -133,6 +133,46 @@ def test_fred_refresh_skips_failing_series(tmp_path: Path) -> None:
     assert frame is not None and set(frame["series_id"]) == {"DGS10", "DGS2"}
 
 
+def test_macro_incremental_preserves_failed_series(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow")
+    # first fetch: both series land
+    fred.refresh(
+        ["DGS10", "DGS2"], run=True, root=tmp_path, session=_Session(_PAYLOAD), key="k"
+    )
+    # incremental re-fetch where DGS2 now fails -> its data must survive
+    fred.refresh(
+        ["DGS10", "DGS2"],
+        run=True,
+        root=tmp_path,
+        session=_FlakySession(_PAYLOAD, {"DGS2"}),
+        key="k",
+    )
+    kept = fred.load(tmp_path)
+    assert kept is not None and set(kept["series_id"]) == {"DGS10", "DGS2"}
+    # --full overwrites, so the failing series is dropped
+    fred.refresh(
+        ["DGS10", "DGS2"],
+        run=True,
+        root=tmp_path,
+        session=_FlakySession(_PAYLOAD, {"DGS2"}),
+        key="k",
+        full_refresh=True,
+    )
+    rebuilt = fred.load(tmp_path)
+    assert rebuilt is not None and set(rebuilt["series_id"]) == {"DGS10"}
+
+
+def test_merge_on_upserts_and_retains() -> None:
+    from macro import util
+
+    pd = pytest.importorskip("pandas")
+    existing = pd.DataFrame({"k": ["a", "b"], "v": [1, 2]})
+    new = pd.DataFrame({"k": ["b", "c"], "v": [20, 3]})
+    merged = util.merge_on(existing, new, ["k"])
+    got = dict(zip(merged["k"], merged["v"]))
+    assert got == {"a": 1, "b": 20, "c": 3}  # b updated, a retained, c added
+
+
 # --------------------------------------------------------------------------- #
 # views over a fixture (real DuckDB)
 # --------------------------------------------------------------------------- #
@@ -163,6 +203,7 @@ def test_register_noop_without_data(tmp_path: Path) -> None:
     assert views.register(con, root=tmp_path) == {
         "macro": False,
         "macro_country": False,
+        "macro_market": False,
     }
 
 
@@ -224,6 +265,51 @@ def test_eodhd_refresh_and_country_view(tmp_path: Path) -> None:
         "SELECT country_name FROM macro_country WHERE country = 'USA' LIMIT 1"
     ).fetchone()
     assert name == ("United States",)
+
+
+# --------------------------------------------------------------------------- #
+# EODHD end-of-day market series + macro_market view
+# --------------------------------------------------------------------------- #
+_EOD_PAYLOAD = [
+    {"date": "2020-01-01", "close": 100.5},
+    {"date": "2020-01-02", "close": 101.2},
+]
+
+
+def test_eodhd_fetch_eod_parses() -> None:
+    from macro import eodhd
+
+    out = eodhd.fetch_eod(_Session(_EOD_PAYLOAD), "GSPC.INDX", "k")
+    assert out == [("2020-01-01", 100.5), ("2020-01-02", 101.2)]
+
+
+def test_eodhd_market_refresh_and_view(tmp_path: Path) -> None:
+    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("pyarrow")
+    from macro import eodhd
+
+    result = eodhd.refresh_market(
+        ["GSPC.INDX", "EURUSD.FOREX"],
+        run=True,
+        root=tmp_path,
+        session=_Session(_EOD_PAYLOAD),
+        key="k",
+    )
+    assert result["symbols_with_data"] == 2 and result["rows"] == 4
+    con = duckdb.connect()
+    assert views.register(con, root=tmp_path)["macro_market"] is True
+    cols = [d[0] for d in con.execute("SELECT * FROM macro_market LIMIT 0").description]
+    assert cols == ["symbol", "name", "category", "date", "value"]
+    cat = con.execute(
+        "SELECT category FROM macro_market WHERE symbol = 'GSPC.INDX' LIMIT 1"
+    ).fetchone()
+    assert cat == ("index",)
+
+
+def test_registry_has_market_symbols() -> None:
+    assert {"GSPC.INDX", "EURUSD.FOREX"} <= set(reg.EODHD_MARKET)
+    assert reg.EODHD_MARKET["GSPC.INDX"].category == "index"
+    assert reg.eodhd_market_symbols()
 
 
 # --------------------------------------------------------------------------- #

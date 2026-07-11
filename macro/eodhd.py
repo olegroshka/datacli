@@ -15,7 +15,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from macro.config import EODHD_PARQUET
+from macro.config import EODHD_MARKET_PARQUET, EODHD_PARQUET
 
 EODHD_BASE = "https://eodhd.com/api"
 HTTP_TIMEOUT = 30
@@ -70,8 +70,12 @@ def refresh(
     root: Path,
     session: Any = None,
     key: str | None = None,
+    full_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Fetch each (country, indicator) and write ``eodhd_indicators.parquet``."""
+    """Fetch each (country, indicator) and upsert into ``eodhd_indicators.parquet``.
+
+    Incremental by default (merge over existing on country/indicator/date).
+    """
     all_pairs = list(pairs)
     if not run:
         return {"run": False, "planned": len(all_pairs)}
@@ -98,6 +102,10 @@ def refresh(
         rows.extend((country, indicator, date, value) for date, value in observations)
 
     frame = pd.DataFrame(rows, columns=["country", "indicator", "date", "value"])
+    if not full_refresh:
+        from macro.util import merge_on
+
+        frame = merge_on(load(root), frame, ["country", "indicator", "date"])
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     path = root / EODHD_PARQUET
@@ -113,6 +121,98 @@ def refresh(
 
 def load(root: Path) -> pd.DataFrame | None:
     path = Path(root) / EODHD_PARQUET
+    if not path.exists():
+        return None
+    try:
+        return pd.read_parquet(path)
+    except Exception:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# EODHD end-of-day market series (index levels / FX)
+# --------------------------------------------------------------------------- #
+def fetch_eod(
+    session: Any, symbol: str, key: str, *, start: str = "2000-01-01"
+) -> list[tuple[str, float]]:
+    """Return ``[(date, close)]`` for one EODHD symbol (index / FX / etc.)."""
+    resp = session.get(
+        f"{EODHD_BASE}/eod/{symbol}",
+        params={"api_token": key, "fmt": "json", "from": start},
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, list):
+        return []
+    out: list[tuple[str, float]] = []
+    for rec in data:
+        date = rec.get("date")
+        close = rec.get("close", rec.get("adjusted_close"))
+        if date is None or close in (None, ""):
+            continue
+        try:
+            out.append((str(date)[:10], float(close)))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def refresh_market(
+    symbols: Iterable[str],
+    *,
+    run: bool,
+    root: Path,
+    session: Any = None,
+    key: str | None = None,
+    start: str = "2000-01-01",
+    full_refresh: bool = False,
+) -> dict[str, Any]:
+    """Fetch each symbol's daily close and upsert into ``eodhd_market.parquet``."""
+    syms = list(symbols)
+    if not run:
+        return {"run": False, "planned": len(syms)}
+    key = key or api_key()
+    if not key:
+        raise RuntimeError(
+            "EODHD API key not set (EODHD_API_KEY or the eodhd key file)"
+        )
+    if session is None:
+        import requests
+
+        session = requests.Session()
+
+    rows: list[tuple[str, str, float]] = []
+    with_data = 0
+    for symbol in syms:
+        try:
+            observations = fetch_eod(session, symbol, key, start=start)
+        except Exception:
+            observations = []
+        if observations:
+            with_data += 1
+        rows.extend((symbol, date, value) for date, value in observations)
+
+    frame = pd.DataFrame(rows, columns=["symbol", "date", "value"])
+    if not full_refresh:
+        from macro.util import merge_on
+
+        frame = merge_on(load_market(root), frame, ["symbol", "date"])
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / EODHD_MARKET_PARQUET
+    frame.to_parquet(path, index=False)
+    return {
+        "run": True,
+        "symbols": len(syms),
+        "symbols_with_data": with_data,
+        "rows": int(len(frame)),
+        "path": str(path),
+    }
+
+
+def load_market(root: Path) -> pd.DataFrame | None:
+    path = Path(root) / EODHD_MARKET_PARQUET
     if not path.exists():
         return None
     try:

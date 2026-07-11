@@ -16,6 +16,7 @@ CONFIG_PATH = REPO_ROOT / "datacli.toml"
 
 FRED_PARQUET = "fred_observations.parquet"
 EODHD_PARQUET = "eodhd_indicators.parquet"
+EODHD_MARKET_PARQUET = "eodhd_market.parquet"
 OBSERVATIONS = FRED_PARQUET  # back-compat (Phase 2.5)
 
 _EODHD = REPO_ROOT / "eodhd"
@@ -51,6 +52,10 @@ def fred_path() -> Path:
 
 def eodhd_path() -> Path:
     return macro_root() / EODHD_PARQUET
+
+
+def eodhd_market_path() -> Path:
+    return macro_root() / EODHD_MARKET_PARQUET
 
 
 def observations_path() -> Path:  # back-compat

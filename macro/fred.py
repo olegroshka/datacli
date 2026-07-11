@@ -59,8 +59,14 @@ def refresh(
     start: str = DEFAULT_START,
     session: Any = None,
     key: str | None = None,
+    full_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Fetch each series and write ``<root>/observations.parquet`` (full refresh)."""
+    """Fetch each series and upsert into ``<root>/observations.parquet``.
+
+    Incremental by default: new rows merge over existing on ``(series_id, date)``,
+    so a series that fails this run keeps its previously-fetched data. Pass
+    ``full_refresh=True`` to overwrite.
+    """
     ids = list(series_ids)
     if not run:
         return {"run": False, "planned": ids}
@@ -86,6 +92,10 @@ def refresh(
         rows.extend((series_id, date, value) for date, value in observations)
 
     frame = pd.DataFrame(rows, columns=["series_id", "date", "value"])
+    if not full_refresh:
+        from macro.util import merge_on
+
+        frame = merge_on(load(root), frame, ["series_id", "date"])
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     path = root / OBSERVATIONS

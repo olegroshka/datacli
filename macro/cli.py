@@ -57,6 +57,16 @@ def cmd_list(argv: list[str]) -> int:
         ind_table.add_row(i.indicator, i.name, i.category)
     console.print(ind_table)
     console.print(Text("countries: " + ", ".join(reg.EODHD_COUNTRIES), style="dim"))
+
+    mkt_table = _render.boxed_table(
+        title=f"EODHD market series ({len(reg.EODHD_MARKET)})"
+    )
+    mkt_table.add_column("symbol", style="cyan", no_wrap=True)
+    mkt_table.add_column("name")
+    mkt_table.add_column("category", no_wrap=True)
+    for m in reg.EODHD_MARKET.values():
+        mkt_table.add_row(m.symbol, m.name, m.category)
+    console.print(mkt_table)
     return 0
 
 
@@ -125,12 +135,48 @@ def _eodhd_status(console: object, root: Path) -> None:
     console.print(table)  # type: ignore[attr-defined]
 
 
+def _market_status(console: object, root: Path) -> None:
+    from rich.text import Text
+
+    frame = eodhd.load_market(root)
+    if frame is None or frame.empty:
+        console.print(  # type: ignore[attr-defined]
+            "[yellow]no EODHD market data[/yellow] — fetch with:  macro fetch --provider eodhd --run"
+        )
+        return
+    stats = frame.groupby("symbol")["date"].agg(["size", "min", "max"]).to_dict("index")
+    table = _render.minimal_table(
+        title=f"EODHD market · {frame['symbol'].nunique()} symbols · {len(frame):,} rows"
+    )
+    for col in ("symbol", "name"):
+        table.add_column(col, no_wrap=True)
+    table.add_column("rows", justify="right", no_wrap=True)
+    table.add_column("first", no_wrap=True)
+    table.add_column("last", no_wrap=True)
+    for sym, m in reg.EODHD_MARKET.items():
+        row = stats.get(sym)
+        if row is not None:
+            table.add_row(
+                sym,
+                m.name,
+                f"{int(row['size']):,}",
+                str(row["min"])[:10],
+                str(row["max"])[:10],
+            )
+        else:
+            table.add_row(
+                sym, m.name, Text("-", style="dim"), Text("missing", style="yellow"), ""
+            )
+    console.print(table)  # type: ignore[attr-defined]
+
+
 def cmd_status(argv: list[str]) -> int:
     """Show what macro data is on disk, per provider."""
     console = _render.make_console()
     root = macro_config.macro_root()
     _fred_status(console, root)
     _eodhd_status(console, root)
+    _market_status(console, root)
     return 0
 
 
@@ -140,6 +186,7 @@ def cmd_fetch(argv: list[str]) -> int:
 
     console = _render.make_console()
     run = "--run" in argv
+    full = "--full" in argv  # overwrite instead of the default incremental merge
     provider = _flag_value(argv, "--provider", "all")
     if provider not in ("fred", "eodhd", "all"):
         console.print(f"[red]unknown provider '{provider}'[/red] (fred|eodhd|all)")
@@ -163,7 +210,8 @@ def cmd_fetch(argv: list[str]) -> int:
             key = bool(eodhd.api_key())
             console.print(
                 Text(
-                    f"  EODHD  {len(reg.eodhd_pairs())} pairs   "
+                    f"  EODHD  {len(reg.eodhd_pairs())} indicator pairs + "
+                    f"{len(reg.EODHD_MARKET)} market symbols   "
                     f"key: {'set' if key else 'NOT SET'}",
                     style="" if key else "red",
                 )
@@ -174,7 +222,7 @@ def cmd_fetch(argv: list[str]) -> int:
     rc = 0
     if do_fred:
         try:
-            r = fred.refresh(reg.fred_ids(), run=True, root=root)
+            r = fred.refresh(reg.fred_ids(), run=True, root=root, full_refresh=full)
             msg = f"FRED: {r['series_with_data']}/{r['series']} series · {r['rows']:,} rows"
             if r["failed"]:
                 msg += f" · failed: {', '.join(r['failed'])}"
@@ -184,11 +232,21 @@ def cmd_fetch(argv: list[str]) -> int:
             rc = 1
     if do_eodhd:
         try:
-            r = eodhd.refresh(reg.eodhd_pairs(), run=True, root=root)
+            r = eodhd.refresh(reg.eodhd_pairs(), run=True, root=root, full_refresh=full)
             console.print(
                 Text(
-                    f"EODHD: {r['series_with_data']}/{r['pairs']} series with data · "
+                    f"EODHD indicators: {r['series_with_data']}/{r['pairs']} · "
                     f"{r['rows']:,} rows",
+                    style="green",
+                )
+            )
+            rm = eodhd.refresh_market(
+                reg.eodhd_market_symbols(), run=True, root=root, full_refresh=full
+            )
+            console.print(
+                Text(
+                    f"EODHD market: {rm['symbols_with_data']}/{rm['symbols']} · "
+                    f"{rm['rows']:,} rows",
                     style="green",
                 )
             )
@@ -205,7 +263,8 @@ def top_help() -> str:
         "Commands:\n"
         "  list                          FRED series + EODHD indicators\n"
         "  status                        What macro data is on disk\n"
-        "  fetch [--provider X] [--run]  Fetch (X = fred | eodhd | all; dry-run default)\n"
+        "  fetch [--provider X] [--run] [--full]\n"
+        "                                Fetch (X = fred|eodhd|all; incremental unless --full)\n"
     )
 
 

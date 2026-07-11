@@ -16,7 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from macro import registry as reg
-from macro.config import EODHD_PARQUET, FRED_PARQUET, macro_root
+from macro.config import (
+    EODHD_MARKET_PARQUET,
+    EODHD_PARQUET,
+    FRED_PARQUET,
+    macro_root,
+)
 
 
 def _values(rows: list[tuple[str, ...]]) -> str:
@@ -78,6 +83,28 @@ def _register_eodhd(con: Any, root: Path, indicators: dict, countries: dict) -> 
     return True
 
 
+def _register_market(con: Any, root: Path, symbols: dict) -> bool:
+    path = root / EODHD_MARKET_PARQUET
+    if not path.exists() or not symbols:
+        return False
+    con.execute(
+        "CREATE OR REPLACE VIEW macro_market_obs AS "
+        f"SELECT symbol, CAST(date AS DATE) AS date, value "
+        f"FROM read_parquet('{path.as_posix()}')"
+    )
+    meta = _values([(m.symbol, m.name, m.category) for m in symbols.values()])
+    con.execute(
+        "CREATE OR REPLACE VIEW macro_market_meta AS "
+        f"SELECT * FROM (VALUES {meta}) v(symbol, name, category)"
+    )
+    con.execute(
+        "CREATE OR REPLACE VIEW macro_market AS "
+        "SELECT o.symbol, m.name, m.category, o.date, o.value "
+        "FROM macro_market_obs o LEFT JOIN macro_market_meta m USING (symbol)"
+    )
+    return True
+
+
 def register(con: Any, *, root: Path | None = None) -> dict[str, bool]:
     """Register whichever macro surfaces have data. Returns ``{view: registered}``."""
     base = Path(root) if root is not None else macro_root()
@@ -86,16 +113,24 @@ def register(con: Any, *, root: Path | None = None) -> dict[str, bool]:
         "macro_country": _register_eodhd(
             con, base, reg.EODHD_INDICATORS, reg.EODHD_COUNTRIES
         ),
+        "macro_market": _register_market(con, base, reg.EODHD_MARKET),
     }
 
 
-def schema_snippet(*, fred: bool = True, country: bool = True) -> str:
+def schema_snippet(
+    *, fred: bool = True, country: bool = True, market: bool = True
+) -> str:
     parts = ["Macro views (join to equities/each other by date):"]
     if fred:
         parts += [
             "- macro(series_id, name, category, date, value)  [FRED market series]",
             f"  categories: {', '.join(reg.categories())}",
             "  examples: DGS10, T10Y2Y, VIXCLS, BAMLH0A0HYM2, DTWEXBGS",
+        ]
+    if market:
+        parts += [
+            "- macro_market(symbol, name, category, date, value)  [EODHD EOD levels]",
+            "  index levels + FX: GSPC.INDX, IXIC.INDX, FTSE.INDX, EURUSD.FOREX, ...",
         ]
     if country:
         inds = ", ".join(reg.EODHD_INDICATORS)
