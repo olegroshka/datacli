@@ -135,3 +135,29 @@ attention goes to *what to ask*, not *how to ask it*.
 the promise directly and was polished further by this test. For the LLM lab, the
 interaction surface is right and the safety rails are proven; the remaining proof is
 a one-command install away.
+
+## Automated harness (`scripts/blackbox.py`)
+
+The manual pass above is now a **repeatable, logged harness** that doubles as a
+demo. It drives the *real* command entry points as subprocesses (a true black box —
+real process, real output, real data), captures each command's output, checks
+expectations, and writes a JSONL + Markdown transcript under `.datacli_logs/`.
+
+```powershell
+uv run python scripts/blackbox.py --check          # assert + exit code (CI)   -> 12/12 pass
+uv run python scripts/blackbox.py --demo           # slow-motion, shell-styled  (screencast)
+uv run python scripts/blackbox.py --check --live   # also run the LLM scenarios (needs the lab extra + a model)
+uv run python scripts/blackbox.py --only S1,S2     # a subset
+```
+
+- **`--check`** currently passes **12/12** deterministic steps (S1–S3 + S5's macro
+  steps); the two LLM steps (S4, S5·investigate) auto-skip unless `--live`.
+- **`--demo`** types each command at a shell prompt and prints its output slowly —
+  a reproducible walkthrough / screencast script.
+- Building the harness immediately surfaced a real bug: capturing the commands'
+  UTF-8 output with the Windows default (cp1252) silently dropped whole outputs —
+  fixed by decoding as UTF-8 (exactly the kind of thing manual eyeballing misses).
+
+**Session logging.** The shell also writes an always-on, per-session command
+transcript to `.datacli_logs/session_<ts>.log` (time · source context · command)
+for observability — independent of the harness.

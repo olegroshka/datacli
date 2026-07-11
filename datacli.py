@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import cmd2
+from cmd2 import plugin
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE / "eodhd"))
@@ -169,6 +170,33 @@ class DataCli(cmd2.Cmd):
         ):
             if noisy not in self.hidden_commands:
                 self.hidden_commands.append(noisy)
+
+        from datetime import datetime
+
+        self._session_stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.register_postcmd_hook(self._log_command)
+
+    def _log_command(self, data: plugin.PostcommandData) -> plugin.PostcommandData:
+        """cmd2 post-command hook: append each command to a per-session log.
+
+        A lightweight, always-on transcript for observability -- one tab-separated
+        line per command (time, source context, raw input). Never breaks the shell.
+        """
+        try:
+            from datetime import datetime
+
+            raw = (getattr(data.statement, "raw", None) or str(data.statement)).strip()
+            if raw:
+                logdir = _HERE / ".datacli_logs"
+                logdir.mkdir(exist_ok=True)
+                stamp = datetime.now().isoformat(timespec="seconds")
+                with (logdir / f"session_{self._session_stamp}.log").open(
+                    "a", encoding="utf-8"
+                ) as fh:
+                    fh.write(f"{stamp}\t{self.current or '-'}\t{raw}\n")
+        except Exception:
+            pass
+        return data
 
     def _apply_prompt(self) -> None:
         self.prompt = f"{self.current}> " if self.current else "data> "

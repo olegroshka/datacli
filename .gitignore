@@ -20,6 +20,7 @@ datacli.toml
 local_cache/
 .lab_cache/
 lab_reports/
+.datacli_logs/
 *.log
 
 # OS / editor

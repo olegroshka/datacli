@@ -418,6 +418,15 @@ uv run black . ; uv run isort .   # format
 uv run mypy eodhd datacli.py      # type-check
 ```
 
+**Black-box scenario harness** — `scripts/blackbox.py` drives the real commands as
+subprocesses and checks their output; it's both a CI-style test and a slow-motion
+demo. See [`SCENARIOS.md`](SCENARIOS.md).
+
+```powershell
+uv run python scripts/blackbox.py --check     # assert + exit code (12/12 pass)
+uv run python scripts/blackbox.py --demo      # slow-motion screencast
+```
+
 ## Provenance
 
 Extracted from the `btest` sibling repository (the `scripts/eodhd/` toolkit plus
