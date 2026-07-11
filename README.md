@@ -1,19 +1,70 @@
 # datacli
 
-An interactive data-operations shell and data-acquisition toolkit, extracted from
-[`btest`](../btest). It manages downloading, refreshing, and quality-checking raw
-market data from external providers — and lets you explore it with fast ad-hoc
-queries.
+**An interactive data-operations shell for market data** — download, refresh,
+quality-check and explore raw provider snapshots from one cohesive, colour-coded
+terminal UI.
 
-## Layout
+datacli turns a directory of raw parquet/CSV snapshots into a queryable,
+auditable dataset. It ships a registry-driven acquisition toolkit for
+[EODHD](https://eodhd.com) (prices, dividends, splits, fundamentals across US and
+UK/EU equities, ETFs and indices) and a DuckDB-backed explorer for fast, ad-hoc
+questions — all behind a single REPL with tab-completion.
 
-- `datacli.py` — the interactive shell (a cmd2 + Rich REPL).
-- `eodhd/` — the EODHD toolkit: registry-driven fetchers, unified CLI, status
-  reporter, QC, DuckDB-backed explorer, and the bulk fast-refresh path. See
-  `eodhd/README.md`.
-- `tests/` — unit tests.
+```text
+                                     EODHD status · as-of 2026-07-11 · stale >7d
 
-## Setup
+ lane        dataset            last_data    coverage     fetched         rows   pairs   age   flag      state
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ us_common   ● prices           2026-07-08   2026-07-08   07-09 11:06   12.66M   2,595    3d   ✓ ok      ok 2,593 · empty 2
+             ● dividends        2026-07-09   2026-07-09   07-09 07:50   168.7K   2,595    2d   ✓ ok      ok 1,895 · empty 700
+             ● splits           2026-07-07   2026-07-08   07-08 19:33     5.9K   2,581    3d   ✓ ok      ok 1,879 · empty 702
+             ● fundamentals_q   2026-07-02   -            07-08 19:33    1.21M   6,124    9d   ⚠ STALE   ok 5,895 · empty 229
+
+3 fresh · 1 stale · 0 absent · ≈14.05M rows across 4 datasets
+```
+
+---
+
+## Highlights
+
+- **One shell, every operation** — a cmd2 + Rich REPL with source contexts,
+  tab-completion, and slash-optional commands (`qc` == `/qc`).
+- **Registry-driven acquisition** — lanes and datasets live in a single registry;
+  add one entry and every command (status, refresh, QC) picks it up. No hardcoded
+  dataset names.
+- **Freshness at a glance** — a colour-coded *as-of* dashboard that measures
+  staleness against the correct anchor per dataset kind (prices vs. events).
+- **Actionable QC** — a triage view that flags structural issues and tells you the
+  fix (`targeted_rerun` vs. `full_refresh`), scoped by lane and dataset.
+- **Ask questions, not SQL** — `describe` / `find` / `rows` / `coverage`, plus a raw
+  `sql` escape hatch, all over a warm DuckDB connection.
+- **Schema-versioned & evolution-safe** — projected views NULL-fill or rename-alias
+  columns so queries stay stable as a provider's schema drifts.
+- **Fast refresh** — bulk end-of-day endpoints turn an hours-long per-ticker pull
+  into minutes.
+- **Cohesive by design** — every command shares one console and palette: dataset
+  hues, severity glyphs, freshness colours, and degrades cleanly under `NO_COLOR`
+  or a pipe.
+
+## Contents
+
+- [Requirements](#requirements) · [Install](#install) ·
+  [Quickstart](#quickstart-point-datacli-at-your-own-data)
+- [The shell](#the-shell) · [Command reference](#command-reference)
+- [Data acquisition](#data-acquisition-status--fetch--qc) ·
+  [Exploring the data](#exploring-the-data)
+- [Schema & versioning](#schema--versioning) ·
+  [Configuration](#configuration--where-data-lives)
+- [Architecture](#architecture) · [Development](#development) ·
+  [Provenance](#provenance)
+
+## Requirements
+
+- **Python ≥ 3.11**
+- [**uv**](https://docs.astral.sh/uv/) for environment and dependency management
+- An **EODHD API key** (for fetching; exploring existing snapshots needs no key)
+
+## Install
 
 ```powershell
 uv sync --extra dev
@@ -21,8 +72,8 @@ uv sync --extra dev
 
 ## Quickstart: point datacli at your own data
 
-If you cloned this repo and already have EODHD raw snapshots on disk, three steps
-get you from clone to answered question:
+Already have EODHD raw snapshots on disk? Three steps take you from clone to an
+answered question:
 
 ```powershell
 uv sync --extra dev
@@ -37,11 +88,23 @@ uv run python eodhd/cli.py reindex
 uv run python eodhd/cli.py describe VAR.OL
 ```
 
-`config` with no argument shows the resolved data root and where it came from
-(env var, config file, or the `../btest` default). Resolution precedence:
-
+```text
+VAR.OL  ->  lane(s): uk_eu
+                                    VAR.OL
+┌──────────────┬─────────┬──────┬────────────┬────────────┬──────────┬───────┐
+│ dataset      │ present │ rows │ first      │ last(data) │ coverage │ state │
+├──────────────┼─────────┼──────┼────────────┼────────────┼──────────┼───────┤
+│ prices       │ · no    │    - │ -          │ -          │ -        │ -     │
+│ dividends    │ · no    │    - │ -          │ -          │ -        │ -     │
+│ splits       │ · no    │    - │ -          │ -          │ -        │ -     │
+│ fundamentals │ ✓ yes   │   68 │ 2020-12-31 │ 2025-09-30 │ -        │ ok    │
+└──────────────┴─────────┴──────┴────────────┴────────────┴──────────┴───────┘
 ```
-EODHD_DATA_ROOT env var  >  datacli.toml [eodhd].data_root  >  ../btest default
+
+Resolution precedence for the data root:
+
+```text
+EODHD_DATA_ROOT env var   >   datacli.toml [eodhd].data_root   >   ../btest default
 ```
 
 ## The shell
@@ -49,82 +112,253 @@ EODHD_DATA_ROOT env var  >  datacli.toml [eodhd].data_root  >  ../btest default
 ```powershell
 uv run python datacli.py
 ```
+
+```text
+data>  sources                  # list data sources
+data>  source eodhd             # enter a source context -> eodhd>
+eodhd> status                   # colour-coded as-of dashboard (all lanes)
+eodhd> status us_common         # ... scoped to one lane
+eodhd> fetch --fast --run       # bulk refresh (minutes, not hours)
+eodhd> qc us_common splits      # quality triage, drilled into one dataset
+eodhd> describe VAR.OL          # everything about one ticker
 ```
-data>  /sources                 # list data sources
-data>  /source eodhd            # enter a source context -> eodhd>
-eodhd> /status                  # colour-coded as-of dashboard (all lanes)
-eodhd> /status us_common        # ... scoped to one lane
-eodhd> /fetch --fast --run      # bulk refresh (minutes, not hours)
-eodhd> /qc                      # raw-data quality triage (all lanes)
-eodhd> /qc us_common splits     # ... drill into one lane + dataset
+
+`sources` lists the available adapters and the commands each exposes:
+
+```text
+                                           data sources
+┌─────────┬───────────────────────────────────────────┬───────────────────────────────────────────┐
+│ source  │ summary                                   │ commands                                  │
+├─────────┼───────────────────────────────────────────┼───────────────────────────────────────────┤
+│ eodhd   │ US/UK-EU equities, ETFs, indices,         │ status fetch qc lanes probe describe find │
+│         │ fundamentals                              │ rows coverage sql config schema reindex   │
+│ fred    │ FRED economic series (adapter; plugin     │ load-only (no ops tooling yet)            │
+│         │ deferred)                                 │                                           │
+│ yahoo   │ Yahoo Finance                             │ load-only (no ops tooling yet)            │
+│ csv     │ Local CSV files                           │ load-only (no ops tooling yet)            │
+│ parquet │ Local parquet files                       │ load-only (no ops tooling yet)            │
+└─────────┴───────────────────────────────────────────┴───────────────────────────────────────────┘
 ```
-The leading `/` is optional. `help` lists commands; `quit` (or `exit`) leaves;
-`clear` wipes the screen. **Tab-completion** knows the known sets — `qc us_<tab>`
-completes lanes, `qc us_common <tab>` completes datasets, and `status`/`rows`/
-`config`/`fetch`/`source` complete their arguments too. Explore verbs
-(`describe`/`find`/`rows`/`coverage`/`sql`) run in-process against a warm DuckDB
-connection, so repeated queries are snappy.
+
+Shell conveniences:
+
+- **Slash-optional** — the leading `/` is optional; `qc` and `/qc` are identical.
+- **Tab-completion** over the known sets — `qc us_<Tab>` completes lanes,
+  `qc us_common <Tab>` completes datasets, and `status` / `rows` / `config` /
+  `fetch` / `source` complete their arguments too.
+- **`help`** lists commands, **`clear`** wipes the screen, **`quit`** (or **`exit`**)
+  leaves.
+
+## Command reference
+
+Run any command with `--help` for its full options.
+
+| Command | What it does |
+|---|---|
+| `status [lane]` | As-of dashboard: what data exists and how fresh it is |
+| `fetch [lanes] [--fast] [--run]` | Download / refresh data (dry-run unless `--run`) |
+| `qc [lane] [dataset]` | Raw-data quality triage with recommended fixes |
+| `lanes` | List registered lanes, datasets, and their fetchers |
+| `probe TICKER…` | Ad-hoc availability probe (read-only; no writes) |
+| `describe TICKER` | Everything about one ticker, across datasets |
+| `find PATTERN` | Locate a ticker (lane / exchange / datasets) |
+| `rows TICKER DATASET` | Show the actual rows for a ticker in a dataset |
+| `coverage TICKER` | Do the datasets cover a ticker equally? |
+| `sql "<query>"` | Raw read-only DuckDB over the dataset views |
+| `schema` | Declared schema version + drift vs. on-disk data |
+| `reindex` | (Re)build the fast query catalog after new data |
+| `config [set data-root <path>]` | Show / edit configuration |
+
+Every command is available both in the shell and directly as
+`uv run python eodhd/cli.py <command>`.
+
+## Data acquisition: status · fetch · qc
+
+`status` measures staleness against the correct freshness anchor for each dataset
+kind — the last *bar* for prices, the query *coverage* ceiling for events (so a
+legitimately future-dated dividend is never mistaken for an anomaly). See the
+dashboard at the [top of this page](#datacli).
+
+`fetch` prints an ordered plan and does nothing until you add `--run` (it hits a
+paid API). `--fast` uses bulk end-of-day endpoints — one call per exchange instead
+of one per ticker, turning hours into minutes.
+
+`qc` audits the raw data and ranks the findings, telling you the remediation for
+each. Scope it to a lane, or drill into a single dataset for the uncapped list:
+
+```text
+QC · us_common   ✗ 26 errors · ⚠ 113 warnings ─────────────────────────────────────────────────────────────────
+
+ dataset     universe   out_pairs   state     rows   range                     err   warn
+ ────────────────────────────────────────────────────────────────────────────────────────
+ prices         2,595       2,595   2,595   12.66M   1990-01-02 → 2026-07-08     7     94
+ dividends          -       1,895   2,595   168.7K   1970-01-19 → 2026-07-09     0      0
+ splits             -       1,884   2,581     5.9K   1962-10-31 → 2026-07-07    19     19
+
+  top issues  stale_latest_price 70 · sparse_recent_history 18 · missing_state 14 · missing_audit_row 14
+
+     dataset   ticker     issue                      action           detail
+ ─────────────────────────────────────────────────────────────────────────────────────────
+ ✗   prices    BK.US      bad_state_status           targeted_rerun   Unexpected state status: empty
+ ✗   prices    NIXXW.US   invalid_ohlc_relationsh…   full_refresh     Rows with invalid high/low relationships: 1
+ ✗   prices    MAYS.US    non_positive_prices        full_refresh     Rows with non-positive prices: 9
+ ✗   splits    BK.US      empty_with_rows            full_refresh     State says empty but event parquet has 6 rows
+   … 131 more  →  qc us_common prices
+```
+
+`lanes` shows the registry that drives all of the above — each dataset with a
+kind-hued dot and the fetcher that populates it:
+
+```text
+                                            EODHD lanes (6)
+
+ lane            region / class    dataset          fetcher
+ ─────────────────────────────────────────────────────────────────────────────────────────────────────
+ us_common       US / common       universe         (derived from another stage)
+                                   ● prices         fetch_eodhd_us_prices.py
+                                   ● dividends      fetch_eodhd_us_dividends.py
+                                   ● splits         fetch_eodhd_us_splits.py
+                                   ● fundamentals…  fetch_eodhd_us_fundamentals.py --update
+
+ uk_eu           UK/EU / common    universe         (derived from another stage)
+                                   ● prices         fetch_eodhd_eu_prices.py
+                                   …
+```
+
+See [`eodhd/README.md`](eodhd/README.md) for the full acquisition runbook
+(resume model, bulk refresh, fundamentals, per-lane manifests).
 
 ## Exploring the data
 
-Fast ad-hoc queries over the raw parquet, no SQL required (each also works as a
-direct `eodhd/cli.py <verb>`):
+Fast, entity-centric queries over the raw parquet — no SQL required. Each verb
+also works as a direct `eodhd/cli.py <verb>`.
 
-```
-eodhd> describe VAR.OL              # which datasets cover this ticker, and how far
-eodhd> find VAR                     # fuzzy-search tickers across all datasets
-eodhd> rows VAR.OL dividends        # latest rows (narrow default columns)
-eodhd> rows VAR.OL prices --cols *  # ... or all columns
-eodhd> coverage VAR.OL              # per-dataset coverage windows
-eodhd> sql "SELECT count(*) FROM dividends WHERE lane='us_common'"
+`find` fuzzy-searches tickers across every dataset:
+
+```text
+              matches for 'VAR' (6)
+┌────────┬──────────┬────────┬──────────────────┐
+│ ticker │ exchange │ lane   │ datasets         │
+├────────┼──────────┼────────┼──────────────────┤
+│ AVARDA │ ST       │ uk_eu  │ fundamentals     │
+│ CVAR   │ US       │ us_etf │ dividends prices │
+│ VAR    │ OL       │ uk_eu  │ fundamentals     │
+│ VARN   │ SW       │ uk_eu  │ fundamentals     │
+└────────┴──────────┴────────┴──────────────────┘
 ```
 
-`sql` runs read-only DuckDB against views named `prices`, `dividends`, `splits`,
-`fundamentals` (and their `*_state` sidecars). Every view carries a `lane` column.
+`rows` shows the latest rows for a ticker in a dataset (narrow columns by default,
+`--cols *` for everything):
+
+```text
+       VAR.OL in fundamentals (latest 20)
+
+ statement   date         filing_date   currency
+ ───────────────────────────────────────────────
+ IS          2025-09-30   2025-09-30    USD
+ BS          2025-09-30   2025-09-30    -
+ CF          2025-09-30   2025-09-30    USD
+ CF          2025-06-30   2025-06-30    USD
+```
+
+`sql` is the raw read-only escape hatch, running DuckDB against views named
+`prices`, `dividends`, `splits`, `fundamentals` (and their `*_state` sidecars).
+Every view carries a `lane` column:
+
+```text
+eodhd> sql "SELECT lane, count(*) AS n, min(ex_date) AS earliest
+            FROM dividends GROUP BY lane ORDER BY n DESC"
+
+ lane              n   earliest
+ ────────────────────────────────
+ us_common   168,714   1970-01-19
+ us_etf      158,344   1986-10-08
+ uk_eu_etf    66,807   2000-08-29
+ uk_eu        49,079   1972-07-29
+```
 
 ## Schema & versioning
 
 The columns the tool relies on are declared in `eodhd/schema.py` with a
-`SCHEMA_VERSION`. Queries stay stable as the data evolves via **projected views**:
-each dataset view guarantees its canonical columns exist (aliasing a known rename
-or NULL-filling a missing one) while passing every other column through. So data
-written under an older or newer schema still queries cleanly.
+`SCHEMA_VERSION`. Queries stay stable as data evolves via **projected views**: each
+dataset view guarantees its canonical columns exist — aliasing a known rename or
+NULL-filling a missing one — while passing every other column through untouched. So
+data written under an older *or* newer schema still queries cleanly.
 
-```
+```text
 eodhd> schema        # diff the declared schema against your on-disk columns
 eodhd> reindex       # rebuild the query catalog after fetching new data
 ```
 
-`schema` reports, per dataset, which canonical columns are present/missing and any
-extra columns riding along — handy after a provider adds fields.
+`schema` reports, per dataset, which canonical columns are present/missing and how
+many extra columns are riding along — handy after a provider adds fields.
 
-## EODHD CLI directly
+## Configuration & where data lives
 
-```powershell
-uv run python eodhd/cli.py status
-uv run python eodhd/cli.py refresh --fast --run
+`config` (no argument) shows the resolved data root and where it came from, plus
+API-key presence and the registered lanes:
+
+```text
+                                 datacli config (eodhd)
+┌───────────────┬───────────────────────────────────────────────────────────────────────┐
+│ setting       │ value                                                                 │
+├───────────────┼───────────────────────────────────────────────────────────────────────┤
+│ data-root     │ D:\data\raw\eodhd  (config, exists)                                   │
+│ config file   │ <repo>\datacli.toml                                                   │
+│ EODHD_API_KEY │ ****cdef                                                              │
+│ lanes         │ us_common, uk_eu, us_etf, index_ref, uk_eu_etf, uk_eu_index_ref       │
+└───────────────┴───────────────────────────────────────────────────────────────────────┘
+                         set with:  config set data-root <path>
 ```
-See `eodhd/README.md` for the full runbook.
 
-## Where the data lives
-
-The raw EODHD snapshots (~GBs) stay in the `btest` sibling repo by default, so the
-fetchers read/write `../btest/data/raw/eodhd`. Override per the Quickstart above
-(`config set data-root ...`) or, for a one-off, with an env var:
+The raw EODHD snapshots (multiple GBs) live in the `btest` sibling repo by default,
+so the fetchers read/write `../btest/data/raw/eodhd`. Override it with
+`config set data-root <path>` (persisted in the git-ignored `datacli.toml`) or, for
+a one-off, an environment variable:
 
 ```powershell
 $env:EODHD_DATA_ROOT = "D:\somewhere\data\raw\eodhd"
 ```
 
-## Sources
+## Architecture
 
-- **eodhd** — full operational tooling (status / fetch / qc / lanes / probe /
-  config / describe / find / rows / coverage / sql / schema / reindex).
-- **fred / yahoo / csv / parquet** — load adapters exist in `btest`; standalone
-  operational plugins here are a planned follow-up.
+```
+datacli/
+├─ datacli.py            the interactive shell (cmd2 + Rich REPL, tab-completion)
+├─ eodhd/                the EODHD source plugin
+│  ├─ cli.py             unified front door (status / fetch / qc / explore / …)
+│  ├─ eodhd_datasets.py  the lane + dataset registry (single source of truth)
+│  ├─ status_eodhd.py    as-of / staleness dashboard
+│  ├─ report_eodhd_raw_quality.py   the QC engine
+│  ├─ fetch_eodhd_*.py   per-lane fetchers  ·  fetch_eodhd_bulk.py  fast path
+│  ├─ explore_eodhd.py   DuckDB-backed describe / find / rows / coverage / sql
+│  ├─ schema.py          versioned canonical schema + projected views
+│  ├─ config.py          data-root resolution + datacli.toml
+│  └─ _render.py         shared console + palette (one look for every command)
+└─ tests/                unit tests
+```
+
+Design principles:
+
+- **Registry-driven, no hardcoding** — lanes/datasets are declared once in
+  `eodhd_datasets.py`; commands iterate the registry.
+- **State sidecars** — a per-ticker `*_fetch_state.csv` acts as a fast index of
+  coverage and fetch status, so `status` rarely has to open a parquet.
+- **One visual language** — `_render.py` centralises the console, colours and
+  glyphs; reference tables use a framed box, dashboards a lighter one, and both
+  degrade to clean text under `NO_COLOR`.
+
+## Development
+
+```powershell
+uv run pytest -q          # run the test suite
+uv run black . ; uv run isort .   # format
+uv run mypy eodhd datacli.py      # type-check
+```
 
 ## Provenance
 
-Extracted from `btest` (`scripts/eodhd/` + the datacli shell). `btest` keeps the
-backtesting framework and its runtime data adapters; this repo owns data
-acquisition.
+Extracted from the `btest` sibling repository (the `scripts/eodhd/` toolkit plus
+the datacli shell). `btest` keeps the backtesting framework and its runtime data
+adapters; this repo owns data **acquisition and exploration**. The raw snapshots
+remain in `btest` by default and are reached via the configurable data root above.
