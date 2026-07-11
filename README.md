@@ -311,6 +311,7 @@ ollama pull qwen2.5-coder:7b        # local default; fits a 12GB GPU
 ```text
 eodhd> ask "which lanes have the worst dividend coverage, and why?"
 eodhd> agent macro-strategist "describe the current volatility regime from the tape"
+eodhd> investigate "post-dividend volume patterns in us_common"   # generator→skeptic→reporter
 eodhd> lab run coverage-audit --verify        # playbook -> reproducible report
 eodhd> lab agents          # the persona roster
 eodhd> lab skills          # the EDA playbooks
@@ -328,6 +329,10 @@ eodhd> lab config          # models / budget / cache / provider status
   re-derives the numbers and issues a `CONFIRMED / REFUTED / UNCERTAIN` verdict;
   `lab run` writes a **reproducible Markdown report** (embedded queries +
   provenance) whose figures regenerate deterministically.
+- **Multi-agent investigations** — `investigate <topic>` runs a
+  **generator → skeptic → reporter** pipeline on one shared session budget, then
+  writes a combined report (synthesis + verified findings + verdict). The reporter
+  may only synthesise numbers the generator computed and the skeptic checked.
 - **Tiered, cost-aware models** — pick per persona (`local` Ollama, `cheap`,
   `mid`, `strong`); a response cache and a hard per-session budget keep spend
   bounded. API keys come from the environment, never from config.

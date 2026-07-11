@@ -1,6 +1,6 @@
 # Raw Data Lab — Design
 
-Status: **Phase 2.5 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
+Status: **Phase 3a complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
 
 The Raw Data Lab turns datacli from a data-ops shell into a **grounded EDA
 copilot for the pre-signal stage** — the exploratory, data-quality, and
@@ -224,9 +224,15 @@ proceed. Nothing merges past a gate without a green review.
   activity, conditions) and `macro_country` (EODHD annual: GDP, CPI, unemployment,
   real rates per country). The macro-strategist / event-study personas may join
   either to the price data. → *gate*
-- **Phase 3 — multi-agent & sandboxed Python.** Generator→Skeptic→Reporter
-  handoffs; a resource-limited, network-off Python executor for richer profiling
-  and plots; optional MCP server exposing the tools to external clients. → *gate*
+- **Phase 3a — multi-agent pipeline.** `investigate <topic>` runs
+  generator → skeptic → reporter (shared session budget, grounded synthesis) into a
+  combined reproducible report. → *gate (done)*
+- **Phase 3b — richer analysis (pending a design call).** A *restricted* local
+  Python executor (subprocess + timeout + restricted builtins + soft network block)
+  for distributions/plots that SQL can't express -- scoped honestly as a
+  trusted-local tool, NOT a hardened security sandbox (hard to achieve on Windows).
+  Off by default. Optional MCP server exposing the read-only tools to external
+  clients. → *gate*
 
 ## 10. Risks & mitigations
 

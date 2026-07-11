@@ -253,6 +253,13 @@ class DataCli(cmd2.Cmd):
 
         lab_cli.main(["agent", *self._argv(statement)])
 
+    def do_investigate(self, statement: object) -> None:
+        """Multi-agent investigation (generator -> skeptic -> reporter):
+        investigate "post-dividend volume patterns in us_common" """
+        import lab.cli as lab_cli
+
+        lab_cli.main(["investigate", *self._argv(statement)])
+
     def do_macro(self, statement: object) -> None:
         """FRED macro data adapter:  macro list | status | fetch [--run]"""
         import macro.cli as macro_cli

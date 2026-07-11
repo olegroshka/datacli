@@ -84,6 +84,48 @@ def build(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def build_pipeline(result: Any, *, title: str, generated_at: str) -> str:
+    """Render a multi-agent investigation (generator -> skeptic -> reporter)."""
+    gen_prov: dict[str, Any] = (
+        result.generator.findings[0].provenance if result.generator.findings else {}
+    )
+    lines = [
+        f"# Lab investigation — {title}",
+        "",
+        "| field | value |",
+        "| --- | --- |",
+        f"| generator | {result.generator_name} ({gen_prov.get('model', '?')}) |",
+        f"| verdict | {result.verdict.label} |",
+        f"| data_root | {gen_prov.get('data_root', '?')} |",
+        f"| schema_version | {gen_prov.get('schema_version', '?')} |",
+        f"| generated | {generated_at} |",
+        "",
+        "## Topic",
+        "",
+        result.topic.strip(),
+        "",
+        "## Synthesis (reporter)",
+        "",
+        result.synthesis.narrative or "_(none)_",
+        "",
+        "## Findings (analyst)",
+        "",
+        result.generator.narrative or "",
+        "",
+    ]
+    lines += _queries(result.generator.findings, heading="Query")
+    lines += [
+        "## Verification (skeptic)",
+        "",
+        f"**{result.verdict.label}**",
+        "",
+        result.verdict.bundle.narrative or "",
+        "",
+    ]
+    lines += _queries(result.verdict.bundle.findings, heading="Verification query")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def save(markdown: str, reports_dir: Path, *, slug: str, stamp: str) -> Path:
     """Write the report to ``<reports_dir>/<slug>_<stamp>.md`` and return the path."""
     reports_dir.mkdir(parents=True, exist_ok=True)

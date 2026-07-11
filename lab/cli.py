@@ -221,6 +221,26 @@ def _split_flags(argv: list[str]) -> tuple[set[str], list[str]]:
     return flags, rest
 
 
+def _agent_context(cfg: Any) -> tuple[Any, Any, str, dict[str, Any]]:
+    """Build the shared LLM, tools, schema and provenance base for a lab run."""
+    import explore_eodhd  # type: ignore[import-not-found]
+    import schema as sch  # type: ignore[import-not-found]
+
+    from lab import data as lab_data
+    from lab.models import LLM
+    from lab.tools import Tools
+
+    llm = LLM(cfg)  # shared across all personas in a run -> one session budget
+    con = lab_data.connect()  # eodhd views + macro (if fetched)
+    tools = Tools(con)
+    schema_text = lab_data.schema_text(con)
+    prov = {
+        "data_root": str(explore_eodhd.EODHD_RAW_ROOT),
+        "schema_version": sch.SCHEMA_VERSION,
+    }
+    return llm, tools, schema_text, prov
+
+
 def _run_agent(
     persona_name: str,
     question: str,
@@ -237,8 +257,6 @@ def _run_agent(
     from lab import registry
     from lab import report as lab_report
     from lab import verify as lab_verify
-    from lab.models import LLM
-    from lab.tools import Tools
 
     console = _render.make_console()
     if not question.strip():
@@ -265,20 +283,11 @@ def _run_agent(
         console.print("[yellow]no 'skeptic' persona; skipping verification[/yellow]")
         verify = False
 
-    import explore_eodhd  # type: ignore[import-not-found]
-    import schema as sch  # type: ignore[import-not-found]
-
-    from lab import data as lab_data
-
-    llm = LLM(cfg)  # shared across analyst + skeptic -> one session budget
-    con = lab_data.connect()  # eodhd views + macro (if fetched)
-    tools = Tools(con)
-    schema_text = lab_data.schema_text(con)
+    llm, tools, schema_text, prov = _agent_context(cfg)
     provenance = {
         "persona": persona.name,
         "model": cfg.resolve_model(persona.model),
-        "data_root": str(explore_eodhd.EODHD_RAW_ROOT),
-        "schema_version": sch.SCHEMA_VERSION,
+        **prov,
     }
     try:
         bundle = lab_agent.run(
@@ -333,6 +342,91 @@ def _run_agent(
         )
         console.print(Text(f"report written -> {path}", style="green"))
     return 0
+
+
+def _render_pipeline(console: Any, result: Any) -> None:
+    from rich.panel import Panel
+
+    console.rule("generator", style="dim", align="left")
+    _render_answer(console, result.generator, result.generator_name)
+    if result.verdict.label != "UNKNOWN":
+        _render_verdict(console, result.verdict)
+    console.print(
+        Panel(
+            result.synthesis.narrative or "(no synthesis)",
+            title="synthesis · reporter",
+            border_style="bold cyan",
+        )
+    )
+
+
+def _run_pipeline(topic: str, generator_name: str, *, report: bool = True) -> int:
+    from datetime import datetime
+
+    from rich.text import Text
+
+    from lab import pipeline as lab_pipeline
+    from lab import registry
+    from lab import report as lab_report
+
+    console = _render.make_console()
+    if not topic.strip():
+        console.print("[yellow]nothing to investigate[/yellow]")
+        return 2
+    if not _litellm_installed():
+        console.print("[red]the lab needs the 'lab' extra[/red]:  uv sync --extra lab")
+        return 1
+
+    cfg = lab_config.load()
+    personas = registry.load_personas()
+    generator = personas.get(generator_name)
+    if generator is None:
+        console.print(f"[red]unknown persona '{generator_name}'[/red]")
+        return 2
+
+    llm, tools, schema_text, prov = _agent_context(cfg)
+    try:
+        result = lab_pipeline.investigate(
+            topic,
+            generator=generator,
+            skeptic=personas.get("skeptic"),
+            reporter=personas.get("reporter"),
+            llm=llm,
+            tools=tools,
+            schema_text=schema_text,
+            provenance=prov,
+        )
+    except Exception as exc:
+        console.print(f"[red]{type(exc).__name__}[/red]: {exc}")
+        return 1
+    _render_pipeline(console, result)
+    console.print(Text(f"session spend: ${llm.budget.spent_usd:.4f}", style="dim"))
+
+    if report:
+        title = topic.strip().splitlines()[0][:60] or "investigation"
+        markdown = lab_report.build_pipeline(
+            result,
+            title=title,
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        path = lab_report.save(
+            markdown,
+            cfg.reports_dir,
+            slug="investigate-" + lab_report.slugify(title),
+            stamp=datetime.now().strftime("%Y%m%d-%H%M%S"),
+        )
+        console.print(Text(f"report written -> {path}", style="green"))
+    return 0
+
+
+def cmd_investigate(argv: list[str]) -> int:
+    """`investigate <topic> [--generator=<persona>] [--no-report]` -> multi-agent run."""
+    flags, rest = _split_flags(argv)
+    generator = lab_config.load().default_persona
+    for flag in flags:
+        if flag.startswith("--generator="):
+            generator = flag.split("=", 1)[1]
+    return _run_pipeline(" ".join(rest), generator, report="--no-report" not in flags)
 
 
 def cmd_ask(argv: list[str]) -> int:
@@ -402,8 +496,9 @@ def top_help() -> str:
         "  skills                List EDA playbooks\n"
         "  run <skill> [--verify]  Run a playbook -> reproducible report\n\n"
         "Top-level shell commands:\n"
-        "  ask <question> [--verify] [--report]     Ask the default persona\n"
+        "  ask <question> [--verify] [--report]       Ask the default persona\n"
         "  agent <name> <task> [--verify] [--report]  Ask a named persona\n"
+        "  investigate <topic> [--generator=<name>]   Generator -> skeptic -> reporter\n"
     )
 
 
@@ -419,6 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": cmd_run,
         "ask": cmd_ask,
         "agent": cmd_agent,
+        "investigate": cmd_investigate,
     }
     if command in ("-h", "--help", "help"):
         print(top_help())
