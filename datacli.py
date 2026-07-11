@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -222,7 +223,9 @@ class DataCli(cmd2.Cmd):
 
     def do_clear(self, _statement: object) -> None:
         """Clear the terminal screen."""
-        console.clear()
+        # Rich's console.clear() only rewinds the visible viewport; the OS clear
+        # (cls/clear) actually resets the buffer, which is what users expect.
+        os.system("cls" if os.name == "nt" else "clear")
 
     def do_exit(self, statement: object) -> bool:
         """Exit the shell (alias for quit)."""
