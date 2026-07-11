@@ -146,9 +146,15 @@ SCENARIOS: list[Scenario] = [
         "I think in questions, not SQL.",
         [
             Step(
+                'ask "how many dividend rows are there per lane?"',
+                ("answer",),
+                "A simple grounded question -- shows the SQL it wrote.",
+                live=True,
+            ),
+            Step(
                 'ask "which lanes have the worst dividend coverage, and why?"',
                 ("answer",),
-                "Grounded NL->SQL: shows the query, no fabricated numbers.",
+                "A harder one -- grounded, no fabricated numbers.",
                 live=True,
             ),
         ],
@@ -228,8 +234,17 @@ def run_step(step: Step, *, timeout: int = 120) -> Result:
     dt = time.monotonic() - t0
 
     low = output.lower()
-    # a lab step that hit the optional-extra boundary is blocked, not failed
-    if step.live and "needs the 'lab' extra" in low:
+    # a lab step blocked by a missing extra / unreachable / unauthed model is a
+    # setup boundary, not a failure
+    _BOUNDARY = (
+        "needs the 'lab' extra",
+        "apiconnectionerror",
+        "connection error",
+        "could not connect",
+        "connection refused",
+        "authenticationerror",
+    )
+    if step.live and any(s in low for s in _BOUNDARY):
         return Result(step, argv, output, dt, rc, "BOUNDARY", [])
     checks = [(e, e.lower() in low) for e in step.expect]
     status = "PASS" if all(p for _, p in checks) else "FAIL"
@@ -257,6 +272,22 @@ def _type_out(console: Any, prompt: str, cmd: str, speed: float) -> None:
     console.print()
 
 
+def _agentic_notice(console: Any) -> None:
+    from rich.panel import Panel
+
+    console.print(
+        Panel(
+            "This step needs a model (agentic mode). To enable it:\n"
+            "  1) uv sync --extra lab\n"
+            "  2) a model:  ollama pull qwen2.5-coder:7b   (free, local)\n"
+            "               or set ANTHROPIC_API_KEY / OPENAI_API_KEY\n"
+            "Then re-run with  --live.",
+            title="[bold]set up agentic mode[/bold]",
+            border_style="yellow",
+        )
+    )
+
+
 _STATUS_STYLE = {"PASS": "green", "FAIL": "bold red", "BOUNDARY": "yellow"}
 
 
@@ -277,7 +308,15 @@ def run(scenarios: list[Scenario], *, demo: bool, live: bool, speed: float) -> i
         for step in scn.steps:
             if step.live and not live:
                 totals["SKIP"] += 1
-                console.print(f"[dim]skip (live): {step.cmd}[/dim]")
+                if demo:
+                    # In a demo, don't silently skip the agentic steps -- show the
+                    # command and how to enable it, so the walkthrough is complete.
+                    if step.note:
+                        console.print(f"[dim]# {step.note}[/dim]")
+                    _type_out(console, "eodhd>", step.cmd, speed)
+                    _agentic_notice(console)
+                else:
+                    console.print(f"[dim]skip (live): {step.cmd}[/dim]")
                 md_lines += [f"- _skipped (live): `{step.cmd}`_", ""]
                 continue
             if demo and step.note:

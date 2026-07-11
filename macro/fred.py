@@ -75,8 +75,13 @@ def refresh(
 
     rows: list[tuple[str, str, float]] = []
     per_series: dict[str, int] = {}
+    failed: list[str] = []
     for series_id in ids:
-        observations = fetch_series(session, series_id, key, start=start)
+        try:  # one bad/discontinued series must never abort the whole batch
+            observations = fetch_series(session, series_id, key, start=start)
+        except Exception:
+            observations = []
+            failed.append(series_id)
         per_series[series_id] = len(observations)
         rows.extend((series_id, date, value) for date, value in observations)
 
@@ -88,6 +93,8 @@ def refresh(
     return {
         "run": True,
         "series": len(ids),
+        "series_with_data": sum(1 for n in per_series.values() if n),
+        "failed": failed,
         "rows": int(len(frame)),
         "per_series": per_series,
         "path": str(path),

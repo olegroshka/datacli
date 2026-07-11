@@ -175,9 +175,10 @@ def cmd_fetch(argv: list[str]) -> int:
     if do_fred:
         try:
             r = fred.refresh(reg.fred_ids(), run=True, root=root)
-            console.print(
-                Text(f"FRED: {r['series']} series · {r['rows']:,} rows", style="green")
-            )
+            msg = f"FRED: {r['series_with_data']}/{r['series']} series · {r['rows']:,} rows"
+            if r["failed"]:
+                msg += f" · failed: {', '.join(r['failed'])}"
+            console.print(Text(msg, style="green" if not r["failed"] else "yellow"))
         except Exception as exc:
             console.print(f"[red]FRED {type(exc).__name__}[/red]: {exc}")
             rc = 1

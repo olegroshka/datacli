@@ -100,11 +100,16 @@ Scenarios 1–3 run end-to-end; 4–5 exercise the guided boundary because the o
 | 1 | Triage | `status` · `qc us_common` · `qc us_common splits` | **PASS** — one screen: `15 fresh · 1 stale · 0 absent · ≈54.45M rows`; QC ranked `26 errors · 113 warnings` with per-row `action` (`targeted_rerun`/`full_refresh`). *(gap found + fixed, see below)* |
 | 2 | Entity lookup | `describe VAR.OL` · `find VAR` · `coverage VAR.OL` | **PASS** — `describe` answered the whole cross-dataset question in one command (VAR.OL = fundamentals-only, 68 rows, 2020→2025); `find` fuzzy-matched 6 names |
 | 3 | Onboarding | `config` · `schema` · `sql "…"` · (typo) `qc us_comon` | **PASS** — resolved data-root shown with source; `schema` reported `fundamentals +27 extra` without breaking; ad-hoc `sql` needed no boilerplate; typo → *"did you mean us_common?"* |
-| 4 | NL exploration | `ask "…"` · `investigate "…"` | **PASS (surface)** — clean guided boundary: *"the lab needs the 'lab' extra: uv sync --extra lab"*. Grounding contract itself proven by the mocked-model suite (query always shown, no fabricated numbers). Full live proof needs the extra + a model. |
-| 5 | Synthesis → artifact | `macro list` · `macro fetch` · `agent macro-strategist "…"` | **PASS (surface)** — `macro fetch` dry-run planned `FRED 42 series · EODHD 60 pairs`, both keys detected; agent path shows the same guided boundary. Full proof needs a live fetch + model. |
+| 4 | NL exploration | `ask "how many dividend rows per lane?"` (live, local qwen) | **PASS (live)** — the 7B wrote a correct CTE, ran it, and its answer cited exactly the returned counts (`us_common 168,714`, `us_etf 158,344`, …) — grounded, query shown, `$0.0000`. A harder question ("worst coverage, and why") is weaker on a 7B — honest evidence for why `review_model`/stronger tiers exist. |
+| 5 | Synthesis → artifact | `macro fetch --run` (live) · `macro status` | **PASS (data)** — fetched **FRED 41/41 (168K rows) + EODHD 12 countries (3.3K rows)**; the `macro`/`macro_country` views are populated. The full `investigate` pipeline uses paid tiers (skeptic/reporter), runnable in your env with an API key. |
 
 ### Gap found and fixed during testing
 
+- **FRED macro fetch aborted the whole batch on one bad series** — a discontinued
+  series id (`GOLDAMGBD228NLBM`) returned HTTP 400 and, because `fred.refresh` let
+  the first failure propagate (EODHD was already resilient), *no* FRED data landed.
+  **Fixed:** per-series try/except that skips + reports failures, and the bad id was
+  removed. Re-fetch: 41/41 series, 168K rows. (Surfaced only by running live.)
 - **Status dashboard truncated on terminals narrower than ~132 cols** (`12.6…`,
   `2026-07-…`, `pai…`) — directly undermining Scenario 1's "one screen tells you
   everything." **Fixed:** the table is now **responsive** — below 132 cols it drops

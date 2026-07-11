@@ -97,6 +97,42 @@ def test_refresh_writes_parquet(tmp_path: Path) -> None:
     assert list(frame.columns) == ["series_id", "date", "value"]
 
 
+class _BadResp:
+    def raise_for_status(self) -> None:
+        raise RuntimeError("400 Bad Request. The series does not exist.")
+
+    def json(self) -> dict:
+        return {}
+
+
+class _FlakySession:
+    """Raises 400 for a set of series ids, returns data for the rest."""
+
+    def __init__(self, payload: dict, bad: set[str]) -> None:
+        self._payload = payload
+        self._bad = bad
+
+    def get(self, url: str, params: dict | None = None, timeout: int | None = None):
+        if params and params.get("series_id") in self._bad:
+            return _BadResp()
+        return _Resp(self._payload)
+
+
+def test_fred_refresh_skips_failing_series(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow")
+    result = fred.refresh(
+        ["DGS10", "BADSERIES", "DGS2"],
+        run=True,
+        root=tmp_path,
+        session=_FlakySession(_PAYLOAD, {"BADSERIES"}),
+        key="k",
+    )
+    assert result["failed"] == ["BADSERIES"]  # skipped, not aborted
+    assert result["series_with_data"] == 2  # the two good ones still landed
+    frame = fred.load(tmp_path)
+    assert frame is not None and set(frame["series_id"]) == {"DGS10", "DGS2"}
+
+
 # --------------------------------------------------------------------------- #
 # views over a fixture (real DuckDB)
 # --------------------------------------------------------------------------- #

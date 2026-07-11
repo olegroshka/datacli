@@ -68,7 +68,6 @@ FRED_SERIES: dict[str, FredSeries] = dict(
         _f("DEXCAUS", "CAD/USD", "fx"),
         _f("DCOILWTICO", "WTI crude oil", "commodity"),
         _f("DCOILBRENTEU", "Brent crude oil", "commodity"),
-        _f("GOLDAMGBD228NLBM", "Gold price (London PM)", "commodity"),
         _f("WALCL", "Fed total assets", "money"),
         _f("M2SL", "M2 money stock", "money"),
         _f("RRPONTSYD", "Overnight reverse repo", "money"),
