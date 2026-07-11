@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # allow `python lab/cli.py` as well as `python -m lab.cli` / shell import
 _REPO = Path(__file__).resolve().parents[1]
@@ -73,6 +74,7 @@ def cmd_config(argv: list[str]) -> int:
         style="dim",
     )
     table.add_row("cache", cache_val)
+    table.add_row("reports", Text(str(cfg.reports_dir), style="dim"))
     engine = Text("litellm", style="green" if _litellm_installed() else "red")
     if not _litellm_installed():
         engine.append("  — not installed (uv sync --extra lab)", style="dim")
@@ -160,41 +162,81 @@ def cmd_skills(argv: list[str]) -> int:
 # --------------------------------------------------------------------------- #
 # the grounded analyst
 # --------------------------------------------------------------------------- #
-def _render_answer(console: object, bundle: object, persona_name: str) -> None:
-    from rich.panel import Panel
+def _render_findings(console: Any, findings: list[Any], *, label: str) -> None:
     from rich.syntax import Syntax
-    from rich.text import Text
 
-    con = console  # typed loosely to avoid importing Console here
-    con.print(  # type: ignore[attr-defined]
-        Panel(
-            bundle.narrative or "(no answer)",  # type: ignore[attr-defined]
-            title=f"answer · {persona_name}",
-            border_style="cyan",
+    for i, finding in enumerate(findings, 1):
+        console.rule(f"{label} {i}", style="dim", align="left")
+        console.print(
+            Syntax(finding.sql, "sql", background_color="default", word_wrap=True)
         )
-    )
-    for i, finding in enumerate(bundle.findings, 1):  # type: ignore[attr-defined]
-        con.rule(f"query {i}", style="dim", align="left")  # type: ignore[attr-defined]
-        con.print(Syntax(finding.sql, "sql", background_color="default", word_wrap=True))  # type: ignore[attr-defined]
         table = _render.minimal_table()
         for column in finding.columns:
             table.add_column(str(column), no_wrap=True)
         for row in finding.rows[:50]:
             table.add_row(*("NULL" if v is None else str(v) for v in row))
-        con.print(table)  # type: ignore[attr-defined]
-    footer = Text(
-        f"{bundle.steps} step(s) · {len(bundle.findings)} query(ies) · "  # type: ignore[attr-defined]
-        f"${bundle.spent_usd:.4f}",  # type: ignore[attr-defined]
-        style="dim",
+        console.print(table)
+
+
+def _render_answer(console: Any, bundle: Any, persona_name: str) -> None:
+    from rich.panel import Panel
+    from rich.text import Text
+
+    console.print(
+        Panel(
+            bundle.narrative or "(no answer)",
+            title=f"answer · {persona_name}",
+            border_style="cyan",
+        )
     )
-    con.print(footer)  # type: ignore[attr-defined]
+    _render_findings(console, bundle.findings, label="query")
+    console.print(
+        Text(
+            f"{bundle.steps} step(s) · {len(bundle.findings)} query(ies) · "
+            f"${bundle.spent_usd:.4f}",
+            style="dim",
+        )
+    )
 
 
-def _run_agent(persona_name: str, question: str) -> int:
+def _render_verdict(console: Any, verdict: Any) -> None:
+    from rich.panel import Panel
+
+    color = {"CONFIRMED": "green", "REFUTED": "bold red", "UNCERTAIN": "yellow"}.get(
+        verdict.label, "dim"
+    )
+    console.print(
+        Panel(
+            verdict.bundle.narrative or "(no verdict)",
+            title=f"skeptic · {verdict.label}",
+            border_style=color,
+        )
+    )
+    _render_findings(console, verdict.bundle.findings, label="verify")
+
+
+def _split_flags(argv: list[str]) -> tuple[set[str], list[str]]:
+    flags = {a for a in argv if a.startswith("--")}
+    rest = [a for a in argv if not a.startswith("--")]
+    return flags, rest
+
+
+def _run_agent(
+    persona_name: str,
+    question: str,
+    *,
+    verify: bool = False,
+    report: bool = False,
+    title: str | None = None,
+) -> int:
+    from datetime import datetime
+
     from rich.text import Text
 
     from lab import agent as lab_agent
     from lab import registry
+    from lab import report as lab_report
+    from lab import verify as lab_verify
     from lab.models import LLM
     from lab.tools import Tools, schema_context
 
@@ -219,13 +261,17 @@ def _run_agent(persona_name: str, question: str) -> int:
         console.print(msg)
         console.print(Text(f"agents: {', '.join(personas) or '(none)'}", style="dim"))
         return 2
+    if verify and "skeptic" not in personas:
+        console.print("[yellow]no 'skeptic' persona; skipping verification[/yellow]")
+        verify = False
 
     import explore_eodhd  # type: ignore[import-not-found]
     import schema as sch  # type: ignore[import-not-found]
 
-    llm = LLM(cfg)
+    llm = LLM(cfg)  # shared across analyst + skeptic -> one session budget
     con = explore_eodhd.connect()
     tools = Tools(con)
+    schema_text = schema_context()
     provenance = {
         "persona": persona.name,
         "model": cfg.resolve_model(persona.model),
@@ -238,64 +284,124 @@ def _run_agent(persona_name: str, question: str) -> int:
             persona=persona,
             llm=llm,
             tools=tools,
-            schema_text=schema_context(),
+            schema_text=schema_text,
             provenance=provenance,
         )
     except Exception as exc:  # model/connection errors -> friendly, not a traceback
         console.print(f"[red]{type(exc).__name__}[/red]: {exc}")
         return 1
     _render_answer(console, bundle, persona.name)
+
+    verdict = None
+    if verify:
+        skeptic = personas["skeptic"]
+        try:
+            verdict = lab_verify.verify(
+                question,
+                bundle,
+                skeptic=skeptic,
+                llm=llm,
+                tools=tools,
+                schema_text=schema_text,
+                provenance={
+                    **provenance,
+                    "persona": skeptic.name,
+                    "model": cfg.resolve_model(skeptic.model),
+                },
+            )
+        except Exception as exc:
+            console.print(f"[red]verification failed[/red]: {exc}")
+        else:
+            _render_verdict(console, verdict)
+
+    if report:
+        report_title = title or (question.strip().splitlines()[0][:60] or "report")
+        markdown = lab_report.build(
+            question,
+            bundle,
+            title=report_title,
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+            verdict=verdict,
+        )
+        path = lab_report.save(
+            markdown,
+            cfg.reports_dir,
+            slug=lab_report.slugify(report_title),
+            stamp=datetime.now().strftime("%Y%m%d-%H%M%S"),
+        )
+        console.print(Text(f"report written -> {path}", style="green"))
     return 0
 
 
 def cmd_ask(argv: list[str]) -> int:
-    """`ask <question>` -> run the default persona."""
+    """`ask <question> [--verify] [--report]` -> run the default persona."""
+    flags, rest = _split_flags(argv)
     cfg = lab_config.load()
-    return _run_agent(cfg.default_persona, " ".join(argv))
+    return _run_agent(
+        cfg.default_persona,
+        " ".join(rest),
+        verify="--verify" in flags,
+        report="--report" in flags,
+    )
 
 
 def cmd_agent(argv: list[str]) -> int:
-    """`agent <persona> <task>` -> run a named persona."""
-    if not argv:
-        _render.make_console().print("usage: agent <persona> <task>")
+    """`agent <persona> <task> [--verify] [--report]` -> run a named persona."""
+    flags, rest = _split_flags(argv)
+    if not rest:
+        _render.make_console().print(
+            "usage: agent <persona> <task> [--verify] [--report]"
+        )
         return 2
-    return _run_agent(argv[0], " ".join(argv[1:]))
+    return _run_agent(
+        rest[0],
+        " ".join(rest[1:]),
+        verify="--verify" in flags,
+        report="--report" in flags,
+    )
 
 
 def cmd_run(argv: list[str]) -> int:
-    """`lab run <skill> [args]` -> run an EDA playbook via the default persona."""
+    """`lab run <skill> [args] [--verify] [--no-report]` -> playbook -> report."""
     from lab import registry
 
     console = _render.make_console()
-    if not argv:
-        console.print("usage: lab run <skill> [args]")
+    flags, rest = _split_flags(argv)
+    if not rest:
+        console.print("usage: lab run <skill> [args] [--verify] [--no-report]")
         return 2
     skills = registry.load_skills()
-    skill = skills.get(argv[0])
+    skill = skills.get(rest[0])
     if skill is None:
         console.print(
-            f"[red]unknown skill '{argv[0]}'[/red]. skills: {', '.join(skills)}"
+            f"[red]unknown skill '{rest[0]}'[/red]. skills: {', '.join(skills)}"
         )
         return 2
-    extra = " ".join(argv[1:])
+    extra = " ".join(rest[1:])
     task = (
         f"Run the '{skill.name}' skill.\n\n{skill.body}\n\n"
         f"Inputs provided: {extra or '(none)'}"
     )
-    return _run_agent(lab_config.load().default_persona, task)
+    return _run_agent(
+        lab_config.load().default_persona,
+        task,
+        verify="--verify" in flags,
+        report="--no-report" not in flags,  # reports are the point of `lab run`
+        title=skill.name,
+    )
 
 
 def top_help() -> str:
     return (
         "lab -- Raw Data Lab (grounded EDA copilot)\n\n"
         "Commands:\n"
-        "  config          Models, budget, cache and provider status\n"
-        "  agents          List configured personas\n"
-        "  skills          List EDA playbooks\n"
-        "  run <skill>     Run an EDA playbook\n\n"
+        "  config                Models, budget, cache and provider status\n"
+        "  agents                List configured personas\n"
+        "  skills                List EDA playbooks\n"
+        "  run <skill> [--verify]  Run a playbook -> reproducible report\n\n"
         "Top-level shell commands:\n"
-        "  ask <question>          Ask the default persona\n"
-        "  agent <name> <task>     Ask a named persona\n"
+        "  ask <question> [--verify] [--report]     Ask the default persona\n"
+        "  agent <name> <task> [--verify] [--report]  Ask a named persona\n"
     )
 
 

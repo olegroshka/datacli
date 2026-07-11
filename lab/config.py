@@ -39,6 +39,7 @@ class Budget:
 class LabConfig:
     default_persona: str = "analyst"
     cache_dir: Path = REPO_ROOT / ".lab_cache"
+    reports_dir: Path = REPO_ROOT / "lab_reports"
     budget: Budget = field(default_factory=Budget)
     models: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_MODELS))
 
@@ -74,10 +75,15 @@ def load(path: Path = CONFIG_PATH) -> LabConfig:
 
     cache_dir = section.get("cache_dir")
     cache_path = (REPO_ROOT / cache_dir) if cache_dir else (REPO_ROOT / ".lab_cache")
+    reports_dir = section.get("reports_dir")
+    reports_path = (
+        (REPO_ROOT / reports_dir) if reports_dir else (REPO_ROOT / "lab_reports")
+    )
 
     return LabConfig(
         default_persona=str(section.get("default_persona", "analyst")),
         cache_dir=cache_path,
+        reports_dir=reports_path,
         budget=budget,
         models=models,
     )

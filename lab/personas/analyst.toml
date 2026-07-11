@@ -1,6 +1,6 @@
 name = "analyst"
 description = "Grounded EDA analyst for pre-signal data exploration."
-model = "mid"                     # tier from [lab.models]; override per persona
+model = "local"                   # runs on your GPU (qwen2.5-coder:7b) at zero cost
 temperature = 0.0
 tools = ["run_sql"]
 skills = ["coverage-audit", "distribution-profile", "corporate-action-consistency"]

@@ -1,6 +1,6 @@
 # Raw Data Lab — Design
 
-Status: **Phase 1 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
+Status: **Phase 2 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
 
 The Raw Data Lab turns datacli from a data-ops shell into a **grounded EDA
 copilot for the pre-signal stage** — the exploratory, data-quality, and

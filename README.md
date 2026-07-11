@@ -310,9 +310,9 @@ ollama pull qwen2.5-coder:7b        # local default; fits a 12GB GPU
 
 ```text
 eodhd> ask "which lanes have the worst dividend coverage, and why?"
-eodhd> agent auditor "flag corporate-action anomalies in us_common"
-eodhd> lab run coverage-audit
-eodhd> lab agents          # the persona roster        (analyst, auditor, …)
+eodhd> agent macro-strategist "describe the current volatility regime from the tape"
+eodhd> lab run coverage-audit --verify        # playbook -> reproducible report
+eodhd> lab agents          # the persona roster
 eodhd> lab skills          # the EDA playbooks
 eodhd> lab config          # models / budget / cache / provider status
 ```
@@ -321,7 +321,13 @@ eodhd> lab config          # models / budget / cache / provider status
   answer shows each query and its result. A hard SQL guard rejects anything that
   isn't a single `SELECT`/`WITH`.
 - **Personas & skills are files** — `lab/personas/*.toml` (role, model tier, tools)
-  and `lab/skills/*/SKILL.md` (EDA playbooks). Add one by dropping a file in.
+  and `lab/skills/*/SKILL.md` (EDA playbooks). Add one by dropping a file in. Ships
+  with `analyst`, `auditor`, `macro-strategist`, `microstructure`, `event-study`,
+  and a `skeptic` verifier — each scoped honestly to what EOD data can support.
+- **Verify & report** — `--verify` runs the **skeptic**, which independently
+  re-derives the numbers and issues a `CONFIRMED / REFUTED / UNCERTAIN` verdict;
+  `lab run` writes a **reproducible Markdown report** (embedded queries +
+  provenance) whose figures regenerate deterministically.
 - **Tiered, cost-aware models** — pick per persona (`local` Ollama, `cheap`,
   `mid`, `strong`); a response cache and a hard per-session budget keep spend
   bounded. API keys come from the environment, never from config.
