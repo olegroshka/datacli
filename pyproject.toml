@@ -9,6 +9,7 @@ dependencies = [
   "requests>=2.31",
   "cmd2>=2.4",
   "rich>=13",
+  "duckdb>=1.5.4",
 ]
 
 [project.optional-dependencies]

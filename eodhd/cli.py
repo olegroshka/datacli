@@ -41,10 +41,18 @@ DELEGATED: dict[str, str] = {
     "probe": "probe_eodhd_availability.py",
 }
 
+# Entity-centric exploration verbs, all handled by explore_eodhd.py (DuckDB).
+EXPLORE_COMMANDS = ("describe", "find", "rows", "coverage", "sql")
+
 # One-line descriptions for the top-level help, in display order.
 COMMAND_HELP: list[tuple[str, str]] = [
     ("status", "Show what data we have and as of when (all lanes)"),
     ("refresh", "Download the latest data across lanes (dry-run unless --run)"),
+    ("describe", "Everything about one ticker, across datasets"),
+    ("find", "Locate a ticker (lane / exchange / datasets)"),
+    ("rows", "Show the actual rows for a ticker in a dataset"),
+    ("coverage", "Do the datasets cover a ticker equally?"),
+    ("sql", "Raw DuckDB query over the datasets"),
     ("qc", "Run raw-data quality checks"),
     ("probe", "Probe ad-hoc ticker availability (read-only; no writes)"),
     ("lanes", "List registered lanes, datasets, and their fetchers"),
@@ -339,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_lanes(rest)
     if command == "refresh":
         return cmd_refresh(rest)
+    if command in EXPLORE_COMMANDS:
+        return delegate("explore_eodhd.py", [command, *rest])
     if command in DELEGATED:
         return delegate(DELEGATED[command], rest)
 

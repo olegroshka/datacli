@@ -80,6 +80,11 @@ class EodhdPlugin(SourcePlugin):
         "qc": "qc",
         "lanes": "lanes",
         "probe": "probe",
+        "describe": "describe",
+        "find": "find",
+        "rows": "rows",
+        "coverage": "coverage",
+        "sql": "sql",
     }
 
     def command_names(self) -> list[str]:
@@ -236,6 +241,27 @@ class DataCli(cmd2.Cmd):
     def do_config(self, statement: object) -> None:
         """Show the source's configuration."""
         self._dispatch("config", statement)
+
+    # ----- exploration verbs ------------------------------------------------ #
+    def do_describe(self, statement: object) -> None:
+        """Everything about one ticker across datasets:  describe VAR.OL"""
+        self._dispatch("describe", statement)
+
+    def do_find(self, statement: object) -> None:
+        """Locate a ticker (lane / exchange / datasets):  find VAR"""
+        self._dispatch("find", statement)
+
+    def do_rows(self, statement: object) -> None:
+        """Actual rows for a ticker in a dataset:  rows VAR.OL dividends"""
+        self._dispatch("rows", statement)
+
+    def do_coverage(self, statement: object) -> None:
+        """Do the datasets cover a ticker equally?  coverage VAR.OL"""
+        self._dispatch("coverage", statement)
+
+    def do_sql(self, statement: object) -> None:
+        """Raw DuckDB query over the datasets:  sql "select ..." """
+        self._dispatch("sql", statement)
 
 
 def main() -> int:

@@ -34,7 +34,19 @@ def test_eodhd_plugin_command_map() -> None:
 
 def test_eodhd_plugin_command_names() -> None:
     names = datacli.EodhdPlugin().command_names()
-    assert set(names) == {"status", "fetch", "qc", "lanes", "probe", "config"}
+    assert set(names) == {
+        "status",
+        "fetch",
+        "qc",
+        "lanes",
+        "probe",
+        "config",
+        "describe",
+        "find",
+        "rows",
+        "coverage",
+        "sql",
+    }
 
 
 def test_sources_registry() -> None:
