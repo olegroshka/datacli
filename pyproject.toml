@@ -2,6 +2,7 @@
 name = "datacli"
 version = "0.1.0"
 description = "Interactive data-operations shell + EODHD data-acquisition toolkit (extracted from btest)"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
   "pandas>=2.0",
