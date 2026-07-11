@@ -141,7 +141,8 @@ def cmd_agents(argv: list[str]) -> int:
     table.add_column("model", no_wrap=True)
     table.add_column("description")
     for p in personas.values():
-        table.add_row(p.name, Text(p.model, style="dim"), p.description)
+        model = p.model + (f" → {p.review_model}" if p.review_model else "")
+        table.add_row(p.name, Text(model, style="dim"), p.description)
     console.print(table)
     return 0
 

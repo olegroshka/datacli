@@ -1,6 +1,9 @@
 name = "analyst"
 description = "Grounded EDA analyst for pre-signal data exploration."
 model = "local"                   # runs on your GPU (qwen2.5-coder:7b) at zero cost
+# review_model = "mid"            # optional: do the SQL/reasoning legwork locally,
+                                  # then synthesise the FINAL answer with a stronger
+                                  # (paid) model -- grounded in the same evidence.
 temperature = 0.0
 tools = ["run_sql"]
 skills = ["coverage-audit", "distribution-profile", "corporate-action-consistency"]

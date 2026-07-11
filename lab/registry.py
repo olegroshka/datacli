@@ -20,6 +20,7 @@ class Persona:
     name: str
     description: str = ""
     model: str = "mid"  # a tier name (resolved via [lab.models]) or a raw id
+    review_model: str = ""  # optional stronger model for the FINAL synthesis only
     temperature: float = 0.0
     tools: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
@@ -56,6 +57,7 @@ def load_personas(directory: Path = PERSONA_DIR) -> dict[str, Persona]:
             name=name,
             description=str(data.get("description", "")),
             model=str(data.get("model", "mid")),
+            review_model=str(data.get("review_model", "")),
             temperature=float(data.get("temperature", 0.0)),
             tools=_as_list(data.get("tools", [])),
             skills=_as_list(data.get("skills", [])),

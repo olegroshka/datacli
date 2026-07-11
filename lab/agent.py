@@ -116,8 +116,9 @@ def run(
 
         kind, payload = _parse_action(completion.text)
         if kind == "final":
+            narrative = _maybe_review(question, payload, findings, persona, llm)
             return AnswerBundle(
-                narrative=payload,
+                narrative=narrative,
                 findings=findings,
                 steps=step,
                 spent_usd=llm.budget.spent_usd,
@@ -173,6 +174,64 @@ def run(
         spent_usd=llm.budget.spent_usd,
         figures=figures,
     )
+
+
+def _evidence(findings: list[Finding], *, max_rows: int = 12) -> str:
+    parts = []
+    for i, f in enumerate(findings, 1):
+        header = " | ".join(f.columns)
+        body = "\n".join(
+            " | ".join("NULL" if v is None else str(v) for v in row)
+            for row in f.rows[:max_rows]
+        )
+        parts.append(f"Query {i}:\n{f.sql}\nResult:\n{header}\n{body}")
+    return "\n\n".join(parts) if parts else "(no queries were run)"
+
+
+def _maybe_review(
+    question: str,
+    draft: str,
+    findings: list[Finding],
+    persona: Persona,
+    llm: LLM,
+) -> str:
+    """Re-synthesise the FINAL answer with a stronger ``review_model`` if set.
+
+    The cheap/local loop does the grounded legwork; a more capable model writes the
+    final answer -- but only from the evidence, so grounding is preserved.
+    """
+    review = persona.review_model
+    if not review:
+        return draft
+    cfg = getattr(llm, "config", None)
+    if cfg is not None and cfg.resolve_model(review) == cfg.resolve_model(
+        persona.model
+    ):
+        return draft  # same underlying model -> nothing to gain
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                persona.role.strip()
+                + "\n\nYou are writing the FINAL answer. Use ONLY numbers that "
+                "appear in the evidence below; introduce no new figures. Be concise."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question:\n{question}\n\nGrounded evidence:\n"
+                f"{_evidence(findings)}\n\nDraft answer from a faster model:\n{draft}\n\n"
+                "Write the final grounded answer."
+            ),
+        },
+    ]
+    try:
+        completion = llm.complete(messages, model=review, temperature=0.0)
+    except BudgetExceeded:
+        return draft  # keep the draft rather than fail
+    return completion.text.strip() or draft
 
 
 def _run_python_step(

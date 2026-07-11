@@ -339,8 +339,11 @@ eodhd> lab config          # models / budget / cache / provider status
   plot that SQL can't express; figures embed in the report. Honestly a
   *trusted-local* convenience, **not** a hardened security sandbox — off by default.
 - **Tiered, cost-aware models** — pick per persona (`local` Ollama, `cheap`,
-  `mid`, `strong`); a response cache and a hard per-session budget keep spend
-  bounded. API keys come from the environment, never from config.
+  `mid`, `strong`); the multi-agent pipeline routes different roles to different
+  models; and a persona can set `review_model` to do the SQL/reasoning legwork on
+  the cheap/local model but synthesise the FINAL answer with a stronger one
+  (grounded in the same evidence). A response cache and a hard per-session budget
+  keep spend bounded. API keys come from the environment, never from config.
 
 - **Macro grounding (FRED + EODHD)** — `macro fetch --run` pulls ~40 FRED market
   series (rates, curve, credit spreads, VIX, FX, money, activity, conditions) into

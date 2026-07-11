@@ -177,3 +177,38 @@ def test_parse_action() -> None:
     assert lab_agent._parse_action("```sql\nSELECT 1\n```") == ("sql", "SELECT 1")
     assert lab_agent._parse_action("FINAL: done") == ("final", "done")
     assert lab_agent._parse_action("just text") == ("final", "just text")
+
+
+# --------------------------------------------------------------------------- #
+# review_model: cheap loop, stronger final synthesis
+# --------------------------------------------------------------------------- #
+def test_review_model_synthesises_final(tmp_path: Path) -> None:
+    persona = registry.Persona(name="a", model="local", review_model="mid", role="r")
+    llm = _scripted_llm(
+        tmp_path,
+        [
+            "```sql\nSELECT id FROM t\n```",  # local loop does the legwork
+            "FINAL: draft, 2 rows",  # local draft
+            "reviewed: there are exactly 2 rows",  # stronger model's synthesis
+        ],
+    )
+    bundle = lab_agent.run(
+        "how many rows?",
+        persona=persona,
+        llm=llm,
+        tools=tools.Tools(_con()),
+        schema_text="s",
+    )
+    assert bundle.narrative == "reviewed: there are exactly 2 rows"
+    assert len(bundle.findings) == 1  # the SQL still grounds the answer
+
+
+def test_review_model_skipped_when_same_model(tmp_path: Path) -> None:
+    persona = registry.Persona(name="a", model="local", review_model="local", role="r")
+    llm = _scripted_llm(
+        tmp_path, ["```sql\nSELECT id FROM t\n```", "FINAL: draft only"]
+    )
+    bundle = lab_agent.run(
+        "q", persona=persona, llm=llm, tools=tools.Tools(_con()), schema_text="s"
+    )
+    assert bundle.narrative == "draft only"  # no second call when models are equal
