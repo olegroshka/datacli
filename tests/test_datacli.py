@@ -64,6 +64,12 @@ def test_clear_command_exists_and_runs() -> None:
     app.do_clear("")  # must not raise off a TTY
 
 
+def test_exit_command_signals_stop() -> None:
+    app = datacli.DataCli()
+    assert hasattr(app, "do_exit")
+    assert app.do_exit("") is True  # returning True ends the cmd2 loop
+
+
 def test_argv_parses_string_and_arg_list() -> None:
     assert datacli.DataCli._argv("--fast --run") == ["--fast", "--run"]
 

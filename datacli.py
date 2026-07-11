@@ -141,7 +141,8 @@ class DataCli(cmd2.Cmd):
         self.current: str | None = None
         self.intro = (
             "datacli -- data operations shell. Type 'sources' to list, "
-            "'source <name>' to enter one, 'help' for commands, 'quit' to exit."
+            "'source <name>' to enter one, 'help' for commands, "
+            "'quit' (or 'exit') to leave."
         )
         self._apply_prompt()
         for noisy in (
@@ -222,6 +223,10 @@ class DataCli(cmd2.Cmd):
     def do_clear(self, _statement: object) -> None:
         """Clear the terminal screen."""
         console.clear()
+
+    def do_exit(self, statement: object) -> bool:
+        """Exit the shell (alias for quit)."""
+        return bool(self.do_quit(statement))
 
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
