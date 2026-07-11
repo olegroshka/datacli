@@ -129,7 +129,31 @@ class EodhdPlugin(SourcePlugin):
             return int(exc.code or 0)
 
 
-SOURCES: dict[str, SourcePlugin] = {"eodhd": EodhdPlugin()}
+class MacroPlugin(SourcePlugin):
+    """macro source -- FRED + EODHD macro series (a peer of eodhd, not part of it)."""
+
+    name = "macro"
+    summary = "FRED + EODHD macro series (rates, country indicators, index/FX)"
+    COMMANDS = ("status", "list", "fetch")
+
+    def command_names(self) -> list[str]:
+        return list(self.COMMANDS)
+
+    def detail(self) -> str:
+        from macro import registry as reg
+
+        return f"{len(reg.FRED_SERIES)} FRED + EODHD"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import macro.cli as macro_cli
+
+        try:
+            return int(macro_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
+SOURCES: dict[str, SourcePlugin] = {"eodhd": EodhdPlugin(), "macro": MacroPlugin()}
 
 
 # --------------------------------------------------------------------------- #
@@ -289,15 +313,25 @@ class DataCli(cmd2.Cmd):
         lab_cli.main(["investigate", *self._argv(statement)])
 
     def do_macro(self, statement: object) -> None:
-        """FRED macro data adapter:  macro list | status | fetch [--run]"""
+        """Shortcut to the macro source from anywhere:  macro list | status | fetch [--run]
+
+        `macro` is a first-class source (see `sources`); this is just a shortcut so
+        you don't have to `source macro` first. Equivalent to `source macro` + status.
+        """
         import macro.cli as macro_cli
 
         macro_cli.main(self._argv(statement))
 
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
-        """Show the source's data status."""
+        """Show the CURRENT source's data status (each source has its own datasets)."""
         self._dispatch("status", statement)
+        # A source's status only covers that source's datasets. Point at the peers
+        # so `status` never leaves the analyst wondering where the other data went.
+        others = [n for n in SOURCES if n != self.current]
+        if self.current is not None and others:
+            tips = "   ".join(f"`source {n}` -> status" for n in others)
+            console.print(f"[dim]other sources: {tips}[/dim]")
 
     def do_fetch(self, statement: object) -> None:
         """Fetch / refresh data (source-specific args, e.g. --fast --run)."""
@@ -310,6 +344,10 @@ class DataCli(cmd2.Cmd):
     def do_lanes(self, statement: object) -> None:
         """List the source's lanes / datasets."""
         self._dispatch("lanes", statement)
+
+    def do_list(self, statement: object) -> None:
+        """List the current source's catalog (macro: FRED series / indicators / symbols)."""
+        self._dispatch("list", statement)
 
     def do_probe(self, statement: object) -> None:
         """Ad-hoc availability probe (source-specific args)."""

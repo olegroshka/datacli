@@ -122,7 +122,14 @@ eodhd> status us_common         # ... scoped to one lane
 eodhd> fetch --fast --run       # bulk refresh (minutes, not hours)
 eodhd> qc us_common splits      # quality triage, drilled into one dataset
 eodhd> describe VAR.OL          # everything about one ticker
+eodhd> source macro             # switch to the macro source -> macro>
+macro> status                   # FRED + EODHD macro series and their coverage
 ```
+
+`status` reports the **current** source's datasets only — each source owns its own
+data — so it prints a pointer to the peer sources underneath. `macro` is a
+first-class source alongside `eodhd`; `macro status` is just a shortcut that saves
+you from `source macro` first.
 
 `sources` lists the available adapters and the commands each exposes:
 
@@ -133,6 +140,8 @@ eodhd> describe VAR.OL          # everything about one ticker
 ├─────────┼───────────────────────────────────────────┼───────────────────────────────────────────┤
 │ eodhd   │ US/UK-EU equities, ETFs, indices,         │ status fetch qc lanes probe describe find │
 │         │ fundamentals                              │ rows coverage sql config schema reindex   │
+│ macro   │ FRED + EODHD macro series (rates,          │ status list fetch                         │
+│         │ country indicators, index/FX)             │                                           │
 │ fred    │ FRED economic series (adapter; plugin     │ load-only (no ops tooling yet)            │
 │         │ deferred)                                 │                                           │
 │ yahoo   │ Yahoo Finance                             │ load-only (no ops tooling yet)            │

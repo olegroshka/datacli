@@ -53,9 +53,28 @@ def test_eodhd_plugin_command_names() -> None:
 
 def test_sources_registry() -> None:
     assert "eodhd" in datacli.SOURCES
-    # fred/yahoo are load-only adapters (operational plugins deferred).
-    assert "fred" not in datacli.SOURCES
-    assert "fred" in datacli.LOAD_ONLY
+    # macro is a first-class, operational source (peer of eodhd), not load-only.
+    assert "macro" in datacli.SOURCES
+    assert "macro" not in datacli.LOAD_ONLY
+    # yahoo is a load-only adapter (operational plugin deferred).
+    assert "yahoo" not in datacli.SOURCES
+    assert "yahoo" in datacli.LOAD_ONLY
+
+
+def test_macro_plugin_is_a_source() -> None:
+    plugin = datacli.SOURCES["macro"]
+    # the macro source exposes exactly its three verbs
+    assert plugin.command_names() == ["status", "list", "fetch"]
+    # and is enterable like any other source
+    assert "macro" in _completions(datacli.DataCli().complete_source("m", "source m", 7, 8))
+
+
+def test_list_is_a_source_scoped_command() -> None:
+    app = datacli.DataCli()
+    # `list` dispatches to the current source; macro provides it, eodhd does not
+    assert hasattr(app, "do_list")
+    assert "list" in datacli.SOURCES["macro"].command_names()
+    assert "list" not in datacli.EodhdPlugin().command_names()
 
 
 def test_clear_command_exists_and_runs() -> None:
