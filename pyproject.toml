@@ -26,6 +26,10 @@ lab = [
   "litellm>=1.50",
   "matplotlib>=3.7",   # for the opt-in restricted code executor's plots
 ]
+# MCP server: expose datacli's read-only data tools to Claude Code / Cursor / etc.
+mcp = [
+  "mcp>=1.2",
+]
 
 [tool.uv]
 # Runnable-scripts repo, not an installable package: uv manages the venv/deps

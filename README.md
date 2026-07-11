@@ -355,6 +355,20 @@ eodhd> lab config          # models / budget / cache / provider status
 
 Optional and lazily imported — the core shell runs without the `lab` extra.
 
+## Use your data from Claude Code / Cursor (MCP)
+
+datacli ships an **MCP server** that exposes its read-only data tools — guarded SQL
+over the DuckDB views, the schema, and the lane registry — so any MCP client can
+query your local snapshot directly.
+
+```powershell
+uv sync --extra mcp
+claude mcp add datacli -- uv run --extra mcp python mcp_server.py
+```
+
+Tools: `sql` (read-only `SELECT`/`WITH`, same guard as the lab), `describe_schema`,
+`list_lanes`. The connection includes the macro views when fetched.
+
 ## Configuration & where data lives
 
 `config` (no argument) shows the resolved data root and where it came from, plus
