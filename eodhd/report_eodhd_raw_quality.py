@@ -18,6 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import _render
 import pandas as pd
 from _datadir import EODHD_RAW_ROOT
 
@@ -96,6 +97,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--lane", choices=[*LANES.keys(), "all"], default="all")
     parser.add_argument(
+        "--dataset",
+        choices=["prices", "dividends", "splits"],
+        default=None,
+        help="Drill down to one dataset: show its coverage and all its flags",
+    )
+    parser.add_argument(
         "--as-of",
         dest="as_of",
         default=date.today().isoformat(),
@@ -147,6 +154,18 @@ def parse_args() -> argparse.Namespace:
         "--write-report",
         action="store_true",
         help="Persist `qc_summary.json` and `qc_flags.csv` into each audited lane root",
+    )
+    parser.add_argument(
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        help="Disable ANSI colour (also honours the NO_COLOR env var)",
+    )
+    parser.add_argument(
+        "--color",
+        dest="force_color",
+        action="store_true",
+        help="Force ANSI colour even when stdout is not a TTY",
     )
     return parser.parse_args()
 
@@ -1118,62 +1137,144 @@ def audit_lane(
     return summary, flags
 
 
-def print_lane_summary(
-    summary: dict[str, Any], flags: pd.DataFrame, *, max_flags: int
+def _coverage_fields(dataset_name: str, meta: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a prices/event dataset summary into common display fields."""
+    if dataset_name == "prices":
+        universe = meta.get("universe_pairs")
+        out_pairs = meta.get("pairs_in_prices")
+        dmin, dmax = meta.get("date_min"), meta.get("date_max")
+    else:
+        universe = None  # events have no standalone universe of their own
+        out_pairs = meta.get("pairs_in_events")
+        dmin, dmax = meta.get("event_date_min"), meta.get("event_date_max")
+    date_range = f"{dmin} → {dmax}" if dmin and str(dmin) != "None" else ""
+    return {
+        "universe": universe,
+        "out_pairs": out_pairs,
+        "state_pairs": meta.get("pairs_in_state"),
+        "rows": meta.get("rows"),
+        "range": date_range,
+        "flag_counts": meta.get("flag_counts") or {},
+    }
+
+
+def print_lane_report(
+    console: Any,
+    summary: dict[str, Any],
+    flags: pd.DataFrame,
+    *,
+    max_flags: int,
+    dataset_filter: str | None = None,
 ) -> None:
-    print(f"\n== {summary['lane']} ==")
-    prices = summary["datasets"]["prices"]
-    print(
-        "prices: "
-        f"universe={prices['universe_pairs']}, output_pairs={prices['pairs_in_prices']}, state_pairs={prices['pairs_in_state']}, "
-        f"rows={prices['rows']:,}, range={prices['date_min']} -> {prices['date_max']}"
-    )
-    print(
-        "price state: "
-        + ", ".join(f"{k}={v}" for k, v in prices["state_status_counts"].items())
-        + (
-            f"; flags={prices['flag_counts']}"
-            if prices["flag_counts"]
-            else "; flags={}"
-        )
-    )
+    """Render one lane's QC: banner verdict, coverage table, top issues, worst flags.
 
-    for dataset in ["dividends", "splits"]:
-        if dataset not in summary["datasets"]:
-            continue
-        meta = summary["datasets"][dataset]
-        print(
-            f"{dataset}: pairs_in_events={meta['pairs_in_events']}, state_pairs={meta['pairs_in_state']}, audit_pairs={meta['pairs_in_audit']}, rows={meta['rows']:,}"
-        )
-        print(
-            f"{dataset} state: "
-            + ", ".join(f"{k}={v}" for k, v in meta["state_status_counts"].items())
-            + (
-                f"; flags={meta['flag_counts']}"
-                if meta["flag_counts"]
-                else "; flags={}"
-            )
-        )
+    With ``dataset_filter`` set the report drills into a single dataset: its
+    coverage row plus *every* flag it carries (uncapped).
+    """
+    from rich.text import Text
 
-    if flags.empty:
-        print("flags: none")
+    lane = summary["lane"]
+    view = flags[flags["dataset"] == dataset_filter] if dataset_filter else flags
+    totals = summarize_flags(view) if dataset_filter else summary["total_flag_counts"]
+    errs, warns = totals.get("error", 0), totals.get("warning", 0)
+
+    banner = Text()
+    banner.append("QC ", style="bold")
+    banner.append(f"{_render.DIVIDER} {lane}", style="bold cyan")
+    if dataset_filter:
+        banner.append(f" {_render.DIVIDER} {dataset_filter}", style="bold")
+    if errs or warns:
+        banner.append("   ")
+        banner.append(f"✗ {errs} errors", style="bold red" if errs else "dim")
+        banner.append(f" {_render.DIVIDER} ", style="dim")
+        banner.append(f"⚠ {warns} warnings", style="yellow" if warns else "dim")
+    else:
+        banner.append("   ✓ clean", style="green")
+    console.print()
+    console.rule(banner, align="left", style="dim", characters="─")
+
+    # ---- coverage table ---------------------------------------------------- #
+    dataset_names = list(summary["datasets"])
+    if dataset_filter:
+        dataset_names = [d for d in dataset_names if d == dataset_filter]
+
+    cov = _render.minimal_table()
+    cov.add_column("dataset", no_wrap=True)
+    cov.add_column("universe", justify="right", no_wrap=True)
+    cov.add_column("out_pairs", justify="right", no_wrap=True)
+    cov.add_column("state", justify="right", no_wrap=True)
+    cov.add_column("rows", justify="right", no_wrap=True)
+    cov.add_column("range", no_wrap=True)
+    cov.add_column("err", justify="right", no_wrap=True)
+    cov.add_column("warn", justify="right", no_wrap=True)
+    for name in dataset_names:
+        fields = _coverage_fields(name, summary["datasets"][name])
+        cov.add_row(
+            Text(name, style=_render.KIND_HUE.get(name, "")),
+            _render.fmt_int(fields["universe"]),
+            _render.fmt_int(fields["out_pairs"]),
+            _render.fmt_int(fields["state_pairs"]),
+            _render.fmt_compact(fields["rows"]),
+            Text(fields["range"], style="dim"),
+            _render.counts_cell(fields["flag_counts"], key="error", style="red"),
+            _render.counts_cell(fields["flag_counts"], key="warning", style="yellow"),
+        )
+    console.print(cov)
+
+    if dataset_filter and dataset_filter in summary["datasets"]:
+        state_counts = summary["datasets"][dataset_filter].get(
+            "state_status_counts", {}
+        )
+        state_line = Text("  state  ", style="dim")
+        state_line.append_text(_render.state_cell(state_counts))
+        console.print(state_line)
+
+    if view.empty:
+        console.print(Text("  ✓ no flags", style="green"))
         return
 
-    print(f"flags: {summary['total_flag_counts']}")
-    if summary["issue_counts"]:
-        top_issues = list(summary["issue_counts"].items())[:5]
-        print(
-            "top issues: "
-            + ", ".join(f"{issue}={count}" for issue, count in top_issues)
-        )
-    top_flags = flags.head(max_flags)
+    # ---- top-issue histogram ---------------------------------------------- #
+    issue_counts = summary["issue_counts"]
+    if dataset_filter:
+        issue_counts = dict(summarize_issues(view))
+    if issue_counts:
+        issues = Text("  top issues  ", style="dim")
+        for i, (issue, count) in enumerate(list(issue_counts.items())[:5]):
+            if i:
+                issues.append(f" {_render.DIVIDER} ", style="dim")
+            issues.append(f"{issue} ", style="")
+            issues.append(str(count), style="bold")
+        console.print(issues)
+
+    # ---- worst offenders --------------------------------------------------- #
+    top_flags = view.head(max_flags)
+    tbl = _render.minimal_table()
+    tbl.add_column("", no_wrap=True)  # severity glyph
+    tbl.add_column("dataset", no_wrap=True)
+    tbl.add_column("ticker", no_wrap=True)
+    tbl.add_column("issue", no_wrap=True)
+    tbl.add_column("action", no_wrap=True)
+    tbl.add_column("detail", no_wrap=True, overflow="ellipsis", max_width=48)
     for row in top_flags.itertuples(index=False):
-        print(
-            f"- [{row.severity}] {row.dataset} {row.ticker}.{row.exchange}: {row.issue} -> {row.recommendation} ({row.detail})"
+        dataset_name = str(row.dataset)
+        tbl.add_row(
+            _render.severity_cell(str(row.severity)),
+            Text(dataset_name, style=_render.KIND_HUE.get(dataset_name, "")),
+            f"{row.ticker}.{row.exchange}",
+            str(row.issue),
+            _render.action_cell(str(row.recommendation)),
+            Text(str(row.detail), style="dim"),
         )
-    remaining = len(flags) - len(top_flags)
+    console.print(tbl)
+
+    remaining = len(view) - len(top_flags)
     if remaining > 0:
-        print(f"- ... {remaining} additional flags not shown")
+        # point at the dataset that owns the most hidden flags for a drill-down.
+        hidden = view.iloc[len(top_flags) :]
+        worst = hidden["dataset"].value_counts().index[0]
+        hint = Text(f"  … {remaining} more", style="dim")
+        hint.append(f"  →  qc {lane} {worst}", style="cyan")
+        console.print(hint)
 
 
 def maybe_write_outputs(
@@ -1187,27 +1288,51 @@ def maybe_write_outputs(
 
 
 def main() -> None:
+    from rich.text import Text
+
     args = parse_args()
     lane_names = list(LANES) if args.lane == "all" else [args.lane]
+    console = _render.make_console(
+        no_color=True if args.no_color else None,
+        force_color=args.force_color,
+    )
+    # a single-dataset drill-down shows every flag it owns; lane view stays capped.
+    max_flags = 10_000 if args.dataset else args.max_flags_per_lane
 
     any_flags = False
     for lane_name in lane_names:
         config = LANES[lane_name]
         summary, flags = audit_lane(config, args)
-        print_lane_summary(summary, flags, max_flags=args.max_flags_per_lane)
+        print_lane_report(
+            console,
+            summary,
+            flags,
+            max_flags=max_flags,
+            dataset_filter=args.dataset,
+        )
         if args.write_report:
             maybe_write_outputs(config, summary, flags)
-        any_flags = any_flags or not flags.empty
+        # honour the drill-down: the verdict reflects what was actually shown.
+        shown = flags[flags["dataset"] == args.dataset] if args.dataset else flags
+        any_flags = any_flags or not shown.empty
 
+    console.print()
     if args.write_report:
-        print("\nWrote qc_summary.json / qc_flags.csv into each audited lane root.")
-
+        console.print(
+            Text(
+                "Wrote qc_summary.json / qc_flags.csv into each audited lane root.",
+                style="dim",
+            )
+        )
     if any_flags:
-        print(
-            "\nQC report finished with actionable flags. Review the per-lane summaries above."
+        console.print(
+            Text(
+                "QC finished with actionable flags — review the per-lane reports above.",
+                style="yellow",
+            )
         )
     else:
-        print("\nQC report finished with no flags.")
+        console.print(Text("✓ QC finished with no flags.", style="green"))
 
 
 if __name__ == "__main__":

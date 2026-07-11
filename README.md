@@ -52,9 +52,11 @@ uv run python datacli.py
 ```
 data>  /sources                 # list data sources
 data>  /source eodhd            # enter a source context -> eodhd>
-eodhd> /status                  # what data we have, as of when
+eodhd> /status                  # colour-coded as-of dashboard (all lanes)
+eodhd> /status us_common        # ... scoped to one lane
 eodhd> /fetch --fast --run      # bulk refresh (minutes, not hours)
-eodhd> /qc                      # raw-data quality report
+eodhd> /qc                      # raw-data quality triage (all lanes)
+eodhd> /qc us_common splits     # ... drill into one lane + dataset
 ```
 The leading `/` is optional. `help` lists commands; `quit` exits. Explore verbs
 (`describe`/`find`/`rows`/`coverage`/`sql`) run in-process against a warm DuckDB

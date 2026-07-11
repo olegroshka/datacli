@@ -38,6 +38,7 @@ import pandas as pd
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _render  # noqa: E402
 from eodhd_datasets import RAW_EODHD  # noqa: E402
 from eodhd_datasets import (
     LANES,
@@ -49,19 +50,6 @@ from eodhd_datasets import (
 )
 
 DEFAULT_STALE_DAYS = 7
-
-DISPLAY_COLUMNS = [
-    "lane",
-    "dataset",
-    "last_data",
-    "coverage",
-    "fetched",
-    "rows",
-    "pairs",
-    "age_d",
-    "flag",
-    "status",
-]
 
 
 # --------------------------------------------------------------------------- #
@@ -318,26 +306,92 @@ def _fmt_fetched(value: str | None) -> str:
     return value.replace("T", " ").rstrip("Z")[:16]
 
 
-def render_console(records: list[dict[str, Any]]) -> str:
-    """Render an aligned plain-text table."""
-    rows = [
-        {
-            "lane": r["lane"],
-            "dataset": r["dataset"],
-            "last_data": r["last_data"] or "-",
-            "coverage": r["coverage"] or "-",
-            "fetched": _fmt_fetched(r["fetched"]),
-            "rows": _fmt_int(r["rows"]),
-            "pairs": _fmt_int(r["pairs"]),
-            "age_d": "-" if r["stale_days"] is None else str(r["stale_days"]),
-            "flag": _flag(r),
-            "status": _status_str(r),
-        }
-        for r in records
-    ]
-    frame = pd.DataFrame(rows, columns=DISPLAY_COLUMNS)
-    with pd.option_context("display.max_colwidth", 60, "display.width", 200):
-        return frame.to_string(index=False)
+EVENT_KINDS = {"dividends", "splits"}
+
+
+def _fmt_fetched_short(value: str | None) -> str:
+    """``2026-07-09T11:06:..`` -> ``07-09 11:06`` (drop the year to save width)."""
+    full = _fmt_fetched(value)
+    if full == "-" or len(full) < 16:
+        return full
+    return full[5:]  # strip "YYYY-"
+
+
+def print_status(
+    console: Any, records: list[dict[str, Any]], *, as_of: str, stale_days: int
+) -> None:
+    """Render the status dashboard: minimal box + lane grouping + semantic colour.
+
+    Lane is printed once per group; each dataset carries a kind-hued ``●`` dot; the
+    freshness anchor date, age and flag are coloured by staleness; the state
+    breakdown is coloured per token. Numbers are right-aligned and compact.
+    """
+    from rich.text import Text
+
+    table = _render.minimal_table(
+        title=f"EODHD status {_render.DIVIDER} as-of {as_of} "
+        f"{_render.DIVIDER} stale >{stale_days}d"
+    )
+    table.add_column("lane", no_wrap=True)
+    table.add_column("dataset", no_wrap=True)
+    table.add_column("last_data", no_wrap=True)
+    table.add_column("coverage", no_wrap=True)
+    table.add_column("fetched", no_wrap=True, style="dim")
+    table.add_column("rows", justify="right", no_wrap=True)
+    table.add_column("pairs", justify="right", no_wrap=True)
+    table.add_column("age", justify="right", no_wrap=True)
+    table.add_column("flag", no_wrap=True)
+    table.add_column("state", no_wrap=True)
+
+    prev_lane: str | None = None
+    for r in records:
+        kind = r.get("kind", "")
+        anchor = "coverage" if kind in EVENT_KINDS else "last_data"
+
+        dataset = Text()
+        dataset.append_text(_render.kind_dot(kind))
+        dataset.append(f" {r['dataset']}")
+
+        def _date(field: str) -> Text:
+            value = r.get(field) or "-"
+            if value == "-":
+                return Text("-", style="dim")
+            if field == anchor:
+                return Text(value, style=_render.freshness_style(r["stale_days"]))
+            return Text(value, style="dim")
+
+        lane_cell = "" if r["lane"] == prev_lane else r["lane"]
+        prev_lane = r["lane"]
+
+        table.add_row(
+            lane_cell,
+            dataset,
+            _date("last_data"),
+            _date("coverage"),
+            _fmt_fetched_short(r["fetched"]),
+            _render.fmt_compact(r["rows"]),
+            _render.fmt_int(r["pairs"]),
+            _render.age_cell(r["stale_days"]),
+            _render.flag_cell(_flag(r)),
+            _render.state_cell(r["status"]),
+        )
+
+    console.print(table)
+
+    fresh = sum(1 for r in records if r["stale"] is False)
+    stale = sum(1 for r in records if r["stale"] is True)
+    absent = sum(1 for r in records if r["source"] == "absent")
+    total_rows = sum(r["rows"] or 0 for r in records)
+    footer = Text()
+    footer.append(f"{fresh} fresh", style="green")
+    footer.append(f" {_render.DIVIDER} ", style="dim")
+    footer.append(f"{stale} stale", style="yellow" if stale else "dim")
+    footer.append(f" {_render.DIVIDER} ", style="dim")
+    footer.append(f"{absent} absent", style="red" if absent else "dim")
+    footer.append(f" {_render.DIVIDER} ", style="dim")
+    footer.append(f"≈{_render.fmt_compact(total_rows)} rows", style="dim")
+    footer.append(f" across {len(records)} datasets", style="dim")
+    console.print(footer)
 
 
 def render_markdown(
@@ -424,6 +478,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip the unregistered-lane discovery guard",
     )
+    parser.add_argument(
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        help="Disable ANSI colour (also honours the NO_COLOR env var)",
+    )
+    parser.add_argument(
+        "--color",
+        dest="force_color",
+        action="store_true",
+        help="Force ANSI colour even when stdout is not a TTY",
+    )
     return parser.parse_args(argv)
 
 
@@ -439,15 +505,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.json:
         print(json.dumps(records, indent=2))
     else:
-        print(
-            f"EODHD dataset status  --  as-of {args.as_of}  (stale > {args.stale_days}d)\n"
+        console = _render.make_console(
+            no_color=True if args.no_color else None,
+            force_color=args.force_color,
         )
-        print(render_console(records))
-        stale = [r for r in records if r["stale"]]
-        absent = [r for r in records if r["source"] == "absent"]
-        print(
-            f"\n{len(records)} datasets  |  {len(stale)} stale  |  {len(absent)} absent"
-        )
+        print_status(console, records, as_of=args.as_of, stale_days=args.stale_days)
 
     if not args.no_discovery:
         for warning in discovery_warnings():

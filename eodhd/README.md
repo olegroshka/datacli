@@ -242,15 +242,23 @@ Set-Location "C:\Users\olegr\PycharmProjects\btest"
 python -u tmp_poll_eodhd_progress.py
 ```
 
-Raw-data quality report:
+Raw-data quality report. The console output is a colour-coded triage view
+(severity glyphs, dataset-kind hues, action-cost colouring); pipe it or pass
+`--no-color` for plain text. Scope it by lane, and drill into a single dataset:
 
 ```powershell
 Set-Location "C:\Users\olegr\PycharmProjects\btest"
-uv run python eodhd/report_eodhd_raw_quality.py --lane all
+uv run python eodhd/cli.py qc                    # every lane (capped per lane)
+uv run python eodhd/cli.py qc us_common          # one lane
+uv run python eodhd/cli.py qc us_common splits   # drill-down: all flags for that dataset
+uv run python eodhd/cli.py status us_common      # as-of dashboard, one lane
 
-# write machine-readable per-lane outputs next to the raw data
+# the underlying script (flags spelled out) still works and can write reports:
 uv run python eodhd/report_eodhd_raw_quality.py --lane all --write-report
 ```
+
+`status`/`qc` take an optional positional `[lane]` (and `qc` a second `[dataset]`
+= `prices|dividends|splits`); any `--flags` after them are forwarded untouched.
 
 The QC report checks for:
 

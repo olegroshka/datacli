@@ -36,24 +36,26 @@ PROG = "uv run python eodhd/cli.py"
 
 # Commands that simply forward their arguments to an existing standalone script.
 DELEGATED: dict[str, str] = {
-    "status": "status_eodhd.py",
-    "qc": "report_eodhd_raw_quality.py",
     "probe": "probe_eodhd_availability.py",
 }
+
+# Scripts behind the positional-scoped commands (status/qc take `[lane] [dataset]`).
+STATUS_SCRIPT = "status_eodhd.py"
+QC_SCRIPT = "report_eodhd_raw_quality.py"
 
 # Entity-centric exploration verbs, all handled by explore_eodhd.py (DuckDB).
 EXPLORE_COMMANDS = ("describe", "find", "rows", "coverage", "sql", "schema", "reindex")
 
 # One-line descriptions for the top-level help, in display order.
 COMMAND_HELP: list[tuple[str, str]] = [
-    ("status", "Show what data we have and as of when (all lanes)"),
+    ("status", "Show what data we have and as of when (status [lane])"),
     ("refresh", "Download the latest data across lanes (dry-run unless --run)"),
     ("describe", "Everything about one ticker, across datasets"),
     ("find", "Locate a ticker (lane / exchange / datasets)"),
     ("rows", "Show the actual rows for a ticker in a dataset"),
     ("coverage", "Do the datasets cover a ticker equally?"),
     ("sql", "Raw DuckDB query over the datasets"),
-    ("qc", "Run raw-data quality checks"),
+    ("qc", "Run raw-data quality checks (qc [lane] [dataset])"),
     ("probe", "Probe ad-hoc ticker availability (read-only; no writes)"),
     ("lanes", "List registered lanes, datasets, and their fetchers"),
     ("config", "Show/edit config (config set data-root <path>)"),
@@ -387,6 +389,40 @@ def delegate(script: str, argv: list[str]) -> int:
     ).returncode
 
 
+def _leading_positionals(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Split off the leading non-flag tokens (before the first ``-x``).
+
+    Lets ``qc us_common splits --as-of 2026-01-01`` read the lane/dataset as
+    positionals while still forwarding any ``--flags`` untouched.
+    """
+    i = 0
+    while i < len(argv) and not argv[i].startswith("-"):
+        i += 1
+    return argv[:i], argv[i:]
+
+
+def cmd_status(argv: list[str]) -> int:
+    """`status [lane] [--flags]` -> status_eodhd.py with --lane translated."""
+    pos, rest = _leading_positionals(argv)
+    forwarded = (["--lane", pos[0]] if pos else []) + rest
+    return delegate(STATUS_SCRIPT, forwarded)
+
+
+def cmd_qc(argv: list[str]) -> int:
+    """`qc [lane] [dataset] [--flags]` -> report_eodhd_raw_quality.py.
+
+    First positional is the lane, second the dataset drill-down; both optional.
+    """
+    pos, rest = _leading_positionals(argv)
+    forwarded: list[str] = []
+    if pos:
+        forwarded += ["--lane", pos[0]]
+    if len(pos) > 1:
+        forwarded += ["--dataset", pos[1]]
+    forwarded += rest
+    return delegate(QC_SCRIPT, forwarded)
+
+
 # --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
@@ -403,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_refresh(rest)
     if command == "config":
         return cmd_config(rest)
+    if command == "status":
+        return cmd_status(rest)
+    if command == "qc":
+        return cmd_qc(rest)
     if command in EXPLORE_COMMANDS:
         return delegate("explore_eodhd.py", [command, *rest])
     if command in DELEGATED:
