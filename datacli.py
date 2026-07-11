@@ -219,6 +219,10 @@ class DataCli(cmd2.Cmd):
         self.current = None
         self._apply_prompt()
 
+    def do_clear(self, _statement: object) -> None:
+        """Clear the terminal screen."""
+        console.clear()
+
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
         """Show the source's data status."""

@@ -58,6 +58,12 @@ def test_sources_registry() -> None:
     assert "fred" in datacli.LOAD_ONLY
 
 
+def test_clear_command_exists_and_runs() -> None:
+    app = datacli.DataCli()
+    assert hasattr(app, "do_clear")
+    app.do_clear("")  # must not raise off a TTY
+
+
 def test_argv_parses_string_and_arg_list() -> None:
     assert datacli.DataCli._argv("--fast --run") == ["--fast", "--run"]
 
