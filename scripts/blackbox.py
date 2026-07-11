@@ -169,7 +169,14 @@ SCENARIOS: list[Scenario] = [
                 ("FRED series", "EODHD indicators"),
                 "Two macro providers, one registry.",
             ),
-            Step("macro status", ("macro",), "What macro data is on disk."),
+            Step(
+                "macro status",
+                (
+                    "FRED",
+                    "EODHD",
+                ),  # robust to empty ("no FRED data") and populated states
+                "What macro data is on disk.",
+            ),
             Step(
                 'investigate "relate dividend coverage across lanes to fetch freshness"',
                 ("synthesis",),
@@ -272,6 +279,23 @@ def _type_out(console: Any, prompt: str, cmd: str, speed: float) -> None:
     console.print()
 
 
+def _agentic_ready() -> tuple[bool, str]:
+    """Is an LLM reachable? (lab extra installed + an API key or a live Ollama)."""
+    import importlib.util
+
+    if importlib.util.find_spec("litellm") is None:
+        return False, "lab extra not installed (uv sync --extra lab)"
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"):
+        return True, "API key set"
+    try:
+        import urllib.request
+
+        urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1)
+        return True, "ollama reachable"
+    except Exception:
+        return False, "no model (set an API key or start Ollama)"
+
+
 def _agentic_notice(console: Any) -> None:
     from rich.panel import Panel
 
@@ -293,6 +317,17 @@ _STATUS_STYLE = {"PASS": "green", "FAIL": "bold red", "BOUNDARY": "yellow"}
 
 def run(scenarios: list[Scenario], *, demo: bool, live: bool, speed: float) -> int:
     console = _console()
+    # In a demo, run the agentic steps automatically when a model is reachable --
+    # only fall back to the "set up agentic mode" notice when nothing is available.
+    if demo and not live:
+        ready, reason = _agentic_ready()
+        if ready:
+            live = True
+            console.print(
+                f"[dim]agentic mode: ready ({reason}) — running live steps[/dim]"
+            )
+        else:
+            console.print(f"[dim]agentic mode: {reason} — live steps show setup[/dim]")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     jsonl = (LOG_DIR / f"blackbox_{stamp}.jsonl").open("w", encoding="utf-8")
