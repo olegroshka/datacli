@@ -229,6 +229,12 @@ class DataCli(cmd2.Cmd):
         """Exit the shell (alias for quit)."""
         return bool(self.do_quit(statement))
 
+    def do_lab(self, statement: object) -> None:
+        """Raw Data Lab (grounded EDA copilot):  lab config"""
+        import lab.cli as lab_cli  # lazy: keeps shell startup free of lab deps
+
+        lab_cli.main(self._argv(statement))
+
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
         """Show the source's data status."""
@@ -342,6 +348,9 @@ class DataCli(cmd2.Cmd):
 
     def complete_source(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self.basic_complete(text, line, begidx, endidx, [*SOURCES, *LOAD_ONLY])
+
+    def complete_lab(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(text, line, begidx, endidx, {1: ("config",)})
 
 
 def main() -> int:

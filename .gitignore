@@ -18,6 +18,7 @@ datacli.toml
 # Local data / caches (raw snapshots live in the btest sibling by default)
 /data/
 local_cache/
+.lab_cache/
 *.log
 
 # OS / editor

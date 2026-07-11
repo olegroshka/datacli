@@ -8,3 +8,22 @@
 
 [eodhd]
 data_root = "C:/path/to/your/data/raw/eodhd"
+
+# ---------------------------------------------------------------------------
+# Raw Data Lab (optional; `uv sync --extra lab`). API keys come from the
+# environment (ANTHROPIC_API_KEY / OPENAI_API_KEY / ...), never from this file.
+# See `lab config` for the resolved view.
+# ---------------------------------------------------------------------------
+[lab]
+default_persona = "analyst"
+# cache_dir = ".lab_cache"          # relative to the repo; git-ignored
+
+[lab.budget]
+per_session_usd = 1.00              # hard ceiling; the agent stops when reached
+warn_usd = 0.50
+
+[lab.models]                        # tier -> model id (LiteLLM syntax)
+local  = "ollama/qwen2.5-coder:7b"  # fits a 12GB GPU; strong at text-to-SQL
+cheap  = "openai/gpt-4o-mini"
+mid    = "anthropic/claude-sonnet-5"
+strong = "anthropic/claude-opus-4-8"

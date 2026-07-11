@@ -1,6 +1,6 @@
 # Raw Data Lab — Design
 
-Status: **design approved, Phase 0 pending** · Owner: datacli · Last updated: 2026-07-11
+Status: **Phase 0 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
 
 The Raw Data Lab turns datacli from a data-ops shell into a **grounded EDA
 copilot for the pre-signal stage** — the exploratory, data-quality, and
@@ -122,7 +122,7 @@ per_session_usd = 1.00            # hard ceiling; agent stops when hit
 warn_usd = 0.50
 
 [lab.models]                      # tier -> concrete model id (LiteLLM syntax)
-local  = "ollama/llama3.1"
+local  = "ollama/qwen2.5-coder:7b"   # fits a 12GB GPU; strong at text-to-SQL
 cheap  = "openai/gpt-4o-mini"
 mid    = "anthropic/claude-sonnet-5"
 strong = "anthropic/claude-opus-4-8"

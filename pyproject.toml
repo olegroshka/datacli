@@ -20,6 +20,11 @@ dev = [
   "mypy>=1.10",
   "pandas-stubs",
 ]
+# Raw Data Lab (LLM-backed EDA copilot). Optional and lazily imported, so the
+# core shell runs without it. `uv sync --extra lab` to enable the agents.
+lab = [
+  "litellm>=1.50",
+]
 
 [tool.uv]
 # Runnable-scripts repo, not an installable package: uv manages the venv/deps
