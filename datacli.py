@@ -27,15 +27,14 @@ from pathlib import Path
 from typing import Any
 
 import cmd2
-from rich.console import Console
-from rich.table import Table
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE / "eodhd"))
+import _render  # type: ignore[import-not-found]  # noqa: E402
 import cli as eodhd_cli  # type: ignore[import-not-found]  # noqa: E402
 from eodhd_datasets import LANES  # type: ignore[import-not-found]  # noqa: E402
 
-console = Console()
+console = _render.make_console()
 
 # Data-source adapters that can currently only *load* (no ops tooling yet) --
 # shown in `sources` for context so the roadmap is visible.
@@ -188,7 +187,7 @@ class DataCli(cmd2.Cmd):
     # ----- global commands -------------------------------------------------- #
     def do_sources(self, _statement: object) -> None:
         """List data sources."""
-        table = Table(title="data sources", title_style="bold")
+        table = _render.boxed_table(title="data sources")
         table.add_column("source", style="cyan")
         table.add_column("summary")
         table.add_column("commands")

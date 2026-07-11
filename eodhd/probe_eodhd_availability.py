@@ -26,6 +26,7 @@ import pandas as pd
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _render  # noqa: E402
 from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_fundamentals import _get_api_key  # noqa: E402
 
@@ -227,12 +228,12 @@ def main() -> None:
             out[c] = pd.NA
     out = out[cols].sort_values("first_date", na_position="last")
 
-    with pd.option_context("display.max_columns", None, "display.width", 200):
-        print(out.to_string(index=False))
+    console = _render.make_console()
+    console.print(_render.df_table(out, title=f"EODHD probe ({len(out)} ticker(s))"))
 
     if args.out_csv:
         out.to_csv(args.out_csv, index=False)
-        print(f"\nWrote summary -> {args.out_csv}")
+        console.print(f"[dim]Wrote summary -> {args.out_csv}[/dim]")
 
 
 if __name__ == "__main__":

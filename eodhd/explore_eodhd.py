@@ -30,6 +30,7 @@ from typing import Any
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _render  # type: ignore[import-not-found]  # noqa: E402
 import schema as sch  # type: ignore[import-not-found]  # noqa: E402
 from _datadir import EODHD_RAW_ROOT  # type: ignore[import-not-found]  # noqa: E402
 from eodhd_datasets import LANES  # type: ignore[import-not-found]  # noqa: E402
@@ -71,9 +72,7 @@ META_PATH = EODHD_RAW_ROOT / "_datacli_meta.json"
 
 
 def _console():
-    from rich.console import Console
-
-    return Console()
+    return _render.make_console()
 
 
 # --------------------------------------------------------------------------- #
@@ -202,13 +201,13 @@ def _dataset_summary(
 
 
 def describe(con: Any, spec: str) -> int:
-    from rich.table import Table
+    from rich.text import Text
 
     console = _console()
     ticker, exchange = parse_ticker(spec)
     cond, params = _where(ticker, exchange)
 
-    table = Table(title=str(spec), title_style="bold")
+    table = _render.boxed_table(title=str(spec))
     for col in (
         "dataset",
         "present",
@@ -218,7 +217,7 @@ def describe(con: Any, spec: str) -> int:
         "coverage",
         "state",
     ):
-        table.add_column(col)
+        table.add_column(col, justify="right" if col == "rows" else "left")
 
     lanes_seen: set[str] = set()
     cov_values: dict[str, str] = {}
@@ -230,13 +229,13 @@ def describe(con: Any, spec: str) -> int:
         if kind != "fundamentals" and cov:
             cov_values[kind] = cov
         table.add_row(
-            kind,
-            "yes" if n else "[dim]no[/dim]",
+            Text(kind, style=_render.KIND_HUE.get(kind, "")),
+            _render.yesno_cell(bool(n)),
             f"{n:,}" if n else "-",
             dmin or "-",
             dmax or "-",
             cov or "-",
-            status or "-",
+            _render.status_token(status),
         )
 
     where = ", ".join(sorted(lanes_seen)) if lanes_seen else "[red]not found[/red]"
@@ -270,8 +269,6 @@ def _state_lookup(
 
 
 def find(con: Any, pattern: str) -> int:
-    from rich.table import Table
-
     console = _console()
     like = f"%{pattern.strip().upper()}%"
     rows: dict[tuple[str, str, str], set[str]] = {}
@@ -299,11 +296,18 @@ def find(con: Any, pattern: str) -> int:
     if not rows:
         console.print(f"[yellow]no ticker matches[/yellow] '{pattern}'")
         return 0
-    table = Table(title=f"matches for '{pattern}' ({len(rows)})", title_style="bold")
+    from rich.text import Text
+
+    table = _render.boxed_table(title=f"matches for '{pattern}' ({len(rows)})")
     for col in ("ticker", "exchange", "lane", "datasets"):
         table.add_column(col)
     for (ticker, exchange, lane), kinds in sorted(rows.items()):
-        table.add_row(ticker, exchange, lane, " ".join(sorted(kinds)))
+        datasets = Text()
+        for i, kind in enumerate(sorted(kinds)):
+            if i:
+                datasets.append(" ")
+            datasets.append(kind, style=_render.KIND_HUE.get(kind, ""))
+        table.add_row(Text(ticker, style="bold"), exchange, lane, datasets)
     console.print(table)
     return 0
 
@@ -334,18 +338,22 @@ def rows(con: Any, spec: str, dataset: str, head: int, cols: str | None) -> int:
     if df.empty:
         console.print(f"[yellow]{spec} not present in {dataset}[/yellow]")
         return 0
-    console.print(f"[bold]{spec}[/bold] in [cyan]{dataset}[/cyan] (latest {len(df)}):")
-    console.print(df.to_string(index=False))
+    hue = _render.KIND_HUE.get(dataset, "cyan")
+    console.print(
+        _render.df_table(
+            df, title=f"{spec} in [{hue}]{dataset}[/{hue}] (latest {len(df)})"
+        )
+    )
     return 0
 
 
 def coverage(con: Any, spec: str) -> int:
-    from rich.table import Table
+    from rich.text import Text
 
     console = _console()
     ticker, exchange = parse_ticker(spec)
     cond, params = _where(ticker, exchange)
-    table = Table(title=f"coverage: {spec}", title_style="bold")
+    table = _render.boxed_table(title=f"coverage: {spec}")
     for col in ("dataset", "coverage_through", "last_data", "status"):
         table.add_column(col)
     cov_values: dict[str, str] = {}
@@ -355,7 +363,12 @@ def coverage(con: Any, spec: str) -> int:
             continue
         if kind != "fundamentals" and cov:
             cov_values[kind] = cov
-        table.add_row(kind, cov or "-", asof or "-", status or "-")
+        table.add_row(
+            Text(kind, style=_render.KIND_HUE.get(kind, "")),
+            cov or "-",
+            asof or "-",
+            _render.status_token(status),
+        )
     console.print(table)
     if not cov_values:
         console.print("[yellow]no state coverage found[/yellow]")
@@ -375,10 +388,14 @@ def run_sql(con: Any, query: str, limit: int) -> int:
     except Exception as exc:
         console.print(f"[red]{type(exc).__name__}: {exc}[/red]")
         return 1
+    caption = None
     if len(df) > limit:
-        console.print(f"[dim](showing first {limit} of {len(df)} rows)[/dim]")
+        caption = f"showing first {limit} of {len(df):,} rows"
         df = df.head(limit)
-    console.print(df.to_string(index=False) if not df.empty else "[dim](no rows)[/dim]")
+    if df.empty:
+        console.print("[dim](no rows)[/dim]")
+    else:
+        console.print(_render.df_table(df, caption=caption))
     return 0
 
 
@@ -395,31 +412,53 @@ def _load_meta() -> dict[str, Any]:
 
 
 def cmd_schema(con: Any) -> int:
+    from rich.text import Text
+
     console = _console()
-    console.print(f"declared SCHEMA_VERSION = [bold]{sch.SCHEMA_VERSION}[/bold]")
     meta = _load_meta()
     if meta:
-        console.print(
-            f"on-disk index: schema_version={meta.get('schema_version', '?')}, "
-            f"indexed_at={meta.get('indexed_at', '?')}"
+        caption = (
+            f"on-disk index: schema v{meta.get('schema_version', '?')}, "
+            f"indexed {meta.get('indexed_at', '?')}"
         )
     else:
-        console.print("[dim]no index/meta yet -- run `reindex`[/dim]")
+        caption = "no index yet -- run `reindex`"
+
+    table = _render.boxed_table(
+        title=f"schema  (declared SCHEMA_VERSION {sch.SCHEMA_VERSION})",
+        caption=caption,
+    )
+    table.add_column("dataset")
+    table.add_column("canonical", justify="right")
+    table.add_column("missing")
+    table.add_column("extra", justify="right")
     for kind in DATASETS:
         raw = _raw_columns(con, kind)
         if not raw:
-            console.print(f"[dim]{kind}: no data[/dim]")
+            table.add_row(
+                Text(kind, style=_render.KIND_HUE.get(kind, "")),
+                Text("no data", style="dim"),
+                "",
+                "",
+            )
             continue
         d = sch.diff(kind, raw)
         canon = sch.canonical_columns(kind)
-        line = (
-            f"[cyan]{kind}[/cyan]: {len(d['present'])}/{len(canon)} canonical present"
+        complete = not d["missing"]
+        table.add_row(
+            Text(kind, style=_render.KIND_HUE.get(kind, "")),
+            Text(
+                f"{len(d['present'])}/{len(canon)}",
+                style="green" if complete else "yellow",
+            ),
+            (
+                Text("-", style="dim")
+                if complete
+                else Text(", ".join(d["missing"]), style="yellow")
+            ),
+            Text(f"+{len(d['extra'])}" if d["extra"] else "-", style="dim"),
         )
-        if d["missing"]:
-            line += f"  [yellow]missing: {', '.join(d['missing'])}[/yellow]"
-        if d["extra"]:
-            line += f"  (+{len(d['extra'])} extra cols)"
-        console.print(line)
+    console.print(table)
     return 0
 
 

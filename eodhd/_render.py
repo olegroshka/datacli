@@ -17,6 +17,7 @@ import os
 import sys
 from typing import Any, Mapping
 
+import pandas as pd
 from rich import box
 from rich.console import Console
 from rich.table import Table
@@ -124,6 +125,65 @@ def minimal_table(
     )
 
 
+def boxed_table(
+    *, title: str | None = None, caption: str | None = None, **kwargs: Any
+) -> Table:
+    """A framed table (heavy header rule + light grid) for narrow reference views.
+
+    The heavier sibling of :func:`minimal_table`; shares the same header/title
+    styling so the two read as one family. Right for small, look-up-style tables
+    (sources, config, one ticker's datasets) rather than wide dashboards.
+    """
+    return Table(
+        box=box.HEAVY_HEAD,
+        title=title,
+        title_style="bold",
+        caption=caption,
+        caption_style="dim",
+        header_style="bold",
+        **kwargs,
+    )
+
+
+def yesno_cell(present: bool) -> Text:
+    """``✓ yes`` (green) / ``· no`` (dim) — presence with a glyph, not colour alone."""
+    return Text("✓ yes", style="green") if present else Text("· no", style="dim")
+
+
+def _fmt_cell(value: Any) -> str:
+    """Format one DataFrame value: ``-`` for NA, grouped ints, tidy floats."""
+    if pd.isna(value):
+        return "-"
+    if isinstance(value, bool):
+        return str(value)
+    if pd.api.types.is_integer(value):
+        return f"{int(value):,}"
+    if pd.api.types.is_float(value):
+        f = float(value)
+        return f"{f:,.2f}" if abs(f) >= 1_000_000 else f"{f:.6g}"
+    return str(value)
+
+
+def df_table(
+    df: pd.DataFrame, *, title: str | None = None, caption: str | None = None
+) -> Table:
+    """Render a DataFrame as a minimal Rich table (numeric columns right-aligned).
+
+    Values are formatted losslessly-enough for display (grouped integers, ``%g``
+    floats) so ad-hoc ``rows``/``sql``/``probe`` output looks like the rest of the
+    tool instead of a raw pandas dump.
+    """
+    table = minimal_table(title=title, caption=caption)
+    for col in df.columns:
+        is_num = pd.api.types.is_numeric_dtype(
+            df[col]
+        ) and not pd.api.types.is_bool_dtype(df[col])
+        table.add_column(str(col), justify="right" if is_num else "left", no_wrap=True)
+    for _, row in df.iterrows():
+        table.add_row(*[_fmt_cell(row[col]) for col in df.columns])
+    return table
+
+
 # --------------------------------------------------------------------------- #
 # cell builders (return Rich Text so colour degrades to plain cleanly)
 # --------------------------------------------------------------------------- #
@@ -181,6 +241,13 @@ def state_cell(counts: Mapping[str, Any] | str) -> Text:
         text.append(f"{name} ", style=style)
         text.append(f"{value:,}" if isinstance(value, int) else str(value), style=style)
     return text
+
+
+def status_token(status: str | None) -> Text:
+    """Colour a single fetch-status token (``ok`` green, ``empty`` dim, ...)."""
+    if not status or status == "-":
+        return Text("-", style="dim")
+    return Text(status, style=STATE_TOKEN_STYLE.get(status, "yellow"))
 
 
 def counts_cell(counts: Mapping[str, int] | None, *, key: str, style: str) -> Text:

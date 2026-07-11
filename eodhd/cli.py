@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _render  # noqa: E402
 from eodhd_datasets import LANES  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -111,19 +112,39 @@ def cmd_lanes(argv: list[str]) -> int:
     )
     parser.parse_args(argv)
 
-    print(f"EODHD lanes ({len(LANES)}):\n")
+    from rich.text import Text
+
+    console = _render.make_console()
+    table = _render.minimal_table(title=f"EODHD lanes ({len(LANES)})")
+    table.add_column("lane", no_wrap=True)
+    table.add_column("region / class", no_wrap=True, style="dim")
+    table.add_column("dataset", no_wrap=True)
+    table.add_column("fetcher", no_wrap=True)
+
     for lane in LANES.values():
-        print(f"{lane.name}   [{lane.region} / {lane.asset_class}]")
-        if lane.universe_fetcher:
-            print(f"    universe      {lane.universe_fetcher}")
-        else:
-            print("    universe      (derived from another stage)")
+        region = f"{lane.region} / {lane.asset_class}"
+        universe = lane.universe_fetcher or "(derived from another stage)"
+        table.add_row(
+            lane.name,
+            region,
+            Text("universe", style="dim"),
+            Text(universe, style="" if lane.universe_fetcher else "dim"),
+        )
         for ds in lane.datasets:
-            snapshot = "  [snapshot]" if ds.state is None else ""
             fetcher = ds.fetcher or "(no fetcher)"
             extra = (" " + " ".join(ds.fetcher_args)) if ds.fetcher_args else ""
-            print(f"    {ds.display:<15} {fetcher}{extra}{snapshot}")
-        print()
+            snapshot = "  [snapshot]" if ds.state is None else ""
+            dataset = Text()
+            dataset.append_text(_render.kind_dot(ds.kind))
+            dataset.append(f" {ds.display}")
+            table.add_row(
+                "",
+                "",
+                dataset,
+                Text(f"{fetcher}{extra}", style="dim") + Text(snapshot, style="cyan"),
+            )
+        table.add_section()
+    console.print(table)
     return 0
 
 
@@ -297,14 +318,39 @@ def cmd_refresh(argv: list[str]) -> int:
         print("Nothing to do (no matching datasets for the selected lanes/kinds).")
         return 0
 
+    from rich.text import Text
+
+    console = _render.make_console()
     mode = "RUN" if args.run else "DRY-RUN"
-    print(f"Refresh plan ({mode}) - {len(steps)} step(s):\n")
+    mode_style = "bold red" if args.run else "yellow"
+    title = Text("refresh plan  ", style="bold")
+    title.append(f"[{mode}]", style=mode_style)
+    title.append(f"  {len(steps)} step(s)", style="dim")
+    table = _render.minimal_table(title=title)  # type: ignore[arg-type]
+    table.add_column("#", justify="right", style="dim", no_wrap=True)
+    table.add_column("lane", no_wrap=True)
+    table.add_column("dataset", no_wrap=True)
+    table.add_column("command", no_wrap=True, style="dim")
+    prev_lane: str | None = None
     for i, step in enumerate(steps, 1):
-        print(f"  {i:>2}. {step.lane:<16} {step.kind:<12} {step.display()}")
+        kind = Text()
+        kind.append_text(_render.kind_dot(step.kind))
+        kind.append(f" {step.kind}")
+        table.add_row(
+            str(i),
+            "" if step.lane == prev_lane else step.lane,
+            kind,
+            step.display(),
+        )
+        prev_lane = step.lane
+    console.print(table)
 
     if not args.run:
-        print(
-            f"\nDry-run only. Re-run with --run to execute (hits the paid EODHD API)."
+        console.print(
+            Text(
+                "dry-run only — re-run with --run to execute (hits the paid EODHD API).",
+                style="dim",
+            )
         )
         return 0
 
@@ -361,21 +407,39 @@ def cmd_config(argv: list[str]) -> int:
         print(cfg.get(section, key, "") or "")
         return 0
 
+    from rich.text import Text
+
     root, source = cfg.eodhd_data_root()
-    exists = "exists" if root.exists() else "MISSING"
+    exists_ok = root.exists()
     try:
         from fetch_eodhd_eu_fundamentals import _get_api_key
 
         api = _get_api_key()
         masked = ("****" + api[-4:]) if len(api) >= 4 else "set"
+        api_set = True
     except Exception:
         masked = "NOT SET"
-    print("datacli config (eodhd):")
-    print(f"  data-root      {root}  ({source}, {exists})")
-    print(f"  config file    {cfg.CONFIG_PATH}")
-    print(f"  EODHD_API_KEY  {masked}")
-    print(f"  lanes          {', '.join(LANES)}")
-    print("\nset with:  config set data-root <path>")
+        api_set = False
+
+    console = _render.make_console()
+    table = _render.boxed_table(
+        title="datacli config (eodhd)",
+        caption="set with:  config set data-root <path>",
+    )
+    table.add_column("setting", style="cyan", no_wrap=True)
+    table.add_column("value")
+
+    root_val = Text(str(root))
+    root_val.append(f"  ({source}, ", style="dim")
+    root_val.append(
+        "exists" if exists_ok else "MISSING", style="green" if exists_ok else "red"
+    )
+    root_val.append(")", style="dim")
+    table.add_row("data-root", root_val)
+    table.add_row("config file", Text(str(cfg.CONFIG_PATH), style="dim"))
+    table.add_row("EODHD_API_KEY", Text(masked, style="green" if api_set else "red"))
+    table.add_row("lanes", Text(", ".join(LANES), style="dim"))
+    console.print(table)
     return 0
 
 

@@ -69,6 +69,59 @@ def test_counts_cell_dims_zero() -> None:
     assert hot.plain == "7" and hot.style == "red"
 
 
+def test_status_token() -> None:
+    assert _render.status_token("ok").style == "green"
+    assert _render.status_token("up_to_date").style == "cyan"
+    assert _render.status_token("empty").style == "dim"
+    assert _render.status_token(None).plain == "-"
+    # unknown status still renders (yellow), never crashes
+    assert _render.status_token("weird").plain == "weird"
+
+
+def test_yesno_cell() -> None:
+    assert "✓" in _render.yesno_cell(True).plain
+    assert _render.yesno_cell(True).style == "green"
+    assert "no" in _render.yesno_cell(False).plain
+    assert _render.yesno_cell(False).style == "dim"
+
+
+def test_fmt_cell() -> None:
+    import numpy as np
+    import pandas as pd
+
+    assert _render._fmt_cell(pd.NA) == "-"
+    assert _render._fmt_cell(float("nan")) == "-"
+    assert _render._fmt_cell(np.int64(2595)) == "2,595"
+    assert _render._fmt_cell(1234) == "1,234"
+    assert _render._fmt_cell(0.01644) == "0.01644"
+    # large floats avoid scientific notation
+    assert _render._fmt_cell(12_660_764.0) == "12,660,764.00"
+    assert _render._fmt_cell("VAR.OL") == "VAR.OL"
+    assert _render._fmt_cell(True) == "True"
+
+
+def test_df_table_columns_and_alignment() -> None:
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {"ticker": ["AAA", "BBB"], "rows": [10, 200], "price": [1.5, 2.25]}
+    )
+    table = _render.df_table(df, title="t")
+    assert [c.header for c in table.columns] == ["ticker", "rows", "price"]
+    # numeric columns right-aligned, string columns left
+    assert table.columns[0].justify == "left"
+    assert table.columns[1].justify == "right"
+    assert table.columns[2].justify == "right"
+    assert table.row_count == 2
+
+
+def test_boxed_vs_minimal_share_header_style() -> None:
+    boxed = _render.boxed_table(title="x")
+    minimal = _render.minimal_table(title="x")
+    assert boxed.header_style == minimal.header_style == "bold"
+    assert boxed.title_style == minimal.title_style == "bold"
+
+
 def test_make_console_no_color() -> None:
     con = _render.make_console(no_color=True)
     assert con.no_color is True
