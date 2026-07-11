@@ -129,6 +129,15 @@ def test_budget_ceiling_raises(tmp_path: Path) -> None:
         llm.complete([{"role": "user", "content": "b"}], model="mid")
 
 
+def test_litellm_policy_drops_unsupported_params() -> None:
+    # Opus 4.8 (and other reasoning tiers) only accept temperature=1, so the
+    # real-call path must set drop_params so temperature=0 is dropped, not fatal.
+    litellm = pytest.importorskip("litellm")
+    litellm.drop_params = False  # ensure the binding actually flips it
+    assert lab_models.LLM._litellm() is litellm
+    assert litellm.drop_params is True
+
+
 # --------------------------------------------------------------------------- #
 # types
 # --------------------------------------------------------------------------- #

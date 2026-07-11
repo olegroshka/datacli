@@ -88,18 +88,33 @@ class LLM:
         )
 
     # -- lazy LiteLLM bindings (only touched on a real, uncached call) -------- #
+    @staticmethod
+    def _litellm() -> Any:
+        """Import LiteLLM and apply our global policy once.
+
+        We send ``temperature=0`` for deterministic grounding, but some strong
+        models (e.g. Opus 4.8 and other reasoning tiers) only accept
+        ``temperature=1`` and LiteLLM raises ``UnsupportedParamsError`` otherwise.
+        ``drop_params`` lets LiteLLM drop a parameter a given model can't honour
+        instead of failing, so a strong-tier skeptic on Opus degrades to that
+        model's mandated temperature rather than aborting the whole pipeline.
+        """
+        import litellm  # type: ignore[import-not-found]
+
+        litellm.drop_params = True
+        return litellm
+
     def _litellm_completion(
         self, *, model: str, messages: list[dict[str, Any]], temperature: float
     ) -> Any:
-        import litellm  # type: ignore[import-not-found]
-
+        litellm = self._litellm()
         return litellm.completion(
             model=model, messages=messages, temperature=temperature
         )
 
     def _litellm_cost(self, resp: Any) -> float:
         try:
-            import litellm  # type: ignore[import-not-found]
+            litellm = self._litellm()
 
             return float(litellm.completion_cost(completion_response=resp) or 0.0)
         except Exception:
