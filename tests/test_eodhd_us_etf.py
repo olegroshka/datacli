@@ -10,8 +10,8 @@ _SCRIPTS_EODHD = _REPO_ROOT / "eodhd"
 if str(_SCRIPTS_EODHD) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_EODHD))
 
-import fetch_eodhd_us_etf_universe as etf_universe  # type: ignore  # noqa: E402
 import fetch_eodhd_us_etf_prices as etf_prices  # type: ignore  # noqa: E402
+import fetch_eodhd_us_etf_universe as etf_universe  # type: ignore  # noqa: E402
 
 EXPECTED_TICKERS = [("QQQ", "US"), ("SPY", "US")]
 

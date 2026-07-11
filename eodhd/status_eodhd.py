@@ -38,10 +38,10 @@ import pandas as pd
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from eodhd_datasets import RAW_EODHD  # noqa: E402
 from eodhd_datasets import (
     LANES,
     NON_LANE_DIRS,
-    RAW_EODHD,  # noqa: E402
     DatasetSpec,
     LaneConfig,
     discover_lane_dirs,

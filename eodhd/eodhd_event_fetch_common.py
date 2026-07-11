@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
-
-from fetch_eodhd_eu_fundamentals import parse_ticker_spec
 from _datadir import EODHD_RAW_ROOT
+from fetch_eodhd_eu_fundamentals import parse_ticker_spec
 
 _ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = EODHD_RAW_ROOT / "uk_eu"

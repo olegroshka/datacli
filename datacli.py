@@ -10,12 +10,13 @@ source context and run source-scoped commands:
 
 The leading ``/`` is optional (``status`` and ``/status`` both work). Global
 commands (``source``, ``sources``, ``help``, ``quit``) work anywhere; source
-commands (``status``, ``fetch``, ``qc``, ``lanes``, ``probe``, ``config``)
+commands (``status``, ``fetch``, ``qc``, ``lanes``, ``probe``, ``config``,
+``describe``, ``find``, ``rows``, ``coverage``, ``sql``, ``schema``, ``reindex``)
 require an active source. Each source is a plugin in ``SOURCES``; the ``eodhd``
-plugin reuses ``scripts/eodhd/cli.py``.
+plugin reuses ``eodhd/cli.py``.
 
 Usage:
-    uv run --extra cli python scripts/datacli.py
+    uv run python datacli.py
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import shlex
 import sys
 from pathlib import Path
+from typing import Any
 
 import cmd2
 from rich.console import Console
@@ -31,10 +33,7 @@ from rich.table import Table
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE / "eodhd"))
 import cli as eodhd_cli  # type: ignore[import-not-found]  # noqa: E402
-from eodhd_datasets import (  # type: ignore[import-not-found]  # noqa: E402
-    LANES,
-    RAW_EODHD,
-)
+from eodhd_datasets import LANES  # type: ignore[import-not-found]  # noqa: E402
 
 console = Console()
 
@@ -73,6 +72,13 @@ class EodhdPlugin(SourcePlugin):
     name = "eodhd"
     summary = "US/UK-EU equities, ETFs, indices, fundamentals"
 
+    # query verbs run in-process against a warm DuckDB connection (snappy,
+    # skips per-command process startup); everything else delegates to the CLI.
+    EXPLORE_QUERY = frozenset({"describe", "find", "rows", "coverage", "sql"})
+
+    def __init__(self) -> None:
+        self._con: Any = None  # warm DuckDB connection, lazily built
+
     # shell command -> eodhd CLI subcommand
     COMMAND_MAP = {
         "status": "status",
@@ -85,10 +91,13 @@ class EodhdPlugin(SourcePlugin):
         "rows": "rows",
         "coverage": "coverage",
         "sql": "sql",
+        "config": "config",
+        "schema": "schema",
+        "reindex": "reindex",
     }
 
     def command_names(self) -> list[str]:
-        return [*self.COMMAND_MAP.keys(), "config"]
+        return list(self.COMMAND_MAP.keys())
 
     def detail(self) -> str:
         return f"{len(LANES)} lanes"
@@ -98,31 +107,25 @@ class EodhdPlugin(SourcePlugin):
         return [self.COMMAND_MAP[command], *argv]
 
     def run(self, command: str, argv: list[str]) -> int:
-        if command == "config":
-            return self._config()
+        if command in self.EXPLORE_QUERY:
+            return self._explore(command, argv)
+        # anything else may change data/config -> drop the warm connection so the
+        # next query rebuilds against the current state.
+        self._con = None
         try:
             return int(eodhd_cli.main(self.build_argv(command, argv)) or 0)
         except SystemExit as exc:  # argparse errors must not kill the shell
             return int(exc.code or 0)
 
-    def _config(self) -> int:
-        try:
-            from fetch_eodhd_eu_fundamentals import (
-                _get_api_key,
-            )  # type: ignore[import-not-found]  # noqa: E402
+    def _explore(self, command: str, argv: list[str]) -> int:
+        import explore_eodhd as ex  # type: ignore[import-not-found]
 
-            key = _get_api_key()
-            masked = ("****" + key[-4:]) if len(key) >= 4 else "set"
-        except Exception:
-            masked = "[red]NOT SET[/red]"
-        table = Table(title="eodhd config", show_header=False, title_style="bold")
-        table.add_column("setting", style="cyan")
-        table.add_column("value")
-        table.add_row("EODHD_API_KEY", masked)
-        table.add_row("raw_dir", str(RAW_EODHD))
-        table.add_row("lanes", ", ".join(LANES))
-        console.print(table)
-        return 0
+        if self._con is None:
+            self._con = ex.connect()
+        try:
+            return int(ex.main([command, *argv], con=self._con) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
 
 
 SOURCES: dict[str, SourcePlugin] = {"eodhd": EodhdPlugin()}
@@ -239,8 +242,16 @@ class DataCli(cmd2.Cmd):
         self._dispatch("probe", statement)
 
     def do_config(self, statement: object) -> None:
-        """Show the source's configuration."""
+        """Show/edit config:  config set data-root <path>"""
         self._dispatch("config", statement)
+
+    def do_schema(self, statement: object) -> None:
+        """Show the declared schema version and drift vs the on-disk data."""
+        self._dispatch("schema", statement)
+
+    def do_reindex(self, statement: object) -> None:
+        """(Re)build the fast query catalog after new data."""
+        self._dispatch("reindex", statement)
 
     # ----- exploration verbs ------------------------------------------------ #
     def do_describe(self, statement: object) -> None:

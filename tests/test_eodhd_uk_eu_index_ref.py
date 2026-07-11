@@ -10,8 +10,8 @@ _SCRIPTS_EODHD = _REPO_ROOT / "eodhd"
 if str(_SCRIPTS_EODHD) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_EODHD))
 
-import fetch_eodhd_uk_eu_index_ref_universe as index_universe  # type: ignore  # noqa: E402
 import fetch_eodhd_uk_eu_index_ref_prices as index_prices  # type: ignore  # noqa: E402
+import fetch_eodhd_uk_eu_index_ref_universe as index_universe  # type: ignore  # noqa: E402
 
 EXPECTED_TICKERS = [("AEX", "INDX"), ("GDAXI", "INDX")]
 

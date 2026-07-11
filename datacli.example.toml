@@ -1,0 +1,10 @@
+# datacli configuration.
+#
+# Copy this file to `datacli.toml` (which is git-ignored) and edit it, or use the
+# shell:  config set data-root <path>
+#
+# Point datacli at your EODHD raw snapshots. Resolution precedence:
+#   EODHD_DATA_ROOT env var  >  datacli.toml [eodhd].data_root  >  ../btest default
+
+[eodhd]
+data_root = "C:/path/to/your/data/raw/eodhd"

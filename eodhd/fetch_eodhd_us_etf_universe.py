@@ -15,10 +15,9 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-
+from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_fundamentals import parse_ticker_spec
 from fetch_eodhd_us_fundamentals import _ROOT, _api_get, _get_api_key
-from _datadir import EODHD_RAW_ROOT
 
 RAW_DIR = EODHD_RAW_ROOT / "us_etf"
 ETF_TICKERS_PATH = RAW_DIR / "tickers_US_ETF.parquet"

@@ -37,6 +37,7 @@ from pathlib import Path
 import fundamentals_refresh_common as fr
 import pandas as pd
 import requests
+from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_fundamentals import (
     _ROOT,
     _api_get,
@@ -49,7 +50,6 @@ from fetch_eodhd_eu_fundamentals import (
     extract_same_call_section_frames,
     parse_ticker_spec,
 )
-from _datadir import EODHD_RAW_ROOT
 
 RAW_DIR = EODHD_RAW_ROOT / "us_common"
 RAW_CACHE_DIR = RAW_DIR / "cache" / "fundamentals"

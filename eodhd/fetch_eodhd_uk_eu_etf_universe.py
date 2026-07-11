@@ -16,9 +16,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-
+from fetch_eodhd_eu_fundamentals import RAW_DIR as UK_EU_COMMON_RAW_DIR
 from fetch_eodhd_eu_fundamentals import (
-    RAW_DIR as UK_EU_COMMON_RAW_DIR,
     TARGET_EXCHANGES,
     _api_get,
     _get_api_key,

@@ -7,9 +7,9 @@ This directory contains the operational fetchers and factual manifests for the `
 `cli.py` is the single front door. It is driven by the lane registry in
 `eodhd_datasets.py`, so it never hardcodes lane or file names.
 
-> **Interactive shell:** `scripts/datacli.py` is a cmd2/Rich REPL over all data
-> sources. `uv run --extra cli python scripts/datacli.py`, then `/source eodhd`
-> and run `/status`, `/fetch --fast --run`, `/qc`, `/config` — it reuses this CLI.
+> **Interactive shell:** `datacli.py` (repo root) is a cmd2/Rich REPL over all
+> data sources. `uv run python datacli.py`, then `/source eodhd` and run
+> `/status`, `/fetch --fast --run`, `/qc`, `/config` — it reuses this CLI.
 
 ```powershell
 Set-Location "C:\Users\olegr\PycharmProjects\btest"
@@ -29,6 +29,33 @@ uv run python eodhd/cli.py probe AAPL MSFT NVDA
 `refresh` is **dry-run by default** and only fetches with `--run` (it hits a paid
 API). The individual `fetch_eodhd_*.py` scripts below remain the ground truth and
 are still the way to do windowed or otherwise unusual pulls.
+
+## Point the tool at your data, then explore it
+
+The fetchers and the explorer read/write one raw-data root. Resolution order:
+`EODHD_DATA_ROOT` env var → `datacli.toml [eodhd].data_root` → `../btest` default.
+
+```powershell
+uv run python eodhd/cli.py config                       # show resolved root + source
+uv run python eodhd/cli.py config set data-root "D:\data\raw\eodhd"
+uv run python eodhd/cli.py reindex                       # build the query catalog
+```
+
+Ad-hoc queries over the raw parquet (DuckDB under the hood, no SQL required):
+
+```powershell
+uv run python eodhd/cli.py describe VAR.OL     # which datasets cover a ticker, how far
+uv run python eodhd/cli.py find VAR            # fuzzy ticker search across datasets
+uv run python eodhd/cli.py rows VAR.OL dividends           # latest rows, narrow columns
+uv run python eodhd/cli.py rows VAR.OL prices --cols "*"   # ... or every column
+uv run python eodhd/cli.py coverage VAR.OL     # per-dataset coverage windows
+uv run python eodhd/cli.py sql "SELECT count(*) FROM dividends"
+```
+
+`schema` diffs the declared column contract (`schema.py`, versioned) against your
+on-disk columns; **projected views** NULL-fill or rename-alias so queries stay
+stable as the provider's columns evolve. Re-run `reindex` after any fetch to keep
+the catalog current.
 
 ## What lives where
 

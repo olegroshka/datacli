@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import requests
-
 from eodhd_event_fetch_common import (
     DELAY,
     EODHD_BASE,

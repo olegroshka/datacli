@@ -32,11 +32,13 @@ def test_where_clause() -> None:
 def test_verbs_on_synthetic_views() -> None:
     duckdb = pytest.importorskip("duckdb")
     con = duckdb.connect()
+    # mirror a real projected view: canonical columns present (NULL-filled) + lane
     con.execute(
         "CREATE VIEW dividends AS SELECT * FROM (VALUES "
-        "('AAA','US','2026-06-30',0.5,'us_common'),"
-        "('AAA','US','2026-03-31',0.4,'us_common')) "
-        "t(ticker,exchange,ex_date,dividend,lane)"
+        "('AAA','US','2026-06-30',0.5,0.5,'USD','Q','2026-07-05','us_common'),"
+        "('AAA','US','2026-03-31',0.4,0.4,'USD','Q','2026-04-05','us_common')) "
+        "t(ticker,exchange,ex_date,dividend,unadjusted_dividend,"
+        "currency,period,payment_date,lane)"
     )
     con.execute(
         "CREATE VIEW dividends_state AS SELECT * FROM (VALUES "
@@ -45,7 +47,9 @@ def test_verbs_on_synthetic_views() -> None:
     )
     # each verb runs cleanly against the synthetic views
     assert ex.find(con, "AA") == 0
-    assert ex.rows(con, "AAA.US", "dividends", 10) == 0
+    assert ex.rows(con, "AAA.US", "dividends", 10, None) == 0
+    # explicit column projection also works
+    assert ex.rows(con, "AAA.US", "dividends", 10, "ex_date,dividend") == 0
     assert ex.describe(con, "AAA.US") == 0
     assert ex.coverage(con, "AAA.US") == 0
     assert ex.run_sql(con, "SELECT count(*) FROM dividends", 50) == 0

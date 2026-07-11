@@ -24,9 +24,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-
-from fetch_eodhd_eu_fundamentals import _get_api_key
 from _datadir import EODHD_RAW_ROOT
+from fetch_eodhd_eu_fundamentals import _get_api_key
 
 _ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = EODHD_RAW_ROOT / "uk_eu"

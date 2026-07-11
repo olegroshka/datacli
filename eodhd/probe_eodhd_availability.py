@@ -26,8 +26,8 @@ import pandas as pd
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fetch_eodhd_eu_fundamentals import _get_api_key  # noqa: E402
 from _datadir import EODHD_RAW_ROOT
+from fetch_eodhd_eu_fundamentals import _get_api_key  # noqa: E402
 
 EODHD_BASE = "https://eodhd.com/api"
 HTTP_TIMEOUT = 60

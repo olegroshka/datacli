@@ -46,6 +46,8 @@ def test_eodhd_plugin_command_names() -> None:
         "rows",
         "coverage",
         "sql",
+        "schema",
+        "reindex",
     }
 
 

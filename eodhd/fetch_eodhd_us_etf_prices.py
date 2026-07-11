@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import requests
-
 from fetch_eodhd_eu_prices import (
     DEFAULT_FROM,
     EODHD_BASE,
@@ -29,6 +28,8 @@ from fetch_eodhd_us_etf_universe import (
     RAW_DIR,
     STARTER_UNIVERSE_PATH,
     TARGET_UNIVERSES,
+)
+from fetch_eodhd_us_etf_universe import (
     load_target_tickers as load_universe_target_tickers,
 )
 from fetch_eodhd_us_fundamentals import _get_api_key

@@ -42,7 +42,7 @@ DELEGATED: dict[str, str] = {
 }
 
 # Entity-centric exploration verbs, all handled by explore_eodhd.py (DuckDB).
-EXPLORE_COMMANDS = ("describe", "find", "rows", "coverage", "sql")
+EXPLORE_COMMANDS = ("describe", "find", "rows", "coverage", "sql", "schema", "reindex")
 
 # One-line descriptions for the top-level help, in display order.
 COMMAND_HELP: list[tuple[str, str]] = [
@@ -56,6 +56,9 @@ COMMAND_HELP: list[tuple[str, str]] = [
     ("qc", "Run raw-data quality checks"),
     ("probe", "Probe ad-hoc ticker availability (read-only; no writes)"),
     ("lanes", "List registered lanes, datasets, and their fetchers"),
+    ("config", "Show/edit config (config set data-root <path>)"),
+    ("schema", "Declared schema version + drift vs on-disk data"),
+    ("reindex", "(Re)build the fast query catalog after new data"),
 ]
 
 KNOWN_KINDS = ("prices", "dividends", "splits", "fundamentals")
@@ -324,6 +327,57 @@ def cmd_refresh(argv: list[str]) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# config
+# --------------------------------------------------------------------------- #
+def cmd_config(argv: list[str]) -> int:
+    """Show or edit datacli config (eodhd data root, API key, lanes)."""
+    import config as cfg  # eodhd/config.py
+
+    parser = argparse.ArgumentParser(prog=f"{PROG} config")
+    sub = parser.add_subparsers(dest="action")
+    sub.add_parser("show")
+    g = sub.add_parser("get")
+    g.add_argument("key")
+    s = sub.add_parser("set")
+    s.add_argument("key")
+    s.add_argument("value")
+    args = parser.parse_args(argv or ["show"])
+
+    keymap = {"data-root": ("eodhd", "data_root")}
+
+    if args.action == "set":
+        if args.key not in keymap:
+            parser.error(f"unknown key '{args.key}'. Settable: {', '.join(keymap)}")
+        section, key = keymap[args.key]
+        path = cfg.set_value(section, key, args.value)
+        print(f"set {args.key} = {args.value}\n  ({path})")
+        return 0
+    if args.action == "get":
+        if args.key not in keymap:
+            parser.error(f"unknown key '{args.key}'. Known: {', '.join(keymap)}")
+        section, key = keymap[args.key]
+        print(cfg.get(section, key, "") or "")
+        return 0
+
+    root, source = cfg.eodhd_data_root()
+    exists = "exists" if root.exists() else "MISSING"
+    try:
+        from fetch_eodhd_eu_fundamentals import _get_api_key
+
+        api = _get_api_key()
+        masked = ("****" + api[-4:]) if len(api) >= 4 else "set"
+    except Exception:
+        masked = "NOT SET"
+    print("datacli config (eodhd):")
+    print(f"  data-root      {root}  ({source}, {exists})")
+    print(f"  config file    {cfg.CONFIG_PATH}")
+    print(f"  EODHD_API_KEY  {masked}")
+    print(f"  lanes          {', '.join(LANES)}")
+    print("\nset with:  config set data-root <path>")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # delegated commands
 # --------------------------------------------------------------------------- #
 def delegate(script: str, argv: list[str]) -> int:
@@ -347,6 +401,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_lanes(rest)
     if command == "refresh":
         return cmd_refresh(rest)
+    if command == "config":
+        return cmd_config(rest)
     if command in EXPLORE_COMMANDS:
         return delegate("explore_eodhd.py", [command, *rest])
     if command in DELEGATED:

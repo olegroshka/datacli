@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-
+from _datadir import EODHD_RAW_ROOT
 from eodhd_event_fetch_common import (
     DELAY,
     EODHD_BASE,
@@ -43,7 +43,6 @@ from eodhd_event_fetch_common import (
 )
 from fetch_eodhd_dividends import normalize_dividend_rows
 from fetch_eodhd_us_fundamentals import _ROOT, _get_api_key
-from _datadir import EODHD_RAW_ROOT
 
 RAW_DIR = EODHD_RAW_ROOT / "us_common"
 COVERAGE_PATH = RAW_DIR / "coverage_summary.csv"

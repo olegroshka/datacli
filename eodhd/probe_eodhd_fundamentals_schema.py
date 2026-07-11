@@ -26,9 +26,8 @@ import json
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-import requests
-
 import fetch_eodhd_eu_fundamentals as fundamentals
+import requests
 
 DEFAULT_MAX_TICKERS = 8
 

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-
+from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_prices import (
     DEFAULT_FROM,
     EODHD_BASE,
@@ -39,7 +39,6 @@ from fetch_eodhd_eu_prices import (
     normalize_iso_date,
 )
 from fetch_eodhd_us_fundamentals import _ROOT, _get_api_key, parse_ticker_spec
-from _datadir import EODHD_RAW_ROOT
 
 RAW_DIR = EODHD_RAW_ROOT / "us_common"
 COVERAGE_PATH = RAW_DIR / "coverage_summary.csv"

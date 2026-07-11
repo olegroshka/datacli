@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import requests
-
 from fetch_eodhd_eu_fundamentals import _get_api_key
 from fetch_eodhd_eu_prices import (
     DEFAULT_FROM,

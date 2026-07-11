@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import requests
-
 from eodhd_event_fetch_common import (
     DELAY,
     EODHD_BASE,
@@ -26,14 +25,14 @@ from eodhd_event_fetch_common import (
     normalize_iso_date,
     rebuild_event_audit,
 )
-from fetch_eodhd_splits import normalize_split_rows
-from fetch_eodhd_us_dividends import _max_iso_date
 from fetch_eodhd_eu_fundamentals import _get_api_key
+from fetch_eodhd_splits import normalize_split_rows
 from fetch_eodhd_uk_eu_etf_universe import (
     ETF_TICKERS_PATH,
     RAW_DIR,
     load_target_tickers,
 )
+from fetch_eodhd_us_dividends import _max_iso_date
 
 SPLITS_PATH = RAW_DIR / "splits_history.parquet"
 SPLITS_AUDIT_PATH = RAW_DIR / "splits_fetch_audit.csv"
