@@ -163,6 +163,8 @@ Shell conveniences:
 
 Run any command with `--help` for its full options.
 
+**Data & exploration** — no model or API key required:
+
 | Command | What it does |
 |---|---|
 | `status [lane]` | As-of dashboard: what data exists and how fresh it is |
@@ -178,9 +180,28 @@ Run any command with `--help` for its full options.
 | `schema` | Declared schema version + drift vs. on-disk data |
 | `reindex` | (Re)build the fast query catalog after new data |
 | `config [set data-root <path>]` | Show / edit configuration |
+| `macro status \| list \| fetch` | The macro source (FRED + EODHD series) — see `sources` |
 
-Every command is available both in the shell and directly as
-`uv run python eodhd/cli.py <command>`.
+**Agentic — the [Raw Data Lab](#raw-data-lab-optional-llm-backed)** ✦ *(needs a model — see note below):*
+
+| Command | What it does |
+|---|---|
+| `ask "<question>"` ✦ | Grounded natural-language Q&A from the default persona |
+| `agent <persona> "<q>"` ✦ | Ask a named persona (`macro-strategist`, `microstructure`, …) |
+| `investigate "<topic>"` ✦ | Multi-agent generator → skeptic → reporter; writes a verified report |
+| `lab run <skill> [--verify]` ✦ | Run a saved EDA playbook → reproducible report |
+| `lab agents` · `lab skills` · `lab config` | Roster · playbooks · models/budget/keys (`config` needs no model) |
+
+Data & exploration commands run in the shell or directly as
+`uv run python eodhd/cli.py <command>`; the agentic commands are
+`uv run python -m lab.cli <command>` (and work unprefixed inside the shell).
+
+> ✦ **Needs a model.** Install the lab (`uv sync --extra lab`) and have at least one
+> model available: a **local Ollama** model (free — `ollama pull qwen2.5-coder:7b`)
+> and/or an `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in your environment. Serious
+> personas default to **Opus**; the everyday `analyst` and mechanical `auditor` /
+> `quant` run **free on local**. Run **`lab config`** to see exactly what's configured
+> and available.
 
 ## Data acquisition: status · fetch · qc
 
