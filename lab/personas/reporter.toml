@@ -1,10 +1,8 @@
 name = "reporter"
 description = "Synthesises verified findings into a clear, honest write-up."
-# Any read-only confirmation query runs deterministically on the cheap tier; the
-# FINAL synthesis is written by the strong model (Opus) -- this is the one place
-# a temp-1 reasoning tier is used, and only for prose over fixed evidence.
-model = "cheap"
-review_model = "strong"
+# The final synthesis is a serious job -> Opus directly, over the fixed evidence
+# (the reporter introduces no new numbers, only confirmation queries).
+model = "strong"
 temperature = 0.1
 tools = ["run_sql"]
 skills = []

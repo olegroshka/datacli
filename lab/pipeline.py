@@ -51,6 +51,15 @@ def _synthesis_task(topic: str, generator: AnswerBundle, verdict: Verdict) -> st
     )
 
 
+def _degraded(role: str, name: str, err: Exception) -> str:
+    """A one-line, actionable note when a stage's model is unavailable."""
+    return (
+        f"[{role} '{name}' unavailable: {type(err).__name__}: {err} "
+        f"-- check the model/tier for this persona (billing, quota, or a local "
+        f"server that isn't running)]"
+    )
+
+
 def investigate(
     topic: str,
     *,
@@ -64,41 +73,64 @@ def investigate(
     allow_python: bool = False,
     figure_dir: Any = None,
 ) -> PipelineResult:
+    """Run generator -> skeptic -> reporter, degrading (not crashing) per stage.
+
+    A model outage in one role (rate limit, auth, an Ollama server that's down)
+    degrades that stage to a clear note and the investigation still returns a
+    result -- the generator's grounded answer is the foundation, the skeptic and
+    reporter are enhancements over it.
+    """
     base = dict(provenance or {})
 
-    gen = run_agent(
-        topic,
-        persona=generator,
-        llm=llm,
-        tools=tools,
-        schema_text=schema_text,
-        provenance={**base, "persona": generator.name, "role": "generator"},
-        allow_python=allow_python,
-        figure_dir=figure_dir,
-    )
-
-    if skeptic is not None:
-        verdict = run_verify(
+    gen_ok = True
+    try:
+        gen = run_agent(
             topic,
-            gen,
-            skeptic=skeptic,
+            persona=generator,
             llm=llm,
             tools=tools,
             schema_text=schema_text,
-            provenance={**base, "persona": skeptic.name, "role": "skeptic"},
+            provenance={**base, "persona": generator.name, "role": "generator"},
+            allow_python=allow_python,
+            figure_dir=figure_dir,
         )
-    else:
-        verdict = Verdict(label="UNKNOWN")
+    except Exception as err:  # foundation failed -- surface it, don't crash
+        gen_ok = False
+        gen = AnswerBundle(narrative=_degraded("generator", generator.name, err))
 
-    if reporter is not None:
-        synthesis = run_agent(
-            _synthesis_task(topic, gen, verdict),
-            persona=reporter,
-            llm=llm,
-            tools=tools,
-            schema_text=schema_text,
-            provenance={**base, "persona": reporter.name, "role": "reporter"},
-        )
+    verdict = Verdict(label="UNKNOWN")
+    if skeptic is not None and gen_ok:
+        try:
+            verdict = run_verify(
+                topic,
+                gen,
+                skeptic=skeptic,
+                llm=llm,
+                tools=tools,
+                schema_text=schema_text,
+                provenance={**base, "persona": skeptic.name, "role": "skeptic"},
+            )
+        except Exception as err:
+            verdict = Verdict(
+                label="UNKNOWN",
+                bundle=AnswerBundle(narrative=_degraded("skeptic", skeptic.name, err)),
+            )
+
+    if reporter is not None and gen_ok:
+        try:
+            synthesis = run_agent(
+                _synthesis_task(topic, gen, verdict),
+                persona=reporter,
+                llm=llm,
+                tools=tools,
+                schema_text=schema_text,
+                provenance={**base, "persona": reporter.name, "role": "reporter"},
+            )
+        except Exception as err:
+            # Fall back to the generator's grounded answer; note the reporter failure.
+            synthesis = AnswerBundle(
+                narrative=f"{gen.narrative}\n\n{_degraded('reporter', reporter.name, err)}"
+            )
     else:
         synthesis = AnswerBundle(narrative=gen.narrative)
 

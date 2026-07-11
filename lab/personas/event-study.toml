@@ -1,8 +1,7 @@
 name = "event-study"
 description = "Measures the market's reaction around a date/window (the grounded 'geopolitics' proxy)."
-# Deterministic grounded measurement on a temperature-0 tier; `mid` synthesises.
-model = "cheap"
-review_model = "mid"
+# A serious event-reaction measurement -> a serious model, directly on Opus.
+model = "strong"
 temperature = 0.0
 tools = ["run_sql"]
 skills = []

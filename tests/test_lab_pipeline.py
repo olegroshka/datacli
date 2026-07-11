@@ -17,12 +17,17 @@ from lab import pipeline as lab_pipeline  # noqa: E402
 from lab import registry, report, tools  # noqa: E402
 
 
-def _scripted_llm(tmp_path: Path, responses: list[str]):
+def _scripted_llm(tmp_path: Path, responses: list):
+    """Scripted completions. An ``Exception`` item is raised on that call to
+    simulate a model outage (rate limit / auth / a local server that's down)."""
     it = iter(responses)
 
     def fn(*, model: str, messages: list, temperature: float) -> object:
+        item = next(it)
+        if isinstance(item, Exception):
+            raise item
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=next(it)))],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=item))],
             usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
         )
 
@@ -86,6 +91,78 @@ def test_pipeline_degrades_without_skeptic_or_reporter(tmp_path: Path) -> None:
     )
     assert result.verdict.label == "UNKNOWN"
     # with no reporter, the synthesis falls back to the generator's answer
+    assert result.synthesis.narrative == result.generator.narrative
+
+
+def test_pipeline_survives_skeptic_outage(tmp_path: Path) -> None:
+    # generator succeeds; skeptic's model errors -> verdict UNKNOWN + note, but the
+    # reporter still synthesises. No crash.
+    llm = _scripted_llm(
+        tmp_path,
+        [
+            "```sql\nSELECT count(*) AS n FROM t\n```",
+            "FINAL: there are 2 rows.",
+            RuntimeError("RateLimitError: quota exceeded"),  # skeptic call fails
+            "FINAL: The data shows 2 rows.",  # reporter still runs
+        ],
+    )
+    result = lab_pipeline.investigate(
+        "x",
+        generator=_GEN,
+        skeptic=_SKEPTIC,
+        reporter=_REPORTER,
+        llm=llm,
+        tools=tools.Tools(_con()),
+        schema_text="s",
+    )
+    assert result.verdict.label == "UNKNOWN"
+    assert "skeptic" in result.verdict.bundle.narrative
+    assert "RateLimitError" in result.verdict.bundle.narrative
+    assert "2 rows" in result.synthesis.narrative  # reporter degraded gracefully
+
+
+def test_pipeline_survives_reporter_outage(tmp_path: Path) -> None:
+    # generator + skeptic succeed; reporter's model errors -> synthesis falls back
+    # to the generator's grounded answer with a note.
+    llm = _scripted_llm(
+        tmp_path,
+        [
+            "```sql\nSELECT count(*) AS n FROM t\n```",
+            "FINAL: there are 2 rows.",
+            "```sql\nSELECT count(*) AS n FROM t\n```",
+            "FINAL: VERDICT: CONFIRMED",
+            RuntimeError("AuthenticationError: no key"),  # reporter call fails
+        ],
+    )
+    result = lab_pipeline.investigate(
+        "x",
+        generator=_GEN,
+        skeptic=_SKEPTIC,
+        reporter=_REPORTER,
+        llm=llm,
+        tools=tools.Tools(_con()),
+        schema_text="s",
+    )
+    assert result.verdict.label == "CONFIRMED"
+    assert "there are 2 rows" in result.synthesis.narrative  # generator fallback
+    assert "reporter" in result.synthesis.narrative  # failure noted
+
+
+def test_pipeline_survives_generator_outage(tmp_path: Path) -> None:
+    # the foundation itself fails -> a clear note, skeptic/reporter skipped, no crash.
+    llm = _scripted_llm(tmp_path, [RuntimeError("ConnectionError: ollama down")])
+    result = lab_pipeline.investigate(
+        "x",
+        generator=_GEN,
+        skeptic=_SKEPTIC,
+        reporter=_REPORTER,
+        llm=llm,
+        tools=tools.Tools(_con()),
+        schema_text="s",
+    )
+    assert result.verdict.label == "UNKNOWN"
+    assert "generator" in result.generator.narrative
+    assert "ConnectionError" in result.generator.narrative
     assert result.synthesis.narrative == result.generator.narrative
 
 

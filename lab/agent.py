@@ -9,6 +9,7 @@ answer is backed by an executed query captured as a Finding.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -228,12 +229,16 @@ def _maybe_review(
         },
     ]
     try:
-        # Synthesis: a strong temp-1 tier is expected here, so don't warn about it.
-        completion = llm.complete(
-            messages, model=review, temperature=0.0, deterministic=False
-        )
+        completion = llm.complete(messages, model=review, temperature=0.0)
     except BudgetExceeded:
-        return draft  # keep the draft rather than fail
+        return draft  # budget hit -> keep the grounded draft rather than fail
+    except Exception as err:  # review model unreachable (rate limit / auth / network)
+        print(
+            f"[lab] note: synthesis model '{review}' unavailable "
+            f"({type(err).__name__}); using the grounded draft.",
+            file=sys.stderr,
+        )
+        return draft
     return completion.text.strip() or draft
 
 

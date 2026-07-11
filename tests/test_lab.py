@@ -138,54 +138,6 @@ def test_litellm_policy_drops_unsupported_params() -> None:
     assert litellm.drop_params is True
 
 
-def test_honors_temperature_zero_classifies_tiers() -> None:
-    h = lab_config.honors_temperature_zero
-    # temperature-0-honouring tiers (grounded work)
-    assert h("openai/gpt-4o-mini")
-    assert h("ollama/qwen2.5-coder:7b")
-    # temperature-1-only reasoning tiers (synthesis only)
-    assert not h("anthropic/claude-opus-4-8")
-    assert not h("anthropic/claude-sonnet-5")
-    assert not h("openai/o1-mini")
-    assert not h("openai/gpt-5")
-
-
-def test_every_persona_grounds_on_a_temperature_zero_model() -> None:
-    # The core invariant of the tiering: a persona's grounded `model` must honour
-    # temperature=0. Temp-1-only tiers belong in `review_model` (synthesis) only.
-    from lab import registry
-
-    cfg = lab_config.LabConfig()
-    personas = registry.load_personas()
-    assert personas, "persona roster should not be empty"
-    for persona in personas.values():
-        grounded = cfg.resolve_model(persona.model)
-        assert lab_config.honors_temperature_zero(grounded), (
-            f"persona '{persona.name}' does grounded work on {grounded}, which "
-            "does not honour temperature=0; move the strong model to review_model"
-        )
-
-
-def test_should_warn_temperature_flags_grounded_misconfig(tmp_path: Path) -> None:
-    cfg = lab_config.LabConfig(cache_dir=tmp_path)
-    llm = lab_models.LLM(cfg, cache=cache_mod.ResponseCache(tmp_path))
-    strong = cfg.resolve_model("strong")  # opus -> temp-1 only
-    cheap = cfg.resolve_model("cheap")  # gpt-4o-mini -> honours temp-0
-
-    # grounded step on a temp-1-only model -> warn
-    assert llm._should_warn_temperature(strong, 0.0, deterministic=True)
-    # ...but only once (dedupe by model)
-    llm._temp_warned.add(strong)
-    assert not llm._should_warn_temperature(strong, 0.0, deterministic=True)
-    # synthesis (deterministic=False) never warns, even on a temp-1 model
-    llm._temp_warned.clear()
-    assert not llm._should_warn_temperature(strong, 0.0, deterministic=False)
-    # a honouring model never warns
-    assert not llm._should_warn_temperature(cheap, 0.0, deterministic=True)
-    # temperature>=1 is a no-op (nothing to honour)
-    assert not llm._should_warn_temperature(strong, 1.0, deterministic=True)
-
-
 # --------------------------------------------------------------------------- #
 # types
 # --------------------------------------------------------------------------- #

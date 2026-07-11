@@ -1,10 +1,7 @@
 name = "hypothesizer"
 description = "Generates grounded, testable pre-signal hypotheses from the data."
-# Grounded exploration + idea generation runs on a temperature-honouring tier (so
-# the configured temperature=0.3 is real); the strong model polishes the FINAL
-# hypotheses from the same evidence.
-model = "cheap"
-review_model = "strong"
+# Hypothesis generation over grounded evidence -> a serious model, directly on Opus.
+model = "strong"
 temperature = 0.3
 tools = ["run_sql"]
 skills = []

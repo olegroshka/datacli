@@ -1,8 +1,7 @@
 name = "microstructure"
 description = "Daily-frequency liquidity & volatility proxies from OHLCV."
-# Deterministic grounded proxies on a temperature-0 tier; `mid` synthesises.
-model = "cheap"
-review_model = "mid"
+# A serious liquidity/volatility read -> a serious model, directly on Opus.
+model = "strong"
 temperature = 0.0
 tools = ["run_sql"]
 skills = ["distribution-profile"]

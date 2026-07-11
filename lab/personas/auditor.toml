@@ -1,6 +1,6 @@
 name = "auditor"
 description = "Data-quality auditor: coverage, missingness, and sidecar consistency."
-model = "cheap"                   # mechanical work -> cheaper/local tier is fine
+model = "local"                   # mechanical work -> local (free) honours temp=0
 temperature = 0.0
 tools = ["run_sql"]
 skills = ["coverage-audit", "corporate-action-consistency"]

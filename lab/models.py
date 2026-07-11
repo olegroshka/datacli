@@ -8,11 +8,10 @@ lazily, only when a real call is made.
 
 from __future__ import annotations
 
-import sys
 from typing import Any, Callable, Protocol
 
 from lab import cache as cache_mod
-from lab.config import LabConfig, honors_temperature_zero
+from lab.config import LabConfig
 from lab.types import Completion, Usage
 
 
@@ -87,7 +86,6 @@ class LLM:
         self.budget = SpendTracker(
             config.budget.per_session_usd, config.budget.warn_usd
         )
-        self._temp_warned: set[str] = set()  # models we've warned about, once each
 
     # -- lazy LiteLLM bindings (only touched on a real, uncached call) -------- #
     @staticmethod
@@ -122,48 +120,23 @@ class LLM:
         except Exception:
             return 0.0
 
-    def _should_warn_temperature(
-        self, model_id: str, temperature: float, deterministic: bool
-    ) -> bool:
-        """A grounded step (deterministic) asked for temp<1 on a temp-1-only model."""
-        return (
-            deterministic
-            and temperature < 1.0
-            and not honors_temperature_zero(model_id)
-            and model_id not in self._temp_warned
-        )
-
     def complete(
         self,
         messages: list[dict[str, Any]],
         *,
         model: str,
         temperature: float = 0.0,
-        deterministic: bool = True,
     ) -> Completion:
         """Run one completion. ``model`` is a tier name or a raw model id.
 
         Returns a cached result for free when available; otherwise checks the
         budget, calls the model, charges the cost, and caches the response.
 
-        ``deterministic`` marks a grounded step that expects ``temperature=0`` to be
-        honoured; if the resolved model only supports ``temperature=1`` (a reasoning
-        tier), we warn once so the misconfiguration is visible. Synthesis calls pass
-        ``deterministic=False`` -- they knowingly use a strong temp-1 model.
+        Grounding comes from the SQL evidence, not the sampling temperature, so a
+        strong reasoning tier that only accepts ``temperature=1`` is fine here --
+        ``drop_params`` (see ``_litellm``) drops an unsupported ``temperature=0``.
         """
         model_id = self.config.resolve_model(model)
-        # Real calls only (injected fakes in tests are trusted and stay quiet).
-        if self._completion_fn is None and self._should_warn_temperature(
-            model_id, temperature, deterministic
-        ):
-            self._temp_warned.add(model_id)
-            print(
-                f"[lab] note: {model_id} only supports temperature=1, so this "
-                f"grounded step is not reproducible. Route grounded work to a "
-                f"temperature-0 tier (local/cheap) and keep this model in "
-                f"review_model for synthesis.",
-                file=sys.stderr,
-            )
         key = cache_mod.make_key(model_id, messages, temperature)
 
         hit = self.cache.get(key)

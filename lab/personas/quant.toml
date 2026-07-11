@@ -1,9 +1,8 @@
 name = "quant"
 description = "EDA analyst that can also run restricted Python for stats & plots."
-# Grounded SQL + code-gen runs locally on the coder model (free, honours
-# temperature=0, strong at Python); `mid` synthesises the final write-up.
+# Mechanical SQL + code-gen -> the local coder model (free, strong at Python).
+# Set review_model="strong" if you want Opus to synthesise the write-up.
 model = "local"
-review_model = "mid"
 temperature = 0.0
 tools = ["run_sql", "run_python"]
 skills = ["distribution-profile"]

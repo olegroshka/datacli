@@ -66,7 +66,9 @@ def test_macro_plugin_is_a_source() -> None:
     # the macro source exposes exactly its three verbs
     assert plugin.command_names() == ["status", "list", "fetch"]
     # and is enterable like any other source
-    assert "macro" in _completions(datacli.DataCli().complete_source("m", "source m", 7, 8))
+    assert "macro" in _completions(
+        datacli.DataCli().complete_source("m", "source m", 7, 8)
+    )
 
 
 def test_list_is_a_source_scoped_command() -> None:
