@@ -316,6 +316,9 @@ def advance_state(
     ):
         if col not in s.columns:
             s[col] = pd.NA
+        # read_csv infers all-empty columns as float64; force object so string
+        # assignment below can't raise on dtype mismatch
+        s[col] = s[col].astype(object)
     for i in range(len(s)):
         pair = (str(s.at[i, "ticker"]).upper(), str(s.at[i, "exchange"]).upper())
         if pair not in new_max_by_pair:

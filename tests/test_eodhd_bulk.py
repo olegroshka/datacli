@@ -222,3 +222,28 @@ def test_advance_state() -> None:
     assert by[("B", "US")]["coverage_through"] == "2026-07-06"
     assert by[("B", "US")]["latest_data_date"] == "2026-07-06"
     assert by[("C", "US")]["coverage_through"] == "2026-07-06"
+
+
+def test_advance_state_handles_float_inferred_columns() -> None:
+    # read_csv infers all-empty string columns (e.g. "mode") as float64;
+    # assigning "bulk" into such a column must not raise on pandas 3.x
+    state = pd.DataFrame(
+        {
+            "ticker": ["A"],
+            "exchange": ["US"],
+            "coverage_through": ["2026-07-06"],
+            "latest_data_date": ["2026-07-06"],
+            "status": ["ok"],
+            "mode": [float("nan")],
+            "fetched_at": [float("nan")],
+        }
+    )
+    out = bulk.advance_state(
+        state,
+        new_max_by_pair={("A", "US"): "2026-07-08"},
+        now="2026-07-08T12:00:00Z",
+    )
+    row = out.iloc[0]
+    assert row["mode"] == "bulk"
+    assert row["fetched_at"] == "2026-07-08T12:00:00Z"
+    assert row["latest_data_date"] == "2026-07-08"
