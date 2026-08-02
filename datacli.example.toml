@@ -31,6 +31,19 @@ mid    = "anthropic/claude-sonnet-5"
 strong = "anthropic/claude-opus-4-8"
 
 # ---------------------------------------------------------------------------
+# Cloud sync (`sync push --run`): one-way backup of the data root. No passwords
+# are stored here — only locations; OAuth tokens are cached under
+# ~/.datacli/tokens/ after a one-time browser sign-in. For the Google Drive
+# backend, bring your own OAuth client (see storage/GDRIVE_SETUP.md) and
+# `uv sync --extra sync`.
+# ---------------------------------------------------------------------------
+# [sync]
+# backend = "gdrive"                              # or "local" (plain copy)
+# remote_root = "datacli/eodhd"                   # Drive folder path
+# gdrive_client_secrets = "C:/path/to/client_secret.json"
+# local_dest = "D:/backup/eodhd"                  # for backend = "local"
+
+# ---------------------------------------------------------------------------
 # Macro data adapter (FRED). Needs a free FRED_API_KEY in the environment.
 # `macro fetch --run` pulls the registered series (macro/registry.py) into parquet
 # and the lab exposes them as `macro` views. Defaults to a `macro` sibling of the

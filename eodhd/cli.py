@@ -394,7 +394,13 @@ def cmd_config(argv: list[str]) -> int:
     s.add_argument("value")
     args = parser.parse_args(argv or ["show"])
 
-    keymap = {"data-root": ("eodhd", "data_root")}
+    keymap = {
+        "data-root": ("eodhd", "data_root"),
+        "sync-backend": ("sync", "backend"),
+        "sync-remote-root": ("sync", "remote_root"),
+        "sync-gdrive-secrets": ("sync", "gdrive_client_secrets"),
+        "sync-local-dest": ("sync", "local_dest"),
+    }
 
     if args.action == "set":
         if args.key not in keymap:
@@ -442,6 +448,15 @@ def cmd_config(argv: list[str]) -> int:
     table.add_row("config file", Text(str(cfg.CONFIG_PATH), style="dim"))
     table.add_row("EODHD_API_KEY", Text(masked, style="green" if api_set else "red"))
     table.add_row("lanes", Text(", ".join(LANES), style="dim"))
+    sync = cfg.section("sync")
+    sync_val = Text(str(sync.get("backend") or "gdrive"))
+    sync_val.append(
+        f"  -> {sync.get('remote_root') or 'datacli/eodhd'}"
+        if (sync.get("backend") or "gdrive") == "gdrive"
+        else f"  -> {sync.get('local_dest') or '(sync-local-dest not set)'}",
+        style="dim",
+    )
+    table.add_row("sync backend", sync_val)
     console.print(table)
     return 0
 

@@ -31,6 +31,12 @@ lab = [
 mcp = [
   "mcp>=1.2",
 ]
+# Cloud sync (`sync push`): Google Drive backend. The core shell and the `local`
+# backend run without these; `uv sync --extra sync` to enable Drive.
+sync = [
+  "google-api-python-client>=2.100",
+  "google-auth-oauthlib>=1.2",
+]
 
 [tool.uv]
 # Runnable-scripts repo, not an installable package: uv manages the venv/deps

@@ -9,7 +9,7 @@ source context and run source-scoped commands:
     eodhd> /qc
 
 The leading ``/`` is optional (``status`` and ``/status`` both work). Global
-commands (``source``, ``sources``, ``help``, ``quit``) work anywhere; source
+commands (``source``, ``sources``, ``sync``, ``help``, ``quit``) work anywhere; source
 commands (``status``, ``fetch``, ``qc``, ``lanes``, ``probe``, ``config``,
 ``describe``, ``find``, ``rows``, ``coverage``, ``sql``, ``schema``, ``reindex``)
 require an active source. Each source is a plugin in ``SOURCES``; the ``eodhd``
@@ -312,6 +312,15 @@ class DataCli(cmd2.Cmd):
 
         lab_cli.main(["investigate", *self._argv(statement)])
 
+    def do_sync(self, statement: object) -> None:
+        """Push the data root to cloud storage:  sync | sync push --run | sync login"""
+        import storage.cli as storage_cli  # lazy: keeps startup free of sync deps
+
+        try:
+            storage_cli.main(self._argv(statement))
+        except SystemExit:  # argparse errors must not kill the shell
+            pass
+
     def do_macro(self, statement: object) -> None:
         """Shortcut to the macro source from anywhere:  macro list | status | fetch [--run]
 
@@ -456,6 +465,15 @@ class DataCli(cmd2.Cmd):
     def complete_macro(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self._by_position(
             text, line, begidx, endidx, {1: ("list", "status", "fetch")}
+        )
+
+    def complete_sync(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self.basic_complete(
+            text,
+            line,
+            begidx,
+            endidx,
+            ("status", "push", "login", "--run", "--with-caches", "--keep-going"),
         )
 
     def complete_lab(self, text: str, line: str, begidx: int, endidx: int) -> Any:

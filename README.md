@@ -180,6 +180,7 @@ Run any command with `--help` for its full options.
 | `schema` | Declared schema version + drift vs. on-disk data |
 | `reindex` | (Re)build the fast query catalog after new data |
 | `config [set data-root <path>]` | Show / edit configuration |
+| `sync [push --run \| login]` | One-way backup of the data root to cloud storage (Google Drive; dry-run unless `--run`) |
 | `macro status \| list \| fetch` | The macro source (FRED + EODHD series) — see `sources` |
 
 **Agentic — the [Raw Data Lab](#raw-data-lab-optional-llm-backed)** ✦ *(needs a model — see note below):*

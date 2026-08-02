@@ -38,6 +38,11 @@ def get(section: str, key: str, default: Any = None) -> Any:
     return _load().get(section, {}).get(key, default)
 
 
+def section(name: str) -> dict[str, Any]:
+    """A whole config section as a plain dict (empty when missing)."""
+    return dict(_load().get(name, {}))
+
+
 def _write(data: dict[str, dict[str, Any]]) -> None:
     # Minimal TOML writer for our flat string-valued sections (no tomli_w dep).
     lines: list[str] = []
