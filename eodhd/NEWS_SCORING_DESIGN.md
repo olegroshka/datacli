@@ -1,6 +1,6 @@
 # News Scoring — Design Request (draft for brainstorm)
 
-**Status:** DECIDED (§8) — building the substrate  
+**Status:** SUBSTRATE BUILT (§9) — first local pass pending  
 **Created:** 2026-08-15  
 **Depends on:** the `news` corpus (`EODHD_NEWS_SENTIMENT_FINDINGS.md`), roadmap item 3
 (`NEWS_ROADMAP.md`)  
@@ -234,3 +234,50 @@ loader + `event_v1`, backends `vendor`/`llm`/`embed`, select, store, runner,
 cli, tests with an injected completion) → (3) integration (registry, DuckDB
 views, shell `score`, docs) and a real local smoke run to measure quality and
 seconds/article on `qwen2.5-coder:7b`.
+
+## 9. What was built (substrate, 2026-08-15)
+
+```
+llm/                          shared model layer (lifted from the lab): LLM.complete/embed, budget, cache, tiers
+scoring/
+  schemas/event_v1.toml       the rich event record (7 article fields + 3 per-symbol fields, prompt, rules)
+  schema.py                   TOML -> Schema: prompt rendering, JSON shape, coerce/clamp/validate
+  config.py                   [scoring] in datacli.toml (llm_model, embed_model, budget_usd=0 -> local-only, ...)
+  backends/{vendor,llm,embed} vendor baseline · JSON-mode LLM via llm/ (repair turn, validation) · embeddings
+  select.py                   per-day selection: latest version per article_id, content >= 200 chars,
+                              universe filter (prices_state), target_symbols = tags ∩ universe if <= max_symbols
+  store.py                    news/scores/<schema>@<v>/<backend>/<day>.parquet (wide, provenance columns),
+                              news/embeddings/<model>/<day>.parquet, state.csv per day, upsert on (article_id, symbol)
+  runner.py                   plan (free) / run (day by day, newest first, chunked writes, resumable, budget stop)
+  cli.py                      score plan | run --run | status | schemas | backends   (shell: `score ...`)
+```
+
+- **Views:** `news_scores_<schema>` (latest version) and `news_scores_<schema>_v<N>`
+  union every backend under that schema (`backend` / `model` columns tell them
+  apart); `news_embeddings` unions every embedding model. Available in `sql`, the
+  lab (schema context updated) and MCP.
+- **Registry / status:** `news_scores` and `news_embeddings` are derived datasets
+  in the `news` lane (no fetcher, no state) so `status news` shows rows and last
+  day; `score status` gives the per-schema/backend breakdown.
+- **Local-only guard:** `budget_usd = 0` (default) refuses any non-Ollama model at
+  construction; `--budget-usd N` opens paid calls with a hard ceiling.
+- **First smoke (6 articles, `qwen2.5-coder:7b`, JSON mode):** 6/6 valid records,
+  ~2 s/article steady state (first call ~19 s incl. model load), sensible event
+  types / summaries / per-symbol roles (a Coca-Cola tag on a Foods & Inns earnings
+  article came back `peer`, `neutral`, relevance 0.1). Plan for the last 7 days:
+  9,557 universe articles ≈ 5.3 h locally.
+
+### How to run
+
+```
+uv run python -m scoring.cli plan --days 7                    # free: pending per day, est. time
+uv run python -m scoring.cli run  --days 7 --limit 50 --run   # small local pass (~2 min)
+uv run python -m scoring.cli run  --days 90 --run             # the first tier: resumable, newest days first
+uv run python -m scoring.cli run  --backend vendor --days 90 --run     # baseline for agreement checks
+uv run python -m scoring.cli status
+uv run python eodhd/cli.py sql "SELECT event_type, count(*) FROM news_scores_event WHERE symbol IS NULL GROUP BY 1 ORDER BY 2 DESC"
+```
+
+Next (roadmap item 3, continued): run the 90-day local pass; `score eval` (agreement
+vs vendor, inter-backend); the gold set; the embedding pass (`ollama pull
+nomic-embed-text` first); a `refresh` post-step for the daily top-up.

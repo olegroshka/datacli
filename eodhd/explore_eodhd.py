@@ -188,6 +188,7 @@ def connect() -> Any:
             )
         except Exception:
             pass
+    register_score_views(con, EODHD_RAW_ROOT)
     # Macro views (macro / macro_country / macro_market) are layered on top when
     # that source has been fetched, so `sql` sees the same surface as the lab and
     # the MCP server. Best-effort: macro is optional and must never break eodhd.
@@ -201,6 +202,66 @@ def connect() -> Any:
     except Exception:
         pass
     return con
+
+
+def register_score_views(con: Any, root: Path) -> list[str]:
+    """Expose the news score / embedding sidecars written by ``score run``.
+
+    ``news/scores/<schema>@<v>/<backend>/<day>.parquet`` -> one view per schema
+    version, ``news_scores_<schema>_v<v>`` (all backends unioned; the ``backend``
+    column tells them apart), plus ``news_scores_<schema>`` for the latest
+    version. ``news/embeddings/<model>/<day>.parquet`` -> ``news_embeddings``.
+    Returns the view names created. Best-effort: never breaks the connection.
+    """
+    created: list[str] = []
+    scores = root / "news" / "scores"
+    latest: dict[str, tuple[int, str]] = {}
+    if scores.is_dir():
+        for sdir in sorted(scores.iterdir()):
+            if not sdir.is_dir() or "@" not in sdir.name:
+                continue
+            name, _, ver = sdir.name.partition("@")
+            if not any(sdir.glob("*/*.parquet")):
+                continue
+            view = f"news_scores_{_safe(name)}_v{_safe(ver)}"
+            pattern = (sdir / "*" / "*.parquet").as_posix()
+            try:
+                con.execute(
+                    f"CREATE OR REPLACE VIEW {view} AS SELECT * FROM "
+                    f"read_parquet('{pattern}', union_by_name=true)"
+                )
+            except Exception:
+                continue
+            created.append(view)
+            try:
+                v = int(ver)
+            except ValueError:
+                v = 0
+            if name not in latest or v > latest[name][0]:
+                latest[name] = (v, view)
+        for name, (_, view) in latest.items():
+            alias = f"news_scores_{_safe(name)}"
+            try:
+                con.execute(f"CREATE OR REPLACE VIEW {alias} AS SELECT * FROM {view}")
+                created.append(alias)
+            except Exception:
+                pass
+    emb = root / "news" / "embeddings"
+    if emb.is_dir() and any(emb.glob("*/*.parquet")):
+        pattern = (emb / "*" / "*.parquet").as_posix()
+        try:
+            con.execute(
+                "CREATE OR REPLACE VIEW news_embeddings AS SELECT * FROM "
+                f"read_parquet('{pattern}', union_by_name=true)"
+            )
+            created.append("news_embeddings")
+        except Exception:
+            pass
+    return created
+
+
+def _safe(text: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in text)
 
 
 def _dataset_views(con: Any) -> list[str]:

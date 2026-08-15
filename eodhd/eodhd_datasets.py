@@ -27,6 +27,7 @@ __all__ = [
     "event_spec",
     "fundamentals_spec",
     "news_spec",
+    "derived_spec",
     "iter_datasets",
     "registered_lane_names",
     "discover_lane_dirs",
@@ -258,6 +259,26 @@ def news_spec(fetcher: str | None = "fetch_eodhd_news.py") -> DatasetSpec:
     )
 
 
+def derived_spec(kind: str, output: str, *, label: str | None = None) -> DatasetSpec:
+    """A locally derived, day-partitioned sidecar (no fetcher, no state).
+
+    Used for the news score/embedding sidecars written by ``score run``
+    (``news/scores/<schema>@<v>/<backend>/<day>.parquet``): ``status`` shows their
+    row counts and last day; ``refresh`` ignores them (``fetcher=None``); the
+    explorer exposes them through dedicated ``news_scores_*`` views.
+    """
+    return DatasetSpec(
+        kind=kind,
+        output=output,
+        state=None,
+        as_of_data_col="date",
+        key_cols=("article_id",),
+        label=label or kind,
+        fetcher=None,
+        partitioned=True,
+    )
+
+
 def _lane(
     name: str,
     region: str,
@@ -359,7 +380,17 @@ LANES: dict[str, LaneConfig] = {
     ),
     # Global article corpus crawled by day; no universe (symbol tags come with
     # each article and symbol-level views are derived locally).
-    "news": _lane("news", "Global", "news", None, [news_spec()]),
+    "news": _lane(
+        "news",
+        "Global",
+        "news",
+        None,
+        [
+            news_spec(),
+            derived_spec("news_scores", "scores"),
+            derived_spec("news_embeddings", "embeddings"),
+        ],
+    ),
 }
 
 

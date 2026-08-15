@@ -201,7 +201,7 @@ def test_registry_covers_all_lanes() -> None:
 
 
 def test_news_lane_is_day_keyed_and_partitioned(tmp_path: Path) -> None:
-    (news_ds,) = reg.LANES["news"].datasets
+    news_ds = next(d for d in reg.LANES["news"].datasets if d.kind == "news")
     assert news_ds.kind == "news"
     assert news_ds.partitioned is True
     assert news_ds.key_cols == ("date",)
@@ -231,7 +231,7 @@ def test_status_reads_partitioned_output(tmp_path: Path) -> None:
     assert st.parquet_columns(part_dir) == {"article_id", "date"}
     assert st.parquet_max_date(part_dir, "date") == pd.Timestamp("2026-07-01")
 
-    (news_ds,) = reg.LANES["news"].datasets
+    news_ds = next(d for d in reg.LANES["news"].datasets if d.kind == "news")
     lane = reg.LaneConfig(
         name="news",
         region="Global",

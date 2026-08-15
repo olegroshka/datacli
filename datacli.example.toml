@@ -31,6 +31,21 @@ mid    = "anthropic/claude-sonnet-5"
 strong = "anthropic/claude-opus-4-8"
 
 # ---------------------------------------------------------------------------
+# News scoring (`score plan|run`): schema-driven scores over the news corpus,
+# local-only unless a budget allows paid models. See eodhd/NEWS_SCORING_DESIGN.md.
+# Model tiers are shared with [lab.models] (local / cheap / mid / strong,
+# embed-local / embed-cheap); pull the local models once:
+#   ollama pull qwen2.5-coder:7b ; ollama pull nomic-embed-text
+# ---------------------------------------------------------------------------
+[scoring]
+# llm_model   = "local"          # tier or model id for the llm backend
+# embed_model = "embed-local"    # tier or model id for the embed backend
+# budget_usd  = 0.0              # 0 = local-only; > 0 allows paid calls up to this per run
+# window_days = 90               # default target window for `score plan/run`
+# max_symbols = 3                # per-symbol scoring only up to this many target symbols
+# cache_dir   = ".llm_cache"     # response cache (relative to the repo)
+
+# ---------------------------------------------------------------------------
 # Cloud sync (`sync push --run`): one-way backup of the data root. No passwords
 # are stored here — only locations; OAuth tokens are cached under
 # ~/.datacli/tokens/ after a one-time browser sign-in. For the Google Drive

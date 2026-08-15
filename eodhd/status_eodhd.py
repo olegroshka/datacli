@@ -67,7 +67,8 @@ def _parquet_files(path: Path) -> list[Path]:
     """The parquet file(s) behind an output: itself, or ``*.parquet`` inside a
     partition directory (sorted, so "first file" is deterministic)."""
     if path.is_dir():
-        return sorted(path.glob("*.parquet"))
+        # recursive: score sidecars nest as <schema>/<backend>/<day>.parquet
+        return sorted(path.rglob("*.parquet"))
     return [path]
 
 
@@ -94,14 +95,21 @@ def parquet_columns(path: Path) -> set[str]:
 
 
 def parquet_max_date(path: Path, column: str) -> pd.Timestamp | None:
-    """Max of a single date column, reading only that column."""
-    try:
-        table = pq.read_table(path, columns=[column])
-    except Exception:
-        return None
-    series = pd.to_datetime(table.column(column).to_pandas(), errors="coerce")
-    value = series.max()
-    return None if pd.isna(value) else pd.Timestamp(value)
+    """Max of a single date column, reading only that column (per file, so a
+    directory whose partitions differ in other columns still works)."""
+    best: pd.Timestamp | None = None
+    for f in _parquet_files(path):
+        try:
+            table = pq.read_table(f, columns=[column])
+        except Exception:
+            continue
+        series = pd.to_datetime(table.column(column).to_pandas(), errors="coerce")
+        value = series.max()
+        if pd.isna(value):
+            continue
+        ts = pd.Timestamp(value)
+        best = ts if best is None or ts > best else best
+    return best
 
 
 def parquet_distinct_pairs(path: Path, key_cols: tuple[str, ...]) -> int | None:
@@ -110,11 +118,15 @@ def parquet_distinct_pairs(path: Path, key_cols: tuple[str, ...]) -> int | None:
     cols = [c for c in key_cols if c in available]
     if not cols:
         return None
-    try:
-        table = pq.read_table(path, columns=cols)
-    except Exception:
+    frames = []
+    for f in _parquet_files(path):
+        try:
+            frames.append(pq.read_table(f, columns=cols).to_pandas())
+        except Exception:
+            continue
+    if not frames:
         return None
-    return int(table.to_pandas().drop_duplicates().shape[0])
+    return int(pd.concat(frames, ignore_index=True).drop_duplicates().shape[0])
 
 
 def _max_date(frame: pd.DataFrame, column: str) -> pd.Timestamp | None:

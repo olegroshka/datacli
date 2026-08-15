@@ -326,6 +326,16 @@ class DataCli(cmd2.Cmd):
 
         lab_cli.main(["investigate", *self._argv(statement)])
 
+    def do_score(self, statement: object) -> None:
+        """News scoring (schema-driven, local model by default):
+        score plan | run --run | status | schemas | backends"""
+        import scoring.cli as scoring_cli  # lazy: keeps startup free of scoring deps
+
+        try:
+            scoring_cli.main(self._argv(statement) or ["status"])
+        except SystemExit:  # argparse errors must not kill the shell
+            pass
+
     def do_sync(self, statement: object) -> None:
         """Push the data root to cloud storage:  sync | sync push --run | sync login"""
         import storage.cli as storage_cli  # lazy: keeps startup free of sync deps
@@ -500,6 +510,38 @@ class DataCli(cmd2.Cmd):
             text, line, begidx, endidx, {1: ("list", "status", "fetch")}
         )
 
+    def complete_score(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        pos = self._arg_pos(line, begidx, endidx)
+        if pos == 1:
+            return self.basic_complete(
+                text,
+                line,
+                begidx,
+                endidx,
+                ("plan", "run", "status", "schemas", "backends"),
+            )
+        return self.basic_complete(
+            text,
+            line,
+            begidx,
+            endidx,
+            (
+                "--schema",
+                "--backend",
+                "--model",
+                "--days",
+                "--since",
+                "--until",
+                "--no-universe",
+                "--max-symbols",
+                "--sample",
+                "--limit",
+                "--force",
+                "--budget-usd",
+                "--run",
+            ),
+        )
+
     def complete_sync(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self.basic_complete(
             text,
@@ -534,6 +576,7 @@ cmd2.categorize(
         DataCli.do_back,
         DataCli.do_config,
         DataCli.do_sync,
+        DataCli.do_score,
         DataCli.do_macro,
         DataCli.do_clear,
         DataCli.do_exit,

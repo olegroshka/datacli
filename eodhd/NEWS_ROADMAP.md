@@ -69,8 +69,8 @@ classifier, embeddings), categories defined declaratively and changeable
 without touching code, outputs stored as `article_id`-keyed sidecars that never
 mutate the raw corpus.
 
-**Status.** DESIGN — see `NEWS_SCORING_DESIGN.md` (request drafted; brainstorm →
-agreed design → build).
+**Status.** SUBSTRATE BUILT — `llm/` + `scoring/` (see `NEWS_SCORING_DESIGN.md` §8–9);
+next: the 90-day local pass, `score eval`, gold set, embeddings, refresh top-up.
 
 **Size.** Design ½ day; substrate 2–3 days; first full scoring pass depends on the
 backend/tier chosen (see cost model in the design doc).

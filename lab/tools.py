@@ -64,6 +64,14 @@ def schema_context() -> str:
     )
     if "news" in sch.datasets():
         lines.append(
+            "- news_scores_<schema> (e.g. news_scores_event; present only after `score "
+            "run`): our own per-article scores -- one row per (article_id, symbol); "
+            "symbol IS NULL = article-level row; columns include event_type, summary, "
+            "sentiment [-1,1], confidence, materiality 0-3, novelty, horizon, and per-"
+            "symbol role/direction/relevance; `backend`/`model` say which model scored "
+            "it. Prefer these over the vendor polarity when present."
+        )
+        lines.append(
             "- news is article-level (present only if crawled): symbols and tags are "
             "list<string> columns -- use unnest(symbols) or list_contains(symbols, "
             "'AAPL.US') for symbol-level views; polarity/neg/neu/pos are the "

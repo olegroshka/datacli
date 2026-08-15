@@ -2,7 +2,8 @@
 
 Lets Claude Code / Claude Desktop / Cursor query your local snapshot directly:
 guarded read-only SQL over the DuckDB views (prices, dividends, splits,
-fundamentals, news and their *_state sidecars; catalog once reindexed; macro,
+fundamentals, news and their *_state sidecars; news_scores_<schema> and
+news_embeddings once scored; catalog once reindexed; macro,
 macro_country, macro_market once fetched), the schema, and the lane registry.
 EODHD views carry a ``lane`` column; the macro views join by date.
 

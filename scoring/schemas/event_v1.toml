@@ -1,0 +1,96 @@
+# event_v1 -- the rich event record extracted once per article (design §8, D.2).
+#
+# Article-level fields describe what happened; symbol-level fields describe the
+# stance towards each *target* symbol (only when the article tags <= max_symbols
+# of our universe, otherwise the article is scored at article level only).
+# Sentiment lives inside this record, so a narrow "sentiment" schema is a
+# projection of it, not another pass over the text.
+
+[schema]
+name = "event"
+version = 1
+description = "What happened, to whom, which way: event type, summary, sentiment, materiality, horizon, and per-symbol relevance/direction."
+scope = "article+symbol"
+max_symbols = 3
+text = "title+content"
+max_chars = 6000
+
+[prompt]
+system = """You are a meticulous financial news analyst. You read one article and fill a fixed JSON record about it. You never invent facts that are not in the text, you keep summaries short and factual, and you answer strictly with one JSON object and nothing else."""
+
+instructions = """Fill the record for the article below.
+
+Rules:
+- Base every value only on the article text. If the text does not support a value, use the neutral option ("other", "n_a", 0, false) and lower `confidence`.
+- `sentiment` is the market-relevant tone for the main subject in [-1, 1]: clearly bad news for it -> negative, clearly good -> positive, routine or mixed -> near 0.
+- `materiality` is how much this could move the main subject's price: 0 none/noise, 1 minor, 2 meaningful, 3 major (guidance change, large M&A, regulatory action, earnings surprise).
+- `novelty` is true only if the article reports something new (an event, a number, a decision), not commentary on known facts.
+- Per-symbol fields: judge each listed symbol separately. `role`: subject = the article is about it; peer = mentioned as a competitor/comparison; mentioned = incidental. `direction`: the implication for that symbol's price from this article alone. `relevance`: how much of the article is about that symbol.
+- Output exactly one JSON object with keys "article" and "symbols" as specified. No prose, no code fences."""
+
+# ---- article-level fields ---------------------------------------------------
+
+[[fields]]
+name = "event_type"
+type = "enum"
+values = ["earnings", "guidance", "m_and_a", "capital_return", "financing", "product", "management", "legal_regulatory", "macro", "analyst_rating", "market_commentary", "other"]
+description = "Primary event class of the article."
+
+[[fields]]
+name = "summary"
+type = "string"
+max_length = 240
+description = "One factual sentence: who did what, with the key number if any."
+
+[[fields]]
+name = "sentiment"
+type = "float"
+min = -1.0
+max = 1.0
+description = "Market-relevant tone for the main subject, -1 (very negative) to 1 (very positive)."
+
+[[fields]]
+name = "confidence"
+type = "float"
+min = 0.0
+max = 1.0
+description = "How well the text supports the values you gave, 0 to 1."
+
+[[fields]]
+name = "materiality"
+type = "int"
+min = 0
+max = 3
+description = "0 none/noise, 1 minor, 2 meaningful, 3 major."
+
+[[fields]]
+name = "novelty"
+type = "bool"
+description = "True if the article reports something new rather than commenting on known facts."
+
+[[fields]]
+name = "horizon"
+type = "enum"
+values = ["intraday", "weeks", "quarters", "years", "n_a"]
+description = "Over what horizon the reported event matters for the price."
+
+# ---- per-symbol fields (only for target symbols, <= max_symbols) --------------
+
+[[symbol_fields]]
+name = "role"
+type = "enum"
+values = ["subject", "peer", "mentioned"]
+description = "subject = article is about it; peer = competitor/comparison; mentioned = incidental."
+
+[[symbol_fields]]
+name = "direction"
+type = "enum"
+values = ["up", "down", "neutral", "n_a"]
+description = "Price implication for this symbol from this article alone."
+
+[[symbol_fields]]
+name = "relevance"
+type = "float"
+min = 0.0
+max = 1.0
+description = "How much of the article is about this symbol, 0 to 1."

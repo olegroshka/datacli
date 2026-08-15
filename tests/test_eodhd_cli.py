@@ -29,7 +29,9 @@ def test_all_registered_datasets_have_existing_fetchers() -> None:
                 _SCRIPTS_EODHD / lane.universe_fetcher
             ).exists(), lane.universe_fetcher
         for ds in lane.datasets:
-            assert ds.fetcher is not None, f"{lane.name}:{ds.kind} missing fetcher"
+            if ds.fetcher is None:  # locally derived sidecars (news scores) have none
+                assert ds.state is None and ds.partitioned, f"{lane.name}:{ds.kind}"
+                continue
             assert (_SCRIPTS_EODHD / ds.fetcher).exists(), ds.fetcher
 
 

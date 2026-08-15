@@ -109,8 +109,9 @@ compact version of this map. `$` = hits the paid EODHD API (needs `EODHD_API_KEY
 | **4. verify** | `status [lane]` · `qc [lane] [dataset]` | freshness + structural QC with the remediation per finding |
 | **5. index** | `reindex` | `describe`/`find` read the catalog — **run it after every fetch** |
 | **6. explore** | `describe` · `find` · `rows` · `coverage` · `sql` | `sql` also covers `news`, `news_state`, `catalog`, macro views |
-| **7. ask** | `ask` · `agent` · `investigate` · `lab run` | optional LLM lab; grounded, read-only |
-| **8. back up** | `sync` (plan) → `sync push --run` | Google Drive or a local directory |
+| **7. score** | `score plan` → `score run --run` | own scores over the news corpus, local model, resumable; see [`eodhd/NEWS_SCORING_DESIGN.md`](eodhd/NEWS_SCORING_DESIGN.md) |
+| **8. ask** | `ask` · `agent` · `investigate` · `lab run` | optional LLM lab; grounded, read-only |
+| **9. back up** | `sync` (plan) → `sync push --run` | Google Drive or a local directory |
 
 ## Quickstart A — you already have snapshots
 
@@ -262,6 +263,7 @@ Run any command with `--help` for its full options.
 | `config [set <key> <value>]` | Show / edit configuration (`data-root`, `sync-*`) | `eodhd/cli.py config` |
 | `sync [status \| push --run \| login]` | One-way backup of the data root (Google Drive or local dir; dry-run unless `--run`) | `python -m storage.cli` |
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
+| `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
 **Hits a provider — spends EODHD units (`$`) or needs a provider key:**
 
@@ -371,6 +373,11 @@ the full backfill is 4.46 M articles / 6.96 GB / 5,511 pages ≈ 28k units and t
 - **Query it with `sql`** — `news` (article-level) and `news_state` (one row per
   crawled day). The ticker verbs (`describe`/`find`/`rows`/`coverage`) and `qc`
   skip it because it is day-keyed, not ticker-keyed.
+- **Score it yourself** — `score plan` / `score run --run` extract a rich event
+  record per article (`event_v1`: event type, summary, sentiment, materiality,
+  horizon, per-symbol role/direction) with a **local** model by default and write
+  `article_id`-keyed sidecars; query `news_scores_event`. Design and cost model:
+  [`eodhd/NEWS_SCORING_DESIGN.md`](eodhd/NEWS_SCORING_DESIGN.md).
 - **Know its quirks** before modelling on it: the vendor sentiment is a coarse
   VADER-style score, symbol tagging is US-biased (an EU issuer's US line collects
   most of the tags), ~14 % of articles carry no symbol at all, and daily volume is
@@ -604,6 +611,8 @@ datacli/
 │  ├─ config.py          data-root resolution + datacli.toml
 │  └─ _render.py         shared console + palette (one look for every command)
 ├─ macro/                the macro source (FRED + EODHD series, DuckDB views)
+├─ llm/                  shared model layer (LiteLLM behind one interface, budget, cache, tiers)
+├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI
 ├─ lab/                  the Raw Data Lab (personas, skills, grounded agent, pipeline)
 ├─ storage/              push-only backup (Google Drive / local) behind `sync`
 ├─ mcp_server.py         MCP server exposing sql / describe_schema / list_lanes

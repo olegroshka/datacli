@@ -263,6 +263,11 @@ uv run python eodhd/cli.py status news
 `--limit-days 30` so a routine refresh can never become a backfill. Ticker-style
 flags (`--tickers`, `--to`, `--full-refresh`) never reach the crawler.
 
+Own scores over the corpus: `uv run python -m scoring.cli plan|run --run|status`
+(shell: `score …`), local model by default; sidecars land under
+`news/scores/<schema>@<v>/<backend>/` and show up in `status news` and the
+`news_scores_<schema>` views. See `NEWS_SCORING_DESIGN.md`.
+
 ## 10. Typical run order (per-ticker scripts)
 
 Refresh universes first, then prices, then event histories. `refresh <lane> --run`
