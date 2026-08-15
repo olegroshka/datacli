@@ -37,6 +37,7 @@ def test_eodhd_plugin_command_names() -> None:
     assert set(names) == {
         "status",
         "fetch",
+        "refresh",  # alias: shell `fetch` == CLI `refresh`, both accepted
         "qc",
         "lanes",
         "probe",

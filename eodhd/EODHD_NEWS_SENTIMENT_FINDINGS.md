@@ -91,7 +91,7 @@ then fxstreet, reuters, nasdaq, seekingalpha, u.today, coindesk. Most-tagged sym
 | Daily quota | `100,000` units (`+397,130` extra) |
 | One `/news` page | 5 units, `≤ 1000` articles |
 | One global day | `3`–`4` pages ⇒ `15`–`20` units |
-| Full backfill 2021-01-01 → today (~2,050 days) | `≈ 8,000` calls ⇒ `≈ 40,000` units — **under one day's quota** |
+| Full backfill 2021-01-01 → today (2,053 days) | estimated `≈ 8,000` calls; **measured `5,511` pages ⇒ `≈ 27,600` units** (§2.4) — under a third of one day's quota |
 | Text per article (title + content) | `≈ 7 KB` mean in 2026, `≈ 4.7 KB` over the whole corpus |
 | On disk (zstd parquet, pinned schema) | measured **`6.96 GB` for 2021→2026-08-15** (`≈ 3.4 MB/day` avg, `≈ 7 MB/day` recently) |
 | Incremental refresh | re-crawl last 2 days ⇒ `< 50` units, `≈ 15 MB` rewritten |

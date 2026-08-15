@@ -2,9 +2,10 @@
 
 Unlike the lane fetchers (which ingest into the qualifying-universe parquet),
 this is a read-only diagnostic: it pulls full EOD history for each requested
-ticker and reports how far back data goes plus basic quality metrics. It does
-not write into any production cache; an optional --raw-cache-dir stores the
-raw JSON payloads so repeat probes are free.
+ticker from the **paid** EODHD API and reports how far back data goes plus basic
+quality metrics. It never touches the lane outputs; the raw JSON payloads are
+cached under ``<data_root>/probe_cache`` by default so repeat probes are free
+(``--raw-cache-dir ""`` disables the cache, ``--refresh`` bypasses it).
 
 Usage:
     uv run python eodhd/probe_eodhd_availability.py \
@@ -17,6 +18,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -41,7 +43,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Probe EODHD daily-price availability/quality"
+        prog=os.environ.get("DATACLI_PROG") or None,
+        description="Probe EODHD daily-price availability/quality for ad-hoc "
+        "tickers. Hits the paid EODHD API (needs EODHD_API_KEY) and caches the "
+        "raw JSON under <data_root>/probe_cache by default "
+        f"({EODHD_RAW_ROOT / 'probe_cache'}; --raw-cache-dir \"\" disables). "
+        "Read-only: never touches the lane outputs.",
     )
     p.add_argument(
         "tickers", nargs="+", help="Tickers, bare (CRWD) or TICKER.EXCHANGE (CRWD.US)"

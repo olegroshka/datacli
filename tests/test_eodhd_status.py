@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -255,3 +255,72 @@ def test_status_reads_partitioned_output(tmp_path: Path) -> None:
     assert rec["freshness"] == "2026-08-14"
     assert rec["stale"] is False
     assert rec["output_max"] == "2026-07-01"
+
+
+def _absent_record(lane: str = "us_common", dataset: str = "prices") -> dict:
+    return {
+        "lane": lane,
+        "dataset": dataset,
+        "kind": dataset,
+        "source": "absent",
+        "rows": None,
+        "pairs": None,
+        "last_data": None,
+        "coverage": None,
+        "fetched": None,
+        "freshness": None,
+        "stale_days": None,
+        "stale": None,
+        "status": "absent",
+    }
+
+
+def test_first_fill_hint_only_when_everything_is_absent(tmp_path: Path) -> None:
+    root = tmp_path / "eodhd"
+    absent = [_absent_record(), _absent_record("uk_eu", "dividends")]
+    hint = st.first_fill_hint(absent, root)
+    assert hint is not None
+    assert str(root) in hint
+    assert "First fill" in hint and "--with-fundamentals" in hint
+    # one populated dataset -> the table already tells the per-lane story
+    partial = [_absent_record(), {**_absent_record("uk_eu"), "source": "state"}]
+    assert st.first_fill_hint(partial, root) is None
+    assert st.first_fill_hint([], root) is None
+
+
+def test_render_markdown_carries_first_fill_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(st, "discovery_warnings", lambda: [])
+    md = st.render_markdown([_absent_record()], as_of="2026-08-15", stale_days=7)
+    assert "**Note:** no data under" in md
+    assert "news = last crawled UTC day" in md
+    populated = {**_absent_record(), "source": "state", "rows": 3}
+    md = st.render_markdown([populated], as_of="2026-08-15", stale_days=7)
+    assert "**Note:** no data under" not in md
+
+
+def test_print_status_prints_hint_on_empty_root(capsys: pytest.CaptureFixture) -> None:
+    import _render  # type: ignore
+
+    console = _render.make_console(no_color=True)
+    st.print_status(console, [_absent_record()], as_of="2026-08-15", stale_days=7)
+    out = capsys.readouterr().out
+    assert "1 absent" in out
+    assert "first fill" in out
+
+
+def test_parser_prog_from_env(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setenv("DATACLI_PROG", "eodhd status")
+    with pytest.raises(SystemExit) as exc:
+        st.parse_args(["--help"])
+    assert exc.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())  # undo argparse wrapping
+    assert out.startswith("usage: eodhd status")
+    assert "--lane" in out and "resolved data root" in out
+    assert "data/raw/eodhd/" not in out
+    # without the env var argparse falls back to the script name
+    monkeypatch.delenv("DATACLI_PROG", raising=False)
+    with pytest.raises(SystemExit):
+        st.parse_args(["--help"])
+    assert "usage: eodhd status" not in capsys.readouterr().out

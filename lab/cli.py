@@ -8,8 +8,10 @@ the lab looks like the rest of the tool.
 
 from __future__ import annotations
 
+import difflib
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,226 @@ if str(_EODHD) not in sys.path:
 import _render  # type: ignore[import-not-found]  # noqa: E402
 
 PROG = "lab"
+
+
+# --------------------------------------------------------------------------- #
+# command table -- the ONE source of truth for usage strings and flags
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class Flag:
+    """A ``--flag`` a lab command accepts (``metavar`` set => it takes a value)."""
+
+    name: str
+    help: str
+    metavar: str = ""
+
+
+@dataclass(frozen=True)
+class Command:
+    """One lab command: how it is invoked, what it does, which flags it takes."""
+
+    name: str
+    args: str  # positional part of the usage line ("" if none)
+    summary: str  # one-liner for the top-level help
+    detail: str = ""  # a few lines for the per-command help
+    flags: tuple[Flag, ...] = ()
+    shell_level: bool = False  # `ask` (shell) rather than `lab ask`
+    needs_model: bool = False  # spends budget: never reached on --help / bad flag
+
+    @property
+    def head(self) -> str:
+        """How the command is typed: ``ask`` (shell) or ``lab run``."""
+        return self.name if self.shell_level else f"{PROG} {self.name}"
+
+    @property
+    def synopsis(self) -> str:
+        """``run <skill> [args] [--verify] [--no-report]`` -- no ``lab`` prefix."""
+        parts = [self.name, self.args] + [
+            f"[{f.name} {f.metavar}]" if f.metavar else f"[{f.name}]"
+            for f in self.flags
+        ]
+        return " ".join(p for p in parts if p)
+
+    @property
+    def usage(self) -> str:
+        return self.synopsis if self.shell_level else f"{PROG} {self.synopsis}"
+
+
+_VERIFY = Flag("--verify", "have the skeptic persona re-derive the numbers")
+_REPORT = Flag("--report", "also write a markdown report to the reports dir")
+_NO_REPORT = Flag("--no-report", "skip the markdown report (written by default)")
+_GENERATOR = Flag(
+    "--generator",
+    "persona that generates the findings (default: [lab].default_persona)",
+    metavar="<persona>",
+)
+
+_MODEL_NOTE = (
+    "Calls a model (spends budget): needs `uv sync --extra lab` and a provider key\n"
+    "in the environment, or a local ollama. `lab config` shows what is configured."
+)
+
+COMMANDS: dict[str, Command] = {
+    c.name: c
+    for c in (
+        Command(
+            "config",
+            "",
+            "Models, budget, cache and provider status",
+            "Show the resolved [lab] configuration: default persona, budget, cache,\n"
+            "reports dir, python exec, model tiers and which provider keys are set\n"
+            "(masked). Needs no model. Bare `lab` is the same as `lab config`.",
+        ),
+        Command(
+            "agents",
+            "",
+            "List configured personas",
+            "List the personas from lab/personas/*.toml (name, model, description).",
+        ),
+        Command(
+            "skills",
+            "",
+            "List EDA playbooks",
+            "List the playbooks from lab/skills/*/SKILL.md (name, inputs, summary).",
+        ),
+        Command(
+            "run",
+            "<skill> [args]",
+            "Run a playbook -> reproducible report",
+            "Run a saved playbook with the default persona and write a reproducible\n"
+            "markdown report (reports are the point of `lab run`). Extra [args] are\n"
+            "handed to the skill as its inputs.",
+            (_VERIFY, _NO_REPORT),
+            needs_model=True,
+        ),
+        Command(
+            "ask",
+            "<question>",
+            "Ask the default persona",
+            "Ask the default persona a grounded question; every number comes from a\n"
+            "query that is shown with the answer.",
+            (_VERIFY, _REPORT),
+            shell_level=True,
+            needs_model=True,
+        ),
+        Command(
+            "agent",
+            "<persona> <task>",
+            "Ask a named persona",
+            "Ask a named persona (see `lab agents`) a grounded question.",
+            (_VERIFY, _REPORT),
+            shell_level=True,
+            needs_model=True,
+        ),
+        Command(
+            "investigate",
+            "<topic>",
+            "Generator -> skeptic -> reporter",
+            "Multi-agent run: a generator persona explores, the skeptic re-derives\n"
+            "its numbers, the reporter synthesises -- one shared session budget, a\n"
+            "combined report unless --no-report.",
+            (_GENERATOR, _NO_REPORT),
+            shell_level=True,
+            needs_model=True,
+        ),
+    )
+}
+
+
+class _HelpRequested(Exception):
+    """``-h`` / ``--help`` seen: print the command's help and stop."""
+
+
+class _UsageError(Exception):
+    """A flag we do not know or that is malformed; message is user-facing."""
+
+
+def _parse(command: str, argv: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """Split ``argv`` into ``(flags, positionals)`` for ``command``.
+
+    Boolean flags map to ``True``; value flags accept both ``--name=value`` and
+    ``--name value``. ``--`` ends flag parsing. Anything not starting with ``--``
+    is positional (so a quoted question stays one token, exactly as before).
+
+    Raises:
+        _HelpRequested: on ``-h`` / ``--help``, before any other work.
+        _UsageError: on an unknown flag (with a did-you-mean hint), a value flag
+            without a value, or a boolean flag given a value.
+    """
+    spec = {f.name: f for f in COMMANDS[command].flags}
+    before_sep = argv[: argv.index("--")] if "--" in argv else argv
+    if any(tok in ("-h", "--help") for tok in before_sep):
+        raise _HelpRequested()
+    flags: dict[str, Any] = {}
+    rest: list[str] = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        i += 1
+        if tok == "--":
+            rest.extend(argv[i:])
+            break
+        if not tok.startswith("--"):
+            rest.append(tok)
+            continue
+        name, eq, value = tok.partition("=")
+        flag = spec.get(name)
+        if flag is None:
+            near = difflib.get_close_matches(name, list(spec), n=1, cutoff=0.5)
+            hint = f" -- did you mean {near[0]}?" if near else ""
+            raise _UsageError(f"unknown flag {name}{hint}")
+        if flag.metavar:
+            if not eq:
+                if i >= len(argv) or argv[i].startswith("--"):
+                    raise _UsageError(f"flag {name} needs a value {flag.metavar}")
+                value = argv[i]
+                i += 1
+            flags[name] = value
+        else:
+            if eq:
+                raise _UsageError(f"flag {name} does not take a value")
+            flags[name] = True
+    return flags, rest
+
+
+def command_help(name: str) -> str:
+    """The per-command help block (usage, description, flags)."""
+    cmd = COMMANDS[name]
+    rows = [(f"{f.name} {f.metavar}".rstrip(), f.help) for f in cmd.flags]
+    rows.append(("-h, --help", "show this help"))
+    width = max(len(label) for label, _ in rows)
+    lines = [f"usage: {cmd.usage}", "", cmd.detail or cmd.summary]
+    if cmd.needs_model:
+        lines += ["", _MODEL_NOTE]
+    lines += ["", "flags:"] + [f"  {label:<{width}}  {text}" for label, text in rows]
+    return "\n".join(lines)
+
+
+def _args(
+    command: str, argv: list[str]
+) -> tuple[dict[str, Any], list[str], int | None]:
+    """Parse ``argv`` for ``command``; the third item is an exit code when done.
+
+    ``--help`` prints the command help and yields ``0``; a bad flag prints a
+    friendly error plus the usage line and yields ``2``. Otherwise ``None`` and
+    the caller proceeds with ``(flags, positionals)`` -- and only then may any
+    model, persona or data work start.
+    """
+    try:
+        flags, rest = _parse(command, argv)
+    except _HelpRequested:
+        print(command_help(command))
+        return {}, [], 0
+    except _UsageError as exc:
+        from rich.text import Text
+
+        cmd = COMMANDS[command]
+        console = _render.make_console()
+        console.print(Text(str(exc), style="red"))
+        console.print(Text(f"usage: {cmd.usage}   ({cmd.head} --help)", style="dim"))
+        return {}, [], 2
+    return flags, rest, None
+
 
 # Provider env vars we surface in `lab config` (presence only, always masked).
 _PROVIDER_KEYS = {
@@ -50,6 +272,9 @@ def cmd_config(argv: list[str]) -> int:
     """Show the resolved lab configuration (models, budget, cache, providers)."""
     from rich.text import Text
 
+    _, _, done = _args("config", argv)
+    if done is not None:
+        return done
     cfg = lab_config.load()
     console = _render.make_console()
 
@@ -131,6 +356,9 @@ def cmd_agents(argv: list[str]) -> int:
 
     from lab import registry
 
+    _, _, done = _args("agents", argv)
+    if done is not None:
+        return done
     personas = registry.load_personas()
     console = _render.make_console()
     if not personas:
@@ -151,6 +379,9 @@ def cmd_skills(argv: list[str]) -> int:
     """List the configured EDA skills."""
     from lab import registry
 
+    _, _, done = _args("skills", argv)
+    if done is not None:
+        return done
     skills = registry.load_skills()
     console = _render.make_console()
     if not skills:
@@ -220,12 +451,6 @@ def _render_verdict(console: Any, verdict: Any) -> None:
         )
     )
     _render_findings(console, verdict.bundle.findings, label="verify")
-
-
-def _split_flags(argv: list[str]) -> tuple[set[str], list[str]]:
-    flags = {a for a in argv if a.startswith("--")}
-    rest = [a for a in argv if not a.startswith("--")]
-    return flags, rest
 
 
 def _agent_context(cfg: Any) -> tuple[Any, Any, str, dict[str, Any]]:
@@ -433,18 +658,19 @@ def _run_pipeline(topic: str, generator_name: str, *, report: bool = True) -> in
 
 
 def cmd_investigate(argv: list[str]) -> int:
-    """`investigate <topic> [--generator=<persona>] [--no-report]` -> multi-agent run."""
-    flags, rest = _split_flags(argv)
-    generator = lab_config.load().default_persona
-    for flag in flags:
-        if flag.startswith("--generator="):
-            generator = flag.split("=", 1)[1]
+    """``investigate`` (see :data:`COMMANDS`) -> generator -> skeptic -> reporter."""
+    flags, rest, done = _args("investigate", argv)
+    if done is not None:
+        return done
+    generator = flags.get("--generator") or lab_config.load().default_persona
     return _run_pipeline(" ".join(rest), generator, report="--no-report" not in flags)
 
 
 def cmd_ask(argv: list[str]) -> int:
-    """`ask <question> [--verify] [--report]` -> run the default persona."""
-    flags, rest = _split_flags(argv)
+    """``ask`` (see :data:`COMMANDS`) -> run the default persona."""
+    flags, rest, done = _args("ask", argv)
+    if done is not None:
+        return done
     cfg = lab_config.load()
     return _run_agent(
         cfg.default_persona,
@@ -455,12 +681,12 @@ def cmd_ask(argv: list[str]) -> int:
 
 
 def cmd_agent(argv: list[str]) -> int:
-    """`agent <persona> <task> [--verify] [--report]` -> run a named persona."""
-    flags, rest = _split_flags(argv)
+    """``agent`` (see :data:`COMMANDS`) -> run a named persona."""
+    flags, rest, done = _args("agent", argv)
+    if done is not None:
+        return done
     if not rest:
-        _render.make_console().print(
-            "usage: agent <persona> <task> [--verify] [--report]"
-        )
+        _render.make_console().print(f"usage: {COMMANDS['agent'].usage}")
         return 2
     return _run_agent(
         rest[0],
@@ -471,13 +697,15 @@ def cmd_agent(argv: list[str]) -> int:
 
 
 def cmd_run(argv: list[str]) -> int:
-    """`lab run <skill> [args] [--verify] [--no-report]` -> playbook -> report."""
+    """``lab run`` (see :data:`COMMANDS`) -> playbook -> report."""
     from lab import registry
 
     console = _render.make_console()
-    flags, rest = _split_flags(argv)
+    flags, rest, done = _args("run", argv)
+    if done is not None:
+        return done
     if not rest:
-        console.print("usage: lab run <skill> [args] [--verify] [--no-report]")
+        console.print(f"usage: {COMMANDS['run'].usage}")
         return 2
     skills = registry.load_skills()
     skill = skills.get(rest[0])
@@ -501,18 +729,34 @@ def cmd_run(argv: list[str]) -> int:
 
 
 def top_help() -> str:
-    return (
-        "lab -- Raw Data Lab (grounded EDA copilot)\n\n"
-        "Commands:\n"
-        "  config                Models, budget, cache and provider status\n"
-        "  agents                List configured personas\n"
-        "  skills                List EDA playbooks\n"
-        "  run <skill> [--verify]  Run a playbook -> reproducible report\n\n"
-        "Top-level shell commands:\n"
-        "  ask <question> [--verify] [--report]       Ask the default persona\n"
-        "  agent <name> <task> [--verify] [--report]  Ask a named persona\n"
-        "  investigate <topic> [--generator=<name>]   Generator -> skeptic -> reporter\n"
-    )
+    """The top-level help, rendered from :data:`COMMANDS`."""
+
+    lab_cmds = [c for c in COMMANDS.values() if not c.shell_level]
+    shell_cmds = [c for c in COMMANDS.values() if c.shell_level]
+    width = max(len(c.synopsis) for c in COMMANDS.values())
+
+    def block(title: str, cmds: list[Command]) -> list[str]:
+        return [title] + [f"  {c.synopsis:<{width}}  {c.summary}" for c in cmds]
+
+    model = ", ".join(c.name for c in COMMANDS.values() if c.needs_model)
+    free = ", ".join(c.name for c in COMMANDS.values() if not c.needs_model)
+    lines = [
+        f"{PROG} -- Raw Data Lab (grounded EDA copilot)",
+        "",
+        f"Usage:  {PROG} <command> [flags]      (bare `{PROG}` == `{PROG} config`)",
+        "",
+        *block("Commands:", lab_cmds),
+        "",
+        *block(
+            "Top-level shell commands (also `lab ask ...` outside the shell):",
+            shell_cmds,
+        ),
+        "",
+        f"Run '{PROG} <command> --help' (or '<command> --help' in the shell) for the "
+        "flags.",
+        f"{model} call a model and spend budget; {free} do not.",
+    ]
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -530,11 +774,16 @@ def main(argv: list[str] | None = None) -> int:
         "investigate": cmd_investigate,
     }
     if command in ("-h", "--help", "help"):
-        print(top_help())
+        if rest and rest[0] in COMMANDS:  # `lab help ask`
+            print(command_help(rest[0]))
+        else:
+            print(top_help())
         return 0
     if command in dispatch:
         return dispatch[command](rest)
-    print(f"unknown lab command: {command!r}\n", file=sys.stderr)
+    near = difflib.get_close_matches(command, list(dispatch), n=1)
+    hint = f" -- did you mean {near[0]}?" if near else ""
+    print(f"unknown {PROG} command: {command!r}{hint}\n", file=sys.stderr)
     print(top_help())
     return 2
 

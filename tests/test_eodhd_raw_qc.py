@@ -223,3 +223,92 @@ def test_sort_flags_orders_errors_before_warnings() -> None:
 
     assert ordered.iloc[0]["severity"] == "error"
     assert ordered.iloc[0]["ticker"] == "AAA"
+
+
+def test_missing_inputs_lists_required_price_files(tmp_path: Path) -> None:
+    # state-derived universe: needs prices parquet + prices state sidecar
+    common = qc.LaneConfig(name="common_test", root=tmp_path, universe_path=None)
+    assert qc.missing_inputs(common) == [
+        "prices_daily.parquet",
+        "prices_fetch_state.csv",
+    ]
+    (tmp_path / "prices_daily.parquet").write_bytes(b"")
+    assert qc.missing_inputs(common) == ["prices_fetch_state.csv"]
+    (tmp_path / "prices_fetch_state.csv").write_text("ticker,exchange\n")
+    assert qc.missing_inputs(common) == []
+    # universe-backed lane: needs prices parquet + the universe parquet
+    etf = qc.LaneConfig(
+        name="etf_test",
+        root=tmp_path / "etf",
+        universe_path=tmp_path / "etf" / "tickers_X.parquet",
+        default_exchange="US",
+    )
+    assert qc.missing_inputs(etf) == ["prices_daily.parquet", "tickers_X.parquet"]
+    hint = qc.no_data_hint(etf, qc.missing_inputs(etf))
+    assert hint.startswith("no data for lane etf_test")
+    assert "refresh etf_test --run" in hint and "--with-fundamentals" not in hint
+    assert (
+        qc.first_fill_command(common) == "refresh common_test --with-fundamentals --run"
+    )
+
+
+def test_main_skips_lanes_without_data_instead_of_crashing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # A fresh clone: the lane root exists (or not) but no parquet/state yet.
+    empty = qc.LaneConfig(
+        name="empty_lane",
+        root=tmp_path / "empty_lane",
+        universe_path=None,
+        default_exchange="US",
+    )
+    monkeypatch.setattr(qc, "LANES", {"empty_lane": empty})
+    qc.main(["--no-color"])  # must not raise FileNotFoundError
+    out = capsys.readouterr().out
+    assert "no data for lane empty_lane" in out
+    assert "refresh empty_lane" in out and "First fill" in out
+    assert "nothing audited yet" in out
+    assert "actionable flags" not in out
+
+
+def test_audit_lane_skips_missing_event_history(tmp_path: Path) -> None:
+    # partial first fill: prices landed, the event histories have not.
+    root = tmp_path / "lane"
+    root.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "exchange": "US",
+                "status": "ok",
+                "coverage_through": "2026-08-14",
+                "latest_data_date": "2026-08-14",
+                "response_rows": 1,
+                "fetched_at": "2026-08-14T20:00:00+00:00",
+                "detail": "",
+            }
+        ]
+    ).to_csv(root / "prices_fetch_state.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "date": "2026-08-14",
+                "open": 1.0,
+                "high": 1.5,
+                "low": 0.9,
+                "close": 1.2,
+                "adjusted_close": 1.2,
+                "volume": 100,
+                "ticker": "AAA",
+                "exchange": "US",
+            }
+        ]
+    ).to_parquet(root / "prices_daily.parquet", index=False)
+    config = qc.LaneConfig(
+        name="partial", root=root, universe_path=None, include_events=True
+    )
+    args = qc.parse_args(["--as-of", "2026-08-15"])
+    summary, flags = qc.audit_lane(config, args)
+    assert summary["skipped_datasets"] == ["dividends", "splits"]
+    assert set(summary["datasets"]) == {"prices"}
+    assert flags.empty

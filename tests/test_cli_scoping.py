@@ -29,7 +29,7 @@ def test_leading_positionals_splits_before_first_flag() -> None:
 def _capture(monkeypatch: object) -> list[tuple[str, list[str]]]:
     calls: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(  # type: ignore[attr-defined]
-        cli, "delegate", lambda script, argv: calls.append((script, argv)) or 0
+        cli, "delegate", lambda script, argv, **kw: calls.append((script, argv)) or 0
     )
     return calls
 

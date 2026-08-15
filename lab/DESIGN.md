@@ -1,6 +1,10 @@
 # Raw Data Lab — Design
 
-Status: **Phase 3 complete (pending review)** · Owner: datacli · Last updated: 2026-07-11
+Status: **Phase 3 complete; MCP server and macro adapter shipped** · Owner: datacli · Last updated: 2026-08-15
+
+> Sections marked *(as built)* were reconciled with the code on 2026-08-15; where
+> the original plan and the implementation diverged, the plan is kept as history
+> and the divergence is called out inline.
 
 The Raw Data Lab turns datacli from a data-ops shell into a **grounded EDA
 copilot for the pre-signal stage** — the exploratory, data-quality, and
@@ -52,12 +56,18 @@ atomic unit is a `Finding`. Enforced in code, not prompts:
   in an executed result.
 - **SQL guard.** Reject anything that is not a single read-only `SELECT`/`WITH`
   statement — no DDL/DML, `ATTACH`, `COPY`, `INSTALL`, `PRAGMA` writes, or multiple
-  statements. Enforce a `LIMIT` and a wall-clock timeout. Run only against the
-  existing projected views.
-- **Determinism.** Temperature 0 on the SQL/analysis path; cache keyed by
-  `(persona, question, data_root, SCHEMA_VERSION)` — so schema versioning both
-  powers accurate NL→SQL (accurate columns in-context) *and* invalidates the cache
-  when the schema changes.
+  statements. Enforce a `LIMIT` (appended when absent; rows are capped again on
+  fetch). Run only against the existing projected views. *(As built:
+  `lab/sqlguard.py` + `Tools.run_sql`. A SQL wall-clock timeout was planned but
+  is **not implemented** — DuckDB queries run to completion; only the Phase 3b
+  Python executor has a timeout.)*
+- **Determinism.** Temperature 0 on the SQL/analysis path, and a response cache so
+  identical calls are free on re-run. *(As built: `lab/cache.py` keys on
+  `(model, messages, temperature)` — the full prompt, which already embeds the
+  persona role and the schema text, so a schema change or a different persona
+  changes the key. The originally planned explicit
+  `(persona, question, data_root, SCHEMA_VERSION)` key was not adopted; `data_root`
+  and `schema_version` travel in each Finding's provenance instead.)*
 - **The query is always shown** alongside the answer.
 
 ```python
@@ -80,27 +90,42 @@ Three independent layers:
 ③ orchestr.  thin grounded loop (Phase 1)  ─►  handoffs (Phase 3)
 ```
 
-### Module layout
+### Module layout *(as built)*
 
 ```
 lab/
-├─ DESIGN.md          this document
+├─ DESIGN.md            this document
 ├─ __init__.py
-├─ types.py           Finding + small value types
-├─ models.py          LiteLLM wrapper: model-tier resolution, budget, response cache
-├─ cache.py           on-disk result/plan cache (keyed hash)
-├─ config.py          reads [lab] from datacli.toml (models, budget, cache, default persona)
-├─ registry.py        loads personas (*.toml) and skills (SKILL.md) — hot-reloadable
-├─ agent.py           the grounded loop + SQL guard + tool dispatch (Phase 1)
-├─ tools.py           typed read-only tools: run_sql / schema / catalog_lookup / list_lanes
-├─ personas/
-│  ├─ analyst.toml
-│  └─ auditor.toml
+├─ types.py             Finding + small value types
+├─ models.py            LiteLLM wrapper: model-tier resolution, budget, response cache
+├─ cache.py             on-disk response cache keyed by (model, messages, temperature)
+├─ config.py            reads [lab] from datacli.toml (models, budget, cache, reports,
+│                       default persona, allow_python)
+├─ registry.py          loads personas (*.toml) and skills (SKILL.md) — hot-reloadable
+├─ sqlguard.py          the read-only SQL guard (single SELECT/WITH, LIMIT appended)
+├─ tools.py             Tools.run_sql (guarded DuckDB) + schema_context() for the prompt
+├─ data.py              the lab's connection: eodhd views + macro views; schema_text()
+├─ agent.py             the grounded loop: plan -> SQL -> validate -> execute -> narrate
+├─ verify.py            the skeptic pass: re-derive an answer's numbers -> Verdict
+├─ pipeline.py          investigate: generator -> skeptic -> reporter (shared budget)
+├─ report.py            reproducible markdown reports (single run and pipeline)
+├─ pyexec.py            Phase 3b restricted Python executor (subprocess + timeout)
+├─ _pyexec_runner.py    the child-process side of pyexec
+├─ cli.py               `lab config|agents|skills|run` and `ask|agent|investigate`
+├─ personas/            9 personas: analyst, auditor, quant, skeptic, reporter,
+│                       hypothesizer, macro-strategist, microstructure, event-study
 └─ skills/
    ├─ coverage-audit/SKILL.md
    ├─ distribution-profile/SKILL.md
    └─ corporate-action-consistency/SKILL.md
 ```
+
+Two things differ from the original sketch: the tool surface is narrower than
+planned — only `run_sql` (and, opt-in, `run_python`) are dispatchable by the model;
+`schema` / `catalog_lookup` / `list_lanes` were folded into **static prompt
+context** (`tools.schema_context()` + `data.schema_text()`, which also lists the
+`catalog` view and the macro views when present) rather than callable tools. And
+the roster grew from the two sketched personas to nine.
 
 Rendering reuses the existing `_render` palette so Findings look like the rest of
 the tool. (`_render` currently lives in `eodhd/`; `lab` imports it via the same
@@ -138,7 +163,7 @@ model = "local"                   # everyday EDA -> the free local model
                                   # stronger model write the FINAL answer from the
                                   # same evidence
 temperature = 0.0
-tools  = ["run_sql", "schema", "catalog_lookup", "list_lanes"]
+tools  = ["run_sql"]              # add "run_python" for the Phase 3b executor (quant)
 skills = ["coverage-audit", "distribution-profile", "corporate-action-consistency"]
 role = """
 You are a meticulous market-data analyst working PRE-signal. You describe and
@@ -200,23 +225,39 @@ lab skills                list EDA playbooks                (like `lanes`)
 lab config                providers / per-persona models / budget / cache
 ```
 
+*(As built: Phase 3a added `investigate <topic> [--generator <persona>]
+[--no-report]`; `ask`/`agent` take `[--verify] [--report]`, `lab run` takes
+`[--verify] [--no-report]`; every command answers `--help` before touching a
+model, and bare `lab` is `lab config`. `lab/cli.py` holds the one command table
+the help text is rendered from.)*
+
 - Global shell commands (not a `source lab` context): the analyst is cross-cutting
   and operates on whatever data root is configured.
 - **Tab-completion** for persona names (`agent <tab>`) and skill names
   (`lab run <tab>`), consistent with the existing completers.
 - Answers stream as a short narrative + the SQL + a `_render` result table.
 
-## 8. Tools exposed to the agent (Phase 1, all read-only)
+## 8. Tools exposed to the agent *(as built; all read-only)*
 
 | Tool | Returns | Backed by |
 |---|---|---|
-| `run_sql(query)` | validated read-only result (capped) | `explore_eodhd` connection + SQL guard |
-| `schema()` / `describe_dataset(name)` | canonical columns, views, roles | `schema.py` |
-| `catalog_lookup(ticker\|pattern)` | dataset/lane/first/last per match | `_datacli_index.parquet` |
-| `list_lanes()` | lanes, datasets, fetchers | `eodhd_datasets` registry |
+| `run_sql(query)` | validated read-only result (capped) | `lab/data.connect()` (eodhd + macro views) + `sqlguard` |
+| `run_python(code)` *(opt-in)* | stdout + at most one figure, over the last query's `df` | `lab/pyexec.py` (Phase 3b; `[lab].allow_python` + persona `tools`) |
 
-The agent receives a compact, accurate schema (from `schema.py`) in its context,
-which is what makes NL→SQL reliable even for small/free models.
+Originally sketched as callable tools but shipped as **static prompt context**
+instead (cheaper for small models, nothing to mis-call):
+
+| Was planned as | Now | Backed by |
+|---|---|---|
+| `schema()` / `describe_dataset(name)` | the view list with canonical columns in the system prompt | `tools.schema_context()` from `schema.py` |
+| `catalog_lookup(...)` | the `catalog` view (present after `reindex`), described in the prompt | `_datacli_index.parquet` |
+| `list_lanes()` | every view carries a `lane` column; the prompt says so | `eodhd_datasets` registry |
+
+The agent receives that compact, accurate schema (from `schema.py`, plus the
+macro snippet for whichever macro views exist and the `news` notes when the news
+lane is present) in its context, which is what makes NL→SQL reliable even for
+small/free models. The same `run_sql` / schema / lanes surface is exposed to
+external clients by `mcp_server.py` (tools `sql`, `describe_schema`, `list_lanes`).
 
 ## 9. Phases & review gates
 
@@ -235,11 +276,12 @@ proceed. Nothing merges past a gate without a green review.
   enter a report. → *gate*
 - **Phase 2.5 — macro data adapter (FRED + EODHD).** Widen grounding beyond the
   equity tape: a registry of market-macro series and cross-country indicators,
-  fetchers to parquet, and two views the lab layers onto the eodhd connection --
+  fetchers to parquet, and three views the lab layers onto the eodhd connection --
   `macro` (FRED daily/monthly: rates, curve, credit spreads, VIX, FX, money,
-  activity, conditions) and `macro_country` (EODHD annual: GDP, CPI, unemployment,
-  real rates per country). The macro-strategist / event-study personas may join
-  either to the price data. → *gate*
+  activity, conditions), `macro_country` (EODHD annual: GDP, CPI, unemployment,
+  real rates per country) and `macro_market` (EODHD end-of-day index and FX
+  levels: S&P 500, Nasdaq, DAX, Nikkei, EUR/USD, ...). The macro-strategist /
+  event-study personas may join any of them to the price data. → *gate (done)*
 - **Phase 3a — multi-agent pipeline.** `investigate <topic>` runs
   generator → skeptic → reporter (shared session budget, grounded synthesis) into a
   combined reproducible report. → *gate (done)*
@@ -250,9 +292,11 @@ proceed. Nothing merges past a gate without a green review.
   default (`[lab].allow_python`), gated per persona (`run_python` tool); the `quant`
   persona uses it. Scoped honestly as a trusted-local tool, NOT a hardened security
   sandbox. → *gate (done)*
-- **Later (optional).** MCP server exposing the read-only tools to external clients
-  (Claude Code / Cursor); incremental macro fetch; EODHD as a second FRED-style
-  time-series provider.
+- **Later (optional) — all three since done.** MCP server exposing the read-only
+  tools to external clients (Claude Code / Cursor) → `mcp_server.py` (`sql`,
+  `describe_schema`, `list_lanes`; `uv sync --extra mcp`); incremental macro fetch
+  → `macro fetch --run` merges into the existing parquet unless `--full`; EODHD
+  as a second FRED-style time-series provider → the `macro_market` view.
 
 ## 10. Risks & mitigations
 

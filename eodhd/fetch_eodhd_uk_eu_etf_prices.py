@@ -44,7 +44,7 @@ log = logging.getLogger("eodhd_uk_eu_etf_prices")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch EODHD UK/EU ETF prices into btest"
+        description="Fetch EODHD UK/EU ETF prices into the data root"
     )
     parser.add_argument(
         "--tickers", nargs="*", default=[], help="Explicit TICKER.EXCHANGE identifiers"

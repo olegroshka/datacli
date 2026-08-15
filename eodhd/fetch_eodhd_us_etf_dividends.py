@@ -50,7 +50,7 @@ log = logging.getLogger("eodhd_us_etf_dividends")
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fetch EODHD US ETF dividend history into btest"
+        description="Fetch EODHD US ETF dividend history into the data root"
     )
     parser.add_argument(
         "--tickers", nargs="*", default=[], help="Explicit TICKER.EXCHANGE identifiers"

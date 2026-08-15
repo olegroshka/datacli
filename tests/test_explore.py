@@ -55,3 +55,49 @@ def test_verbs_on_synthetic_views() -> None:
     assert ex.run_sql(con, "SELECT count(*) FROM dividends", 50) == 0
     # a ticker absent from every view still returns cleanly
     assert ex.describe(con, "ZZZ.US") == 0
+
+
+def test_run_sql_missing_view_is_friendly(capsys) -> None:
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()  # a fresh root: no dataset views at all
+    assert ex.run_sql(con, "SELECT * FROM prices", 50) == 1
+    out = capsys.readouterr().out
+    assert "no dataset views on this connection" in out
+    assert "First fill" in out
+    assert "Traceback" not in out
+    # with some views registered, the message lists what *does* exist
+    con.execute("CREATE VIEW dividends AS SELECT 1 AS x")
+    con.execute("CREATE VIEW dividends_state AS SELECT 1 AS x")
+    assert ex.run_sql(con, "SELECT * FROM prices", 50) == 1
+    out = capsys.readouterr().out
+    assert "views on this connection" in out
+    assert "dividends" in out and "dividends_state" in out
+    assert "First fill" not in out  # data exists; the hint is for empty roots only
+    # other errors keep the plain exception path
+    assert ex.run_sql(con, "SELEC 1", 50) == 1
+    out = capsys.readouterr().out
+    assert "First fill" not in out
+
+
+def test_build_parser_prog_and_verb_help(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.delenv("DATACLI_PROG", raising=False)
+    assert ex.build_parser().prog == "explore"
+    # cli.py may hand over the bare launcher or launcher+verb; both read well
+    assert ex._sub_prog("eodhd", "rows") == "eodhd rows"
+    assert ex._sub_prog("eodhd rows", "rows") == "eodhd rows"
+    monkeypatch.setenv("DATACLI_PROG", "eodhd rows")
+    with pytest.raises(SystemExit) as exc:
+        ex.build_parser().parse_args(["rows", "--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("usage: eodhd rows ")
+    assert "latest N rows" in out
+    assert "ticker-keyed" in out
+    monkeypatch.setenv("DATACLI_PROG", "eodhd")
+    with pytest.raises(SystemExit):
+        ex.build_parser().parse_args(["reindex", "--help"])
+    out = capsys.readouterr().out
+    assert out.startswith("usage: eodhd reindex")
+    assert "run this after every fetch" in out

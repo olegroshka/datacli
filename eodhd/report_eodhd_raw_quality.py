@@ -1,18 +1,23 @@
-"""Quality checks for raw EODHD ETF and index-reference datasets.
+"""Quality checks for the raw EODHD price/dividend/split data.
 
-The report focuses on operator-actionable issues:
+Audits every price-bearing lane (common stocks, ETFs and index references, US and
+UK/EU) and focuses on operator-actionable issues:
 
 - universe/state/output mismatches,
 - stale or sparse price histories,
 - structurally invalid price rows,
 - event sidecar consistency,
 - and suspicious dividend/split payload integrity.
+
+A lane whose price inputs are not on disk yet (fresh clone, partial first fill)
+is reported as "no data" and skipped rather than treated as a QC failure.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -91,11 +96,19 @@ LANES: dict[str, LaneConfig] = {
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Report quality checks for raw EODHD ETF and index-reference data"
+        prog=os.environ.get("DATACLI_PROG") or None,
+        description="Audit the raw EODHD price/dividend/split data across the "
+        "price-bearing lanes (universe/state/output mismatches, stale or sparse "
+        "histories, invalid rows, event sidecar consistency)",
     )
-    parser.add_argument("--lane", choices=[*LANES.keys(), "all"], default="all")
+    parser.add_argument(
+        "--lane",
+        choices=[*LANES.keys(), "all"],
+        default="all",
+        help="Audit one price-bearing lane only (default: all)",
+    )
     parser.add_argument(
         "--dataset",
         choices=["prices", "dividends", "splits"],
@@ -167,7 +180,51 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force ANSI colour even when stdout is not a TTY",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def missing_inputs(config: LaneConfig) -> list[str]:
+    """Names of the lane's *required* price inputs that are not on disk.
+
+    QC keys off ``prices_daily.parquet`` plus the sidecar/universe it needs to
+    know what *should* be there. On a fresh clone or a partial first fill these
+    are simply absent, which is a "fetch first" situation rather than a quality
+    problem, so callers skip the lane instead of crashing on ``read_parquet``.
+
+    Args:
+        config: Lane to inspect.
+
+    Returns:
+        Missing filenames (relative to the lane root), empty when auditable.
+    """
+    required = [config.root / "prices_daily.parquet"]
+    if config.universe_path is None:
+        # the expected universe is derived from the prices state sidecar
+        required.append(config.root / "prices_fetch_state.csv")
+    else:
+        required.append(config.universe_path)
+    return [p.name for p in required if not p.exists()]
+
+
+def first_fill_command(config: LaneConfig) -> str:
+    """The ``refresh`` invocation that fills this lane from scratch.
+
+    Common-stock lanes (universe derived from the state sidecar) need the
+    fundamentals stage first, which ``--with-fundamentals`` sequences; ETF /
+    index lanes have a universe fetcher and bootstrap with a plain refresh.
+    """
+    if config.universe_path is None:
+        return f"refresh {config.name} --with-fundamentals --run"
+    return f"refresh {config.name} --run"
+
+
+def no_data_hint(config: LaneConfig, missing: list[str]) -> str:
+    """One-line "fetch first" message for a lane whose inputs are missing."""
+    return (
+        f"no data for lane {config.name} — fetch first "
+        f"({first_fill_command(config)}; see eodhd/README.md 'First fill')  "
+        f"[missing: {', '.join(missing)}]"
+    )
 
 
 def load_universe_pairs(config: LaneConfig) -> pd.DataFrame:
@@ -1080,11 +1137,17 @@ def audit_lane(
         }
     }
 
+    skipped_datasets: list[str] = []
     if config.include_events:
         for dataset in ["dividends", "splits"]:
             history_path = config.root / f"{dataset}_history.parquet"
             state_path = config.root / f"{dataset}_fetch_state.csv"
             audit_path = config.root / f"{dataset}_fetch_audit.csv"
+            if not history_path.exists():
+                # partial first fill: prices landed, this event history has not.
+                # Not a quality finding -- note it and audit what is there.
+                skipped_datasets.append(dataset)
+                continue
             history = pd.read_parquet(history_path)
             metrics = build_event_metrics(history, event_type=dataset)
             state = read_state_frame(state_path) if state_path.exists() else None
@@ -1134,6 +1197,8 @@ def audit_lane(
         "issue_counts": summarize_issues(flags),
         "total_flags": int(len(flags)),
     }
+    if skipped_datasets:
+        summary["skipped_datasets"] = skipped_datasets
     return summary, flags
 
 
@@ -1221,6 +1286,13 @@ def print_lane_report(
         )
     console.print(cov)
 
+    skipped = summary.get("skipped_datasets") or []
+    if skipped and (not dataset_filter or dataset_filter in skipped):
+        note = Text("  no data for ", style="yellow")
+        note.append(", ".join(skipped), style="bold yellow")
+        note.append(f" — fetch first (refresh {lane} --run)", style="yellow")
+        console.print(note)
+
     if dataset_filter and dataset_filter in summary["datasets"]:
         state_counts = summary["datasets"][dataset_filter].get(
             "state_status_counts", {}
@@ -1287,10 +1359,10 @@ def maybe_write_outputs(
     flags.to_csv(config.root / "qc_flags.csv", index=False)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     from rich.text import Text
 
-    args = parse_args()
+    args = parse_args(argv)
     lane_names = list(LANES) if args.lane == "all" else [args.lane]
     console = _render.make_console(
         no_color=True if args.no_color else None,
@@ -1300,8 +1372,23 @@ def main() -> None:
     max_flags = 10_000 if args.dataset else args.max_flags_per_lane
 
     any_flags = False
+    no_data_lanes: list[str] = []
     for lane_name in lane_names:
         config = LANES[lane_name]
+        missing = missing_inputs(config)
+        if missing:
+            # fresh clone / partial first fill: nothing to audit yet. Say so
+            # plainly and move on -- this is not a quality finding.
+            no_data_lanes.append(lane_name)
+            console.print()
+            console.rule(
+                Text(f"QC {_render.DIVIDER} {lane_name}", style="bold cyan"),
+                align="left",
+                style="dim",
+                characters="─",
+            )
+            console.print(Text(f"  {no_data_hint(config, missing)}", style="yellow"))
+            continue
         summary, flags = audit_lane(config, args)
         print_lane_report(
             console,
@@ -1324,11 +1411,28 @@ def main() -> None:
                 style="dim",
             )
         )
+    if no_data_lanes:
+        console.print(
+            Text(
+                f"{len(no_data_lanes)} of {len(lane_names)} lane(s) had no data to "
+                f"audit ({', '.join(no_data_lanes)}) — fetch first: refresh <lane> "
+                "--run (common-stock lanes: add --with-fundamentals); see "
+                "eodhd/README.md 'First fill'",
+                style="yellow",
+            )
+        )
     if any_flags:
         console.print(
             Text(
                 "QC finished with actionable flags — review the per-lane reports above.",
                 style="yellow",
+            )
+        )
+    elif len(no_data_lanes) == len(lane_names):
+        console.print(
+            Text(
+                "QC finished: nothing audited yet (no data under the data root).",
+                style="dim",
             )
         )
     else:

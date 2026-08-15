@@ -210,7 +210,7 @@ def merge_price_frames(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch EODHD UK/EU daily prices into btest"
+        description="Fetch EODHD UK/EU daily prices into the data root"
     )
     parser.add_argument(
         "--tickers", nargs="*", default=[], help="Explicit TICKER.EXCHANGE identifiers"

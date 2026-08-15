@@ -70,7 +70,9 @@ def load_target_tickers(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fetch EODHD US ETF prices into btest")
+    parser = argparse.ArgumentParser(
+        description="Fetch EODHD US ETF prices into the data root"
+    )
     parser.add_argument(
         "--tickers", nargs="*", default=[], help="Explicit TICKER.EXCHANGE identifiers"
     )

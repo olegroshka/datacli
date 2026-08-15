@@ -229,7 +229,7 @@ def fetch_fundamentals(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fetch EODHD US common-stock fundamentals into btest"
+        description="Fetch EODHD US common-stock fundamentals into the data root"
     )
     parser.add_argument(
         "--smoke",
@@ -672,7 +672,7 @@ def main() -> None:
         print(f"  Firms with any Assets data:       {n_with_assets}")
         print(f"  Firms with any CapEx data:        {n_with_capex}")
         print(f"  Firms with both >=56Q (2011-2025): {n_both_60q}")
-        print(f"  Output: {RAW_DIR.relative_to(_ROOT)}/")
+        print(f"  Output: {RAW_DIR}/")
 
         top = coverage.nlargest(20, "n_capex_2011_2025")
         print("\nTop 20 firms by CapEx coverage (2011-2025):")

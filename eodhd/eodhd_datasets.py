@@ -1,4 +1,4 @@
-"""Declarative registry of btest-owned EODHD data lanes and their datasets.
+"""Declarative registry of the datacli EODHD data lanes and their datasets.
 
 This module is the single source of truth for *where each EODHD dataset lives on
 disk* and *how to read its as-of / freshness signals*. Operational tools iterate
@@ -46,9 +46,10 @@ NON_LANE_DIRS = frozenset({"probe_cache"})
 class DatasetSpec:
     """One materialized dataset within a lane.
 
-    A dataset is either an incrementally-fetched panel with a fetch-state sidecar
-    (prices, dividend/split event histories) or a periodically-rebuilt snapshot
-    with no sidecar (a fundamentals table).
+    Every dataset is an incrementally-fetched table with a fetch-state sidecar:
+    per (ticker, exchange) for prices, dividend/split histories and fundamentals,
+    per crawled day for the news corpus. ``state=None`` is still honoured for a
+    sidecar-less snapshot, but no registered dataset uses it any more.
 
     Attributes:
         kind: Stable machine label, unique within a lane (e.g. ``"prices"``).
@@ -131,8 +132,15 @@ class LaneConfig:
         root: Lane directory; defaults to ``RAW_EODHD / name`` when ``None``.
         universe_fetcher: Filename (under ``eodhd/``) of the universe
             refresh step run before prices/events, or ``None`` when the universe
-            is a by-product of another stage (common-stock lanes).
+            is a by-product of another stage (common-stock lanes) or the lane
+            has no universe at all (news).
         universe_fetcher_args: Fixed CLI arguments for ``universe_fetcher``.
+        bootstrap_file: File (under the lane root) that the incremental
+            prices/dividends/splits fetchers require before they can run, or
+            ``None``. For the common-stock lanes this is ``coverage_summary.csv``,
+            written by the *fundamentals* stage -- so a first fill must run
+            ``--datasets fundamentals`` before prices/events. ``refresh``
+            checks it and ``lanes`` shows it.
     """
 
     name: str
@@ -143,10 +151,25 @@ class LaneConfig:
     root: Path | None = None
     universe_fetcher: str | None = None
     universe_fetcher_args: tuple[str, ...] = ()
+    bootstrap_file: str | None = None
 
     def resolved_root(self) -> Path:
         """Return the lane directory, defaulting to ``RAW_EODHD / name``."""
         return self.root if self.root is not None else RAW_EODHD / self.name
+
+    def universe_source(self) -> str:
+        """Human-facing description of where the lane's universe comes from."""
+        if self.universe_fetcher:
+            return self.universe_fetcher
+        if self.bootstrap_file:
+            return f"(from the fundamentals stage: {self.bootstrap_file})"
+        return "(no universe)"
+
+    def bootstrap_missing(self) -> bool:
+        """``True`` when the lane needs its bootstrap file and it is absent."""
+        if not self.bootstrap_file:
+            return False
+        return not (self.resolved_root() / self.bootstrap_file).exists()
 
 
 def prices_spec(
@@ -243,6 +266,7 @@ def _lane(
     datasets: list[DatasetSpec],
     *,
     universe_fetcher: str | None = None,
+    bootstrap_file: str | None = None,
 ) -> LaneConfig:
     return LaneConfig(
         name=name,
@@ -251,6 +275,7 @@ def _lane(
         universe_path=(RAW_EODHD / name / universe) if universe else None,
         datasets=tuple(datasets),
         universe_fetcher=universe_fetcher,
+        bootstrap_file=bootstrap_file,
     )
 
 
@@ -267,6 +292,7 @@ LANES: dict[str, LaneConfig] = {
             event_spec("splits", "fetch_eodhd_us_splits.py"),
             fundamentals_spec("fetch_eodhd_us_fundamentals.py"),
         ],
+        bootstrap_file="coverage_summary.csv",
     ),
     "uk_eu": _lane(
         "uk_eu",
@@ -279,6 +305,7 @@ LANES: dict[str, LaneConfig] = {
             event_spec("splits", "fetch_eodhd_splits.py"),
             fundamentals_spec("fetch_eodhd_eu_fundamentals.py"),
         ],
+        bootstrap_file="coverage_summary.csv",
     ),
     "us_etf": _lane(
         "us_etf",
@@ -368,7 +395,5 @@ def discover_lane_dirs(raw_root: Path | None = None) -> list[str]:
     if not root.exists():
         return []
     return sorted(
-        p.name
-        for p in root.iterdir()
-        if p.is_dir() and not p.name.startswith(".")
+        p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")
     )

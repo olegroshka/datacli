@@ -10,6 +10,14 @@ if str(_SCRIPTS_EODHD) not in sys.path:
 
 import cli  # type: ignore  # noqa: E402
 import eodhd_datasets as reg  # type: ignore  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _bootstrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan tests must not depend on what is on this machine's data root: by
+    default every lane looks bootstrapped (coverage file present)."""
+    monkeypatch.setattr(reg.LaneConfig, "bootstrap_missing", lambda self: False)
 
 
 def test_all_registered_datasets_have_existing_fetchers() -> None:
@@ -97,7 +105,11 @@ def test_news_rides_default_refresh_capped_and_without_passthrough() -> None:
     )
     news_steps = [s for s in plan if s.lane == "news"]
     assert [(s.kind, s.script, s.args) for s in news_steps] == [
-        ("news", "fetch_eodhd_news.py", ["--limit-days", str(reg.NEWS_REFRESH_MAX_DAYS)])
+        (
+            "news",
+            "fetch_eodhd_news.py",
+            ["--limit-days", str(reg.NEWS_REFRESH_MAX_DAYS)],
+        )
     ]
     # ...and no universe step is invented for it
     assert all(s.kind != "universe" for s in news_steps)
@@ -129,6 +141,81 @@ def test_passthrough_not_applied_to_fundamentals() -> None:
     fundamentals = next(s for s in plan if s.kind == "fundamentals")
     assert prices.args == ["--full-refresh"]
     assert fundamentals.args == ["--update"]  # fixed arg only, no passthrough
+
+
+def _unbootstrapped(monkeypatch: pytest.MonkeyPatch, *lanes: str) -> None:
+    monkeypatch.setattr(
+        reg.LaneConfig, "bootstrap_missing", lambda self: self.name in lanes
+    )
+
+
+def test_first_fill_runs_fundamentals_before_prices_when_coverage_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On an empty root the per-ticker fetchers need coverage_summary.csv, which
+    # only the fundamentals stage writes: the plan must reorder, not fail at #1.
+    _unbootstrapped(monkeypatch, "us_common")
+    plan = cli.build_refresh_plan(
+        ["us_common"],
+        kinds={"prices", "dividends", "splits", "fundamentals"},
+        with_universe=True,
+        passthrough=[],
+    )
+    assert [s.kind for s in plan] == ["fundamentals", "prices", "dividends", "splits"]
+    notes = cli.bootstrap_notes(["us_common"], {"prices", "fundamentals"})
+    assert len(notes) == 1 and "fundamentals runs first" in notes[0]
+
+
+def test_first_fill_without_fundamentals_skips_per_ticker_steps_with_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _unbootstrapped(monkeypatch, "us_common", "uk_eu")
+    plan = cli.build_refresh_plan(
+        ["us_common", "uk_eu", "us_etf"],
+        kinds=set(cli.DEFAULT_KINDS),
+        with_universe=True,
+        passthrough=[],
+    )
+    # common-stock lanes drop out entirely; the ETF lane (universe fetcher) is fine
+    assert {s.lane for s in plan} == {"us_etf"}
+    notes = cli.bootstrap_notes(
+        ["us_common", "uk_eu", "us_etf"], set(cli.DEFAULT_KINDS)
+    )
+    assert [n.split(":")[0] for n in notes] == ["us_common", "uk_eu"]
+    assert all("--datasets fundamentals --run" in n for n in notes)
+    # lanes that are bootstrapped or select no per-ticker kind produce no note
+    assert cli.bootstrap_notes(["us_common"], {"news"}) == []
+
+
+def test_lane_universe_source_and_bootstrap_fields() -> None:
+    assert reg.LANES["us_common"].bootstrap_file == "coverage_summary.csv"
+    assert reg.LANES["uk_eu"].bootstrap_file == "coverage_summary.csv"
+    assert reg.LANES["news"].bootstrap_file is None
+    assert reg.LANES["news"].universe_source() == "(no universe)"
+    assert "coverage_summary.csv" in reg.LANES["us_common"].universe_source()
+    assert reg.LANES["us_etf"].universe_source() == "fetch_eodhd_us_etf_universe.py"
+
+
+def test_refresh_rejects_fast_with_per_ticker_flags_and_bad_names(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_refresh(["--fast", "--tickers", "AAPL"])
+    assert exc.value.code == 2
+    assert "cannot be combined with --fast" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        cli.cmd_refresh(["--days", "3"])  # --days without --fast
+    # typos get the friendly did-you-mean, not an argparse dump
+    assert cli.cmd_refresh(["us_comon"]) == 2
+    out = capsys.readouterr().out
+    assert "did you mean" in out and "us_common" in out
+    assert cli.cmd_refresh(["--datasets", "prcies"]) == 2
+    assert "prices" in capsys.readouterr().out
+
+
+def test_config_keys_and_lifecycle_help() -> None:
+    assert set(cli.CONFIG_KEYS) >= {"data-root", "sync-backend"}
+    text = cli.top_help()
+    assert "Lifecycle" in text and "first fill" in text and "reindex" in text
+    assert "EODHD_API_KEY" in text
 
 
 def test_step_display_and_argv() -> None:

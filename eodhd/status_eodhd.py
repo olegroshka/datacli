@@ -7,7 +7,8 @@ change there — this reporter picks it up automatically.
 For each ``(lane, dataset)`` it answers "what, as of when":
 
 - **last data**: the last real bar (prices) / last event ex-date (dividends,
-  splits) / latest filing date (fundamentals) currently on disk,
+  splits) / latest filing date (fundamentals) / last crawled UTC day (news)
+  currently on disk,
 - **coverage**: how far the incremental fetch queried (state sidecar),
 - **fetched**: when the pull last ran (state sidecar, or file mtime for
   snapshots),
@@ -15,8 +16,14 @@ For each ``(lane, dataset)`` it answers "what, as of when":
   dataset kind, flagged ``STALE`` past ``--stale-days``,
 - **rows / pairs / status**: volume and per-pair fetch-status health.
 
+Freshness anchor per dataset kind: prices = last real bar; dividends/splits =
+query coverage (not the last event date); fundamentals = latest filing date;
+news = last crawled UTC day.
+
 It also runs an auto-discovery guard: any lane directory on disk that is not in
-the registry is reported as unmonitored.
+the registry is reported as unmonitored. When *nothing* is on disk yet (a fresh
+clone / new data root) it points at the first-fill steps instead of a wall of
+``ABSENT`` rows.
 
 Usage:
     uv run python eodhd/status_eodhd.py
@@ -29,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -291,6 +299,27 @@ def discovery_warnings() -> list[str]:
 # --------------------------------------------------------------------------- #
 # rendering
 # --------------------------------------------------------------------------- #
+def first_fill_hint(records: list[dict[str, Any]], root: Path) -> str | None:
+    """Next-step hint when there is no data at all under ``root``.
+
+    A wall of ``ABSENT`` rows is the normal state of a fresh clone or a freshly
+    pointed data root, so instead of leaving the operator to guess, point at the
+    first-fill steps. Returns ``None`` as soon as *any* record has data (a
+    partially filled root is a per-lane story the table already tells).
+
+    Args:
+        records: Status records as built by :func:`build_records`.
+        root: The resolved data root the records were collected under.
+    """
+    if not records or any(r.get("source") != "absent" for r in records):
+        return None
+    return (
+        f"no data under {root} — first fill: config set data-root <path>, then "
+        "refresh <lane> --run (us_common/uk_eu: add --with-fundamentals); "
+        "see eodhd/README.md 'First fill'"
+    )
+
+
 def _flag(record: dict[str, Any]) -> str:
     if record["source"] == "absent":
         return "ABSENT"
@@ -413,6 +442,10 @@ def print_status(
     footer.append(f" across {len(records)} datasets", style="dim")
     console.print(footer)
 
+    hint = first_fill_hint(records, RAW_EODHD)
+    if hint:
+        console.print(Text(hint, style="dim"))
+
 
 def render_markdown(
     records: list[dict[str, Any]], *, as_of: str, stale_days: int
@@ -450,6 +483,9 @@ def render_markdown(
                 status=_status_str(r),
             )
         )
+    hint = first_fill_hint(records, RAW_EODHD)
+    if hint:
+        lines += ["", f"> **Note:** {hint}"]
     warnings = discovery_warnings()
     if warnings:
         lines += ["", "## Discovery warnings", ""]
@@ -463,9 +499,15 @@ def render_markdown(
 # --------------------------------------------------------------------------- #
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Report as-of status of EODHD datasets"
+        prog=os.environ.get("DATACLI_PROG") or None,
+        description="Report as-of status of EODHD datasets",
     )
-    parser.add_argument("--lane", choices=[*LANES.keys(), "all"], default="all")
+    parser.add_argument(
+        "--lane",
+        choices=[*LANES.keys(), "all"],
+        default="all",
+        help="Restrict the report to one registered lane (default: all)",
+    )
     parser.add_argument(
         "--as-of",
         dest="as_of",
@@ -492,7 +534,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--write",
         action="store_true",
-        help="Write STATUS.md and STATUS.json into data/raw/eodhd/",
+        help="Write STATUS.md and STATUS.json into the resolved data root "
+        f"({RAW_EODHD})",
     )
     parser.add_argument(
         "--no-discovery",
@@ -532,7 +575,10 @@ def main(argv: list[str] | None = None) -> None:
         )
         print_status(console, records, as_of=args.as_of, stale_days=args.stale_days)
 
-    if not args.no_discovery:
+    # Discovery warnings flag *unexpected* directories or missing lanes on a
+    # populated root; on a completely empty root they would only bury the
+    # first-fill hint under one line per lane, so they are skipped there.
+    if not args.no_discovery and first_fill_hint(records, RAW_EODHD) is None:
         for warning in discovery_warnings():
             print(f"[discovery] {warning}")
 

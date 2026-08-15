@@ -9,11 +9,17 @@ source context and run source-scoped commands:
     eodhd> /qc
 
 The leading ``/`` is optional (``status`` and ``/status`` both work). Global
-commands (``source``, ``sources``, ``sync``, ``help``, ``quit``) work anywhere; source
-commands (``status``, ``fetch``, ``qc``, ``lanes``, ``probe``, ``config``,
-``describe``, ``find``, ``rows``, ``coverage``, ``sql``, ``schema``, ``reindex``)
-require an active source. Each source is a plugin in ``SOURCES``; the ``eodhd``
-plugin reuses ``eodhd/cli.py``.
+commands (``sources``, ``source``, ``back``, ``sync``, ``macro``, ``lab``, ``ask``,
+``agent``, ``investigate``, ``config``, ``help``, ``clear``, ``quit``/``exit``) work
+anywhere; source commands (``status``, ``fetch``/``refresh``, ``qc``, ``lanes``,
+``list``, ``probe``, ``schema``, ``reindex``, ``describe``, ``find``, ``rows``,
+``coverage``, ``sql``) require an active source. Each source is a plugin in
+``SOURCES``; the ``eodhd`` plugin reuses ``eodhd/cli.py`` (shell ``fetch`` ==
+CLI ``refresh``).
+
+Lifecycle: ``config set data-root`` -> first fill (see eodhd/README.md) ->
+routine ``fetch --fast --run`` -> ``status`` / ``qc`` -> ``reindex`` ->
+``describe`` / ``find`` / ``rows`` / ``sql`` -> ``ask`` (lab) -> ``sync``.
 
 Usage:
     uv run python datacli.py
@@ -68,10 +74,10 @@ class SourcePlugin:
 
 
 class EodhdPlugin(SourcePlugin):
-    """eodhd source -- delegates to the eodhd CLI (scripts/eodhd/cli.py)."""
+    """eodhd source -- delegates to the eodhd CLI (eodhd/cli.py)."""
 
     name = "eodhd"
-    summary = "US/UK-EU equities, ETFs, indices, fundamentals"
+    summary = "US/UK-EU equities, ETFs, indices, fundamentals + global news corpus"
 
     # query verbs run in-process against a warm DuckDB connection (snappy,
     # skips per-command process startup); everything else delegates to the CLI.
@@ -80,10 +86,12 @@ class EodhdPlugin(SourcePlugin):
     def __init__(self) -> None:
         self._con: Any = None  # warm DuckDB connection, lazily built
 
-    # shell command -> eodhd CLI subcommand
+    # shell command -> eodhd CLI subcommand (`fetch` and `refresh` are aliases so
+    # the shell verb and the CLI verb both work)
     COMMAND_MAP = {
         "status": "status",
         "fetch": "refresh",
+        "refresh": "refresh",
         "qc": "qc",
         "lanes": "lanes",
         "probe": "probe",
@@ -181,7 +189,10 @@ class DataCli(cmd2.Cmd):
         self.intro = (
             "datacli -- data operations shell. Type 'sources' to list, "
             "'source <name>' to enter one, 'help' for commands, "
-            "'quit' (or 'exit') to leave."
+            "'quit' (or 'exit') to leave.\n"
+            "  first time?  config set data-root <path> -> source eodhd -> "
+            "fetch us_common --with-fundamentals (plan, then --run) -> status -> "
+            "reindex -> describe <TICKER>   [see eodhd/README.md 'First fill']"
         )
         self._apply_prompt()
         for noisy in (
@@ -191,6 +202,9 @@ class DataCli(cmd2.Cmd):
             "shell",
             "shortcuts",
             "ipy",
+            "alias",
+            "set",
+            "py",
         ):
             if noisy not in self.hidden_commands:
                 self.hidden_commands.append(noisy)
@@ -343,8 +357,13 @@ class DataCli(cmd2.Cmd):
             console.print(f"[dim]other sources: {tips}[/dim]")
 
     def do_fetch(self, statement: object) -> None:
-        """Fetch / refresh data (source-specific args, e.g. --fast --run)."""
+        """Fetch / refresh data: prints the plan; hits the paid API only with --run.
+        e.g.  fetch --fast --run   (same as the eodhd CLI's `refresh`)"""
         self._dispatch("fetch", statement)
+
+    def do_refresh(self, statement: object) -> None:
+        """Alias of `fetch` (the eodhd CLI calls it `refresh`)."""
+        self._dispatch("refresh", statement)
 
     def do_qc(self, statement: object) -> None:
         """Run raw-data quality checks."""
@@ -359,11 +378,17 @@ class DataCli(cmd2.Cmd):
         self._dispatch("list", statement)
 
     def do_probe(self, statement: object) -> None:
-        """Ad-hoc availability probe (source-specific args)."""
+        """Ad-hoc availability probe (hits the paid API; caches raw payloads under
+        the data root's probe_cache/)."""
         self._dispatch("probe", statement)
 
     def do_config(self, statement: object) -> None:
-        """Show/edit config:  config set data-root <path>"""
+        """Show/edit config (data root, sync backend):  config set data-root <path>
+        Works at any prompt; outside a source it edits the eodhd/datacli config."""
+        if self.current is None:
+            # datacli.toml is shared (data root, sync); no need to enter a source
+            SOURCES["eodhd"].run("config", self._argv(statement))
+            return
         self._dispatch("config", statement)
 
     def do_schema(self, statement: object) -> None:
@@ -397,9 +422,15 @@ class DataCli(cmd2.Cmd):
 
     # ----- tab-completion (known lanes / datasets / sub-commands) ------------ #
     _LANES = (*LANES, "all")
+    # qc audits price-bearing lanes only (mirrors eodhd/cli.py cmd_qc)
+    _QC_LANES = (
+        *(n for n, ln in LANES.items() if any(d.kind == "prices" for d in ln.datasets)),
+        "all",
+    )
     _QC_DATASETS = ("prices", "dividends", "splits")
     _ROW_DATASETS = ("prices", "dividends", "splits", "fundamentals")
     _CONFIG_ACTIONS = ("show", "get", "set")
+    _CONFIG_KEYS = tuple(eodhd_cli.CONFIG_KEYS)
     _FETCH_FLAGS = (
         "--fast",
         "--run",
@@ -433,7 +464,7 @@ class DataCli(cmd2.Cmd):
 
     def complete_qc(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self._by_position(
-            text, line, begidx, endidx, {1: self._LANES, 2: self._QC_DATASETS}
+            text, line, begidx, endidx, {1: self._QC_LANES, 2: self._QC_DATASETS}
         )
 
     def complete_status(self, text: str, line: str, begidx: int, endidx: int) -> Any:
@@ -444,13 +475,15 @@ class DataCli(cmd2.Cmd):
 
     def complete_config(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self._by_position(
-            text, line, begidx, endidx, {1: self._CONFIG_ACTIONS, 2: ("data-root",)}
+            text, line, begidx, endidx, {1: self._CONFIG_ACTIONS, 2: self._CONFIG_KEYS}
         )
 
     def complete_fetch(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self.basic_complete(
             text, line, begidx, endidx, [*self._LANES, *self._FETCH_FLAGS]
         )
+
+    complete_refresh = complete_fetch
 
     def complete_source(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         return self.basic_complete(text, line, begidx, endidx, [*SOURCES, *LOAD_ONLY])
@@ -490,6 +523,51 @@ class DataCli(cmd2.Cmd):
                 text, line, begidx, endidx, tuple(registry.load_skills())
             )
         return self.basic_complete(text, line, begidx, endidx, ())
+
+
+# `help` groups commands by where they sit in the lifecycle instead of one flat
+# alphabetical list, so a newcomer sees setup -> acquire -> verify -> explore.
+cmd2.categorize(
+    (
+        DataCli.do_sources,
+        DataCli.do_source,
+        DataCli.do_back,
+        DataCli.do_config,
+        DataCli.do_sync,
+        DataCli.do_macro,
+        DataCli.do_clear,
+        DataCli.do_exit,
+    ),
+    "1. Global (any prompt)",
+)
+cmd2.categorize(
+    (
+        DataCli.do_fetch,
+        DataCli.do_refresh,
+        DataCli.do_probe,
+        DataCli.do_lanes,
+        DataCli.do_list,
+        DataCli.do_status,
+        DataCli.do_qc,
+        DataCli.do_schema,
+        DataCli.do_reindex,
+    ),
+    "2. Source: acquire & verify (source <name> first; fetch/probe hit the paid API)",
+)
+cmd2.categorize(
+    (
+        DataCli.do_describe,
+        DataCli.do_find,
+        DataCli.do_rows,
+        DataCli.do_coverage,
+        DataCli.do_sql,
+    ),
+    "3. Source: explore (run reindex after fetching)",
+)
+cmd2.categorize(
+    (DataCli.do_lab, DataCli.do_ask, DataCli.do_agent, DataCli.do_investigate),
+    "4. Raw Data Lab (LLM-backed; needs the lab extra + a model)",
+)
 
 
 def main() -> int:

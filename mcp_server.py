@@ -2,7 +2,9 @@
 
 Lets Claude Code / Claude Desktop / Cursor query your local snapshot directly:
 guarded read-only SQL over the DuckDB views (prices, dividends, splits,
-fundamentals, macro, macro_country, catalog), the schema, and the lane registry.
+fundamentals, news and their *_state sidecars; catalog once reindexed; macro,
+macro_country, macro_market once fetched), the schema, and the lane registry.
+EODHD views carry a ``lane`` column; the macro views join by date.
 
 Run it (after ``uv sync --extra mcp``):
 
@@ -95,7 +97,8 @@ def build_server() -> Any:
     def sql(query: str) -> dict:
         """Run a read-only SELECT/WITH query over datacli's DuckDB views (prices,
         dividends, splits, fundamentals, news, and macro / macro_country / catalog
-        when present). Every view has a `lane` column. Returns {columns, rows, sql}."""
+        when present). EODHD views have a `lane` column; macro views join by
+        date. Returns {columns, rows, sql}."""
         return run_sql(query)
 
     @server.tool()

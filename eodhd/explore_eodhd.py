@@ -16,12 +16,19 @@ queries instead of the full-scan ``qc``:
 ``reindex`` scans once into ``_datacli_index.parquet`` (dataset.lane.ticker ->
 rows, first/last) so ``describe``/``find`` become instant; without it they scan
 the views directly (still sub-second via predicate pushdown).
+
+Catalog caveat: when the catalog exists, ``describe``/``find`` **prefer it** over
+the live views, so tickers fetched *after* the last ``reindex`` are invisible to
+them (``describe`` only falls back to a scan for a ticker the catalog has never
+seen). Run ``reindex`` after every fetch. ``rows``/``coverage``/``sql`` always
+read the live views.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,7 +138,14 @@ def _output_source(lane: Any, ds: Any) -> str | None:
 
 def connect() -> Any:
     """In-memory DuckDB with a projected UNION view per dataset (+ ``*_state`` and,
-    if built, a ``catalog``)."""
+    if built, a ``catalog``).
+
+    Only datasets with data on disk get a view, so on an empty root the
+    connection has no dataset views at all (``sql`` then explains which views
+    exist). If ``_datacli_index.parquet`` is present it is exposed as ``catalog``
+    and ``describe``/``find`` read *it* first -- it is a snapshot from the last
+    ``reindex``, so run ``reindex`` after fetching new data.
+    """
     import duckdb
 
     con = duckdb.connect()
@@ -165,10 +179,46 @@ def connect() -> Any:
                 f"CREATE VIEW {kind}_state AS " + " UNION ALL BY NAME ".join(parts)
             )
     if INDEX_PATH.exists():
-        con.execute(
-            f"CREATE VIEW catalog AS SELECT * FROM read_parquet('{INDEX_PATH.as_posix()}')"
-        )
+        # A zero-column parquet (an old reindex over an empty root) would make
+        # DuckDB refuse the view and take every verb down with it; skip it.
+        try:
+            con.execute(
+                "CREATE VIEW catalog AS SELECT * FROM "
+                f"read_parquet('{INDEX_PATH.as_posix()}')"
+            )
+        except Exception:
+            pass
+    # Macro views (macro / macro_country / macro_market) are layered on top when
+    # that source has been fetched, so `sql` sees the same surface as the lab and
+    # the MCP server. Best-effort: macro is optional and must never break eodhd.
+    try:
+        _repo_root = str(Path(__file__).resolve().parents[1])
+        if _repo_root not in sys.path:
+            sys.path.append(_repo_root)
+        from macro import views as macro_views  # type: ignore[import-not-found]
+
+        macro_views.register(con)
+    except Exception:
+        pass
     return con
+
+
+def _dataset_views(con: Any) -> list[str]:
+    """Names of the dataset views that exist on this connection."""
+    return [k for k in DATASETS if _has_view(con, k)]
+
+
+def _no_data_hint(con: Any) -> bool:
+    """If no dataset view exists at all, say so (with the first-fill pointer)
+    and return ``True`` so the caller can stop early."""
+    if _dataset_views(con):
+        return False
+    _console().print(
+        f"[yellow]no data under {EODHD_RAW_ROOT}[/yellow] -- first fill: "
+        "config set data-root <path>, then refresh <lane> --run (us_common/uk_eu: "
+        "add --with-fundamentals); see eodhd/README.md 'First fill'"
+    )
+    return True
 
 
 def _has_view(con: Any, name: str) -> bool:
@@ -234,6 +284,8 @@ def _dataset_summary(
 def describe(con: Any, spec: str) -> int:
     from rich.text import Text
 
+    if _no_data_hint(con):
+        return 0
     console = _console()
     ticker, exchange = parse_ticker(spec)
     cond, params = _where(ticker, exchange)
@@ -300,6 +352,8 @@ def _state_lookup(
 
 
 def find(con: Any, pattern: str) -> int:
+    if _no_data_hint(con):
+        return 0
     console = _console()
     like = f"%{pattern.strip().upper()}%"
     rows: dict[tuple[str, str, str], set[str]] = {}
@@ -344,6 +398,8 @@ def find(con: Any, pattern: str) -> int:
 
 
 def rows(con: Any, spec: str, dataset: str, head: int, cols: str | None) -> int:
+    if _no_data_hint(con):
+        return 0
     console = _console()
     if dataset not in TICKER_DATASETS:
         console.print(
@@ -382,6 +438,8 @@ def rows(con: Any, spec: str, dataset: str, head: int, cols: str | None) -> int:
 def coverage(con: Any, spec: str) -> int:
     from rich.text import Text
 
+    if _no_data_hint(con):
+        return 0
     console = _console()
     ticker, exchange = parse_ticker(spec)
     cond, params = _where(ticker, exchange)
@@ -413,12 +471,58 @@ def coverage(con: Any, spec: str) -> int:
     return 0
 
 
+def _existing_views(con: Any) -> list[str]:
+    """Names of the tables/views registered on this connection (sorted)."""
+    try:
+        rows = con.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() ORDER BY table_name"
+        ).fetchall()
+    except Exception:
+        return []
+    return [str(r[0]) for r in rows]
+
+
+def _is_missing_relation(exc: BaseException) -> bool:
+    """True when DuckDB failed because a referenced table/view is not registered.
+
+    Matches DuckDB's ``CatalogException`` (by class name, so this stays free of a
+    hard duckdb import) and, defensively, any error text saying something ``does
+    not exist``.
+    """
+    if type(exc).__name__ == "CatalogException":
+        return True
+    return "does not exist" in str(exc)
+
+
 def run_sql(con: Any, query: str, limit: int) -> int:
+    from rich.markup import escape
+
     console = _console()
     try:
         df = con.execute(query).df()
     except Exception as exc:
-        console.print(f"[red]{type(exc).__name__}: {exc}[/red]")
+        if _is_missing_relation(exc):
+            # Typical on a fresh root: the dataset views only exist for data on
+            # disk, so `SELECT ... FROM prices` fails before anything is fetched.
+            text = str(exc).strip()
+            first_line = text.splitlines()[0] if text else "relation does not exist"
+            console.print(f"[red]{escape(first_line)}[/red]")
+            views = _existing_views(con)
+            if views:
+                console.print(
+                    "views on this connection: "
+                    + ", ".join(f"[cyan]{escape(v)}[/cyan]" for v in views)
+                )
+            else:
+                console.print("[dim]no dataset views on this connection[/dim]")
+                console.print(
+                    "[dim]no data yet? see 'First fill' in eodhd/README.md "
+                    "(config set data-root, then refresh <lane> "
+                    "--with-fundamentals --run)[/dim]"
+                )
+            return 1
+        console.print(f"[red]{type(exc).__name__}: {escape(str(exc))}[/red]")
         return 1
     caption = None
     if len(df) > limit:
@@ -509,7 +613,17 @@ def cmd_reindex(con: Any) -> int:
                 f"FROM {kind} GROUP BY lane, upper(ticker), upper(exchange)"
             ).df()
         )
-    catalog = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not frames:
+        # Nothing to index. Writing a zero-column parquet here would make
+        # DuckDB refuse the `catalog` view later, so leave the root untouched.
+        console.print(
+            "[yellow]nothing to index yet[/yellow] -- no ticker-keyed data under "
+            f"{EODHD_RAW_ROOT}. First fill: config set data-root <path>, then "
+            "refresh <lane> --run (us_common/uk_eu: add --with-fundamentals); "
+            "see eodhd/README.md 'First fill'."
+        )
+        return 0
+    catalog = pd.concat(frames, ignore_index=True)
     EODHD_RAW_ROOT.mkdir(parents=True, exist_ok=True)
     catalog.to_parquet(INDEX_PATH, index=False)
     meta = {
@@ -532,24 +646,71 @@ def cmd_reindex(con: Any) -> int:
 # --------------------------------------------------------------------------- #
 # cli
 # --------------------------------------------------------------------------- #
+#: One-liner per verb; doubles as the subcommand ``help`` and ``description``.
+VERB_HELP: dict[str, str] = {
+    "describe": "Everything about one ticker, across datasets",
+    "find": "Locate a ticker (lane / exchange / datasets)",
+    "rows": "Show the actual rows for a ticker in a dataset (ticker-keyed "
+    "datasets only; query `news` via sql)",
+    "coverage": "Do the datasets cover a ticker equally?",
+    "sql": "Raw DuckDB query over the dataset views (unguarded)",
+    "schema": "Declared schema version + drift vs on-disk data",
+    "reindex": "(Re)build the fast query catalog after new data — describe/find "
+    "read the catalog, so run this after every fetch",
+}
+
+
+def _sub_prog(prog: str, verb: str) -> str:
+    """``usage:`` program name for a verb's sub-parser.
+
+    ``eodhd/cli.py`` may hand us either the bare launcher (``eodhd``) or the
+    launcher plus verb (``eodhd rows``) in ``DATACLI_PROG``; both should render
+    as ``usage: eodhd rows ...`` rather than ``eodhd rows rows``.
+    """
+    return prog if prog.split()[-1:] == [verb] else f"{prog} {verb}"
+
+
 def build_parser() -> argparse.ArgumentParser:
+    prog = os.environ.get("DATACLI_PROG") or "explore"
     p = argparse.ArgumentParser(
-        prog="explore", description="Ad-hoc EODHD data exploration (DuckDB)"
+        prog=prog,
+        description="Ad-hoc EODHD data exploration (DuckDB). Only datasets with "
+        "data on disk are queryable; describe/find read the reindex catalog "
+        "when it exists.",
     )
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("describe").add_argument("ticker")
-    sub.add_parser("find").add_argument("pattern")
-    r = sub.add_parser("rows")
-    r.add_argument("ticker")
+
+    def add(verb: str) -> argparse.ArgumentParser:
+        return sub.add_parser(
+            verb,
+            prog=_sub_prog(prog, verb),
+            help=VERB_HELP[verb],
+            description=VERB_HELP[verb],
+        )
+
+    add("describe").add_argument("ticker", help="TICKER or TICKER.EXCHANGE")
+    add("find").add_argument("pattern", help="case-insensitive ticker substring")
+    r = add("rows")
+    r.add_argument("ticker", help="TICKER or TICKER.EXCHANGE")
     r.add_argument("dataset", choices=TICKER_DATASETS)
-    r.add_argument("--head", type=int, default=20)
-    r.add_argument("--cols", default=None, help="comma list, or '*' for all")
-    sub.add_parser("coverage").add_argument("ticker")
-    s = sub.add_parser("sql")
-    s.add_argument("query")
-    s.add_argument("--limit", type=int, default=50)
-    sub.add_parser("schema")
-    sub.add_parser("reindex")
+    r.add_argument("--head", type=int, default=20, help="latest N rows, default 20")
+    r.add_argument(
+        "--cols",
+        default=None,
+        help="columns to show: comma list, or '*' for all (default: the "
+        "dataset's key columns)",
+    )
+    add("coverage").add_argument("ticker", help="TICKER or TICKER.EXCHANGE")
+    s = add("sql")
+    s.add_argument("query", help="a DuckDB SQL statement over the dataset views")
+    s.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="max rows to print (the query itself is not limited), default 50",
+    )
+    add("schema")
+    add("reindex")
     return p
 
 

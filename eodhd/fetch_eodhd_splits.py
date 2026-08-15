@@ -103,7 +103,9 @@ def _max_iso_date(*values: object) -> str | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Fetch EODHD split history into btest")
+    parser = argparse.ArgumentParser(
+        description="Fetch EODHD split history into the data root"
+    )
     parser.add_argument(
         "--tickers", nargs="*", default=[], help="Explicit TICKER.EXCHANGE identifiers"
     )

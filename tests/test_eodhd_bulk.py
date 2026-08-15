@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCRIPTS_EODHD = _REPO_ROOT / "eodhd"
@@ -247,3 +248,71 @@ def test_advance_state_handles_float_inferred_columns() -> None:
     assert row["mode"] == "bulk"
     assert row["fetched_at"] == "2026-07-08T12:00:00Z"
     assert row["latest_data_date"] == "2026-07-08"
+
+
+def test_lane_choices_exclude_non_bulk_lanes() -> None:
+    import eodhd_datasets as reg  # type: ignore
+
+    choices = bulk.lane_choices()
+    assert "news" in reg.LANES and "news" not in choices
+    assert "news" not in bulk.BULK_LANES
+    assert choices[-1] == "all"
+    # every price-bearing lane is bulk-capable
+    assert set(bulk.BULK_LANES) == {
+        n
+        for n, lane in reg.LANES.items()
+        if any(ds.kind in bulk.BULK_KINDS for ds in lane.datasets)
+    }
+    assert "us_common" in bulk.BULK_LANES
+
+
+def test_resolve_lanes() -> None:
+    assert bulk.resolve_lanes([]) == (list(bulk.BULK_LANES), [], [])
+    assert bulk.resolve_lanes(["all"]) == (list(bulk.BULK_LANES), [], [])
+    sel, unknown, not_bulk = bulk.resolve_lanes(["us_etf", "bogus", "news"])
+    assert sel == ["us_etf"]
+    assert unknown == ["bogus"]
+    assert not_bulk == ["news"]
+
+
+def test_bulk_help_lists_only_bulk_lanes(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("DATACLI_PROG", "eodhd refresh --fast")
+    with pytest.raises(SystemExit) as exc:
+        bulk.parse_args(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("usage: eodhd refresh --fast")
+    assert "prices,dividends,splits" in out
+    choices_line = out[out.index("Choices:") :]
+    assert "news" not in choices_line.split("\n\n")[0]
+
+
+def test_dry_run_does_not_need_api_key(tmp_path: Path, monkeypatch, capsys) -> None:
+    import eodhd_datasets as reg  # type: ignore
+
+    def _boom() -> str:
+        raise RuntimeError("no key")
+
+    monkeypatch.setattr(bulk, "_get_api_key", _boom)
+    lane = reg.LaneConfig(
+        name="tmp_lane",
+        region="US",
+        asset_class="common",
+        datasets=(reg.prices_spec("x.py"),),
+        root=tmp_path,  # empty root: no state sidecar yet
+    )
+    monkeypatch.setattr(bulk, "LANES", {"tmp_lane": lane, "news": reg.LANES["news"]})
+    monkeypatch.setattr(bulk, "BULK_LANES", ("tmp_lane",))
+    assert bulk.main([]) == 0
+    out = capsys.readouterr().out
+    assert "DRY-RUN" in out
+    assert "planning offline" in out
+    assert "no state sidecar" in out
+    assert "Dry-run only" in out
+    # a real run without a key must still refuse
+    with pytest.raises(RuntimeError):
+        bulk.main(["--run"])
+    # an unknown lane is rejected up front, a non-bulk lane is skipped with a note
+    assert bulk.main(["bogus"]) == 2
+    assert bulk.main(["news"]) == 0
+    assert "no bulk-refreshable dataset" in capsys.readouterr().out

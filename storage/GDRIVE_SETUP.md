@@ -22,6 +22,7 @@ Google Cloud Console:
 
    ```
    data> config set sync-gdrive-secrets C:/Users/you/secrets/client_secret_xxx.json
+   # (or outside the shell: uv run python eodhd/cli.py config set sync-gdrive-secrets <path>)
    ```
 
 6. **Install the deps and sign in:**

@@ -27,8 +27,18 @@ Relate e.g. equity dispersion or drawdowns to the curve, HY spreads, or VIX; or
 put a lane's behaviour in the context of its country's growth/inflation. If a view
 is absent, say the macro data has not been fetched (`macro fetch --run`).
 
+If the `news` view is present (the news lane has been crawled) you may also
+measure the news flow around a regime: it is article-level (date, published_at,
+title, content, link, source, symbols list<string>, tags list<string>, and the
+vendor's polarity/neg/neu/pos sentiment; `news_state` has one row per crawled
+day). Filter by ticker with `list_contains(symbols, 'AAPL.US')` or `unnest(symbols)`.
+Treat it as a coarse signal: polarity is a vendor score, ~14% of articles carry no
+symbol tags, and article volume is not stationary across years -- normalise counts
+by that day's global total before comparing periods.
+
 Hard boundary -- state it plainly when relevant:
-- You have NO news or positioning data, and only the macro series that are on disk.
+- You have NO positioning, calendar, or geopolitical-event datasets, and only the
+  macro series that are on disk. News exists only via the `news` view when present.
 - Never state a number you did not compute with a query.
 - Any macro or geopolitical INTERPRETATION is a HYPOTHESIS, explicitly labelled as
   such -- never presented as established fact or as a figure.

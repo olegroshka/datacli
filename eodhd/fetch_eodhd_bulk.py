@@ -17,8 +17,14 @@ Scope / caveat:
   fetched day are reported so they can get a periodic per-ticker ``--full-refresh``.
 - A pair whose gap to today exceeds ``--days`` is skipped (never hole-punched) and
   reported; run the normal per-ticker refresh for those.
+- Only lanes with a bulk-refreshable dataset are valid targets (see
+  ``BULK_LANES``); the day-keyed news corpus is refreshed by its own crawler.
+- Without ``--run`` it is a dry-run: with an API key it queries the bulk
+  endpoints to report what *would* be merged; without one it still plans the
+  gap window offline from the state sidecars (nothing is written either way).
 
 Usage:
+    uv run python eodhd/fetch_eodhd_bulk.py            # dry-run plan
     uv run python eodhd/fetch_eodhd_bulk.py --run
     uv run python eodhd/fetch_eodhd_bulk.py us_common us_etf --kinds prices --run
 """
@@ -26,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +48,15 @@ from fetch_eodhd_eu_fundamentals import _get_api_key  # noqa: E402
 BULK_URL = "https://eodhd.com/api/eod-bulk-last-day"
 HTTP_TIMEOUT = 120
 BULK_KINDS = ("prices", "dividends", "splits")
+#: EODHD bills one /eod-bulk-last-day call as this many API units.
+BULK_UNITS = 100
+#: Lanes with at least one bulk-refreshable dataset (registry order). A lane
+#: with none (the day-keyed news corpus) is not a valid target here.
+BULK_LANES: tuple[str, ...] = tuple(
+    name
+    for name, lane in LANES.items()
+    if any(ds.kind in BULK_KINDS for ds in lane.datasets)
+)
 KEY_COLS = ("ticker", "exchange")
 # Identity keys: a row is "already present" iff it matches on ALL of these.
 # Events include the value because a firm can have multiple distinct dividends
@@ -336,13 +352,19 @@ def advance_state(
 # live IO
 # --------------------------------------------------------------------------- #
 def bulk_fetch(
-    session: requests.Session,
+    session: requests.Session | None,
     exchange: str,
     date: str,
     kind: str,
     cache: dict[tuple[str, str, str], list[dict]],
 ) -> list[dict]:
-    """One /eod-bulk-last-day call (cached per exchange/date/kind)."""
+    """One /eod-bulk-last-day call (cached per exchange/date/kind).
+
+    ``session=None`` means offline (a dry-run without an API key): no request is
+    made and nothing is cached, so the call count stays honest.
+    """
+    if session is None:
+        return []
     key = (exchange, date, kind)
     if key in cache:
         return cache[key]
@@ -371,14 +393,22 @@ def process_dataset(
     lane: LaneConfig,
     ds: DatasetSpec,
     *,
-    session: requests.Session,
+    session: requests.Session | None,
     cache: dict[tuple[str, str, str], list[dict]],
     as_of: pd.Timestamp,
     max_days: int,
     now: str,
     dry_run: bool,
+    planned: set[tuple[str, str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Bulk-refresh a single (lane, dataset). Returns a summary dict."""
+    """Bulk-refresh a single (lane, dataset). Returns a summary dict.
+
+    ``session=None`` (dry-run) plans the gap window from the state sidecar
+    without querying the API. ``planned`` collects the distinct
+    ``(exchange, date, kind)`` calls a real run would make -- shared across
+    lanes exactly like the fetch cache -- so the dry-run can price the run
+    (each call is BULK_UNITS API units).
+    """
     root = lane.resolved_root()
     state_path = root / ds.state  # type: ignore[operator]
     out_path = root / ds.output
@@ -402,8 +432,11 @@ def process_dataset(
     earliest = pd.Timestamp(dates[0])
     date_col = DATE_COL[ds.kind]
 
+    exchanges = _exchanges(state)
+    if planned is not None:
+        planned.update((ex, d, ds.kind) for ex in exchanges for d in dates)
     frames = []
-    for exchange in _exchanges(state):
+    for exchange in exchanges:
         for date in dates:
             rows = bulk_fetch(session, exchange, date, ds.kind, cache)
             if rows:
@@ -442,17 +475,47 @@ def process_dataset(
     return summary
 
 
+def lane_choices() -> tuple[str, ...]:
+    """Valid ``lanes`` positionals: the bulk-capable lanes plus ``all``."""
+    return (*BULK_LANES, "all")
+
+
+def resolve_lanes(requested: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Expand/validate the ``lanes`` positionals.
+
+    Returns ``(selected, unknown, not_bulk)``: the bulk-capable lanes to process
+    (registry order, de-duplicated), names that are not registered lanes at all,
+    and registered lanes that have no bulk-refreshable dataset (e.g. ``news``).
+    An empty request or ``all`` selects every bulk-capable lane.
+    """
+    if not requested or "all" in requested:
+        return list(BULK_LANES), [], []
+    unknown = [n for n in requested if n not in LANES]
+    not_bulk = [n for n in requested if n in LANES and n not in BULK_LANES]
+    selected = [n for n in BULK_LANES if n in requested]
+    return selected, unknown, not_bulk
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Bulk end-of-day fast refresh (prices/dividends/splits)"
+        prog=os.environ.get("DATACLI_PROG") or None,
+        description="Bulk end-of-day fast refresh (prices/dividends/splits): one "
+        "/eod-bulk-last-day call per exchange and day, merged into the lane "
+        "parquets. Dry-run (plan only) unless --run is given; --run hits the "
+        "paid EODHD API and needs EODHD_API_KEY.",
     )
     p.add_argument(
-        "lanes", nargs="*", help=f"Lanes (default all). Choices: {', '.join(LANES)}"
+        "lanes",
+        nargs="*",
+        metavar="LANE",
+        help="Lanes to refresh (default: all bulk-capable lanes). "
+        f"Choices: {', '.join(lane_choices())}",
     )
     p.add_argument(
         "--kinds",
         default=",".join(BULK_KINDS),
-        help=f"Comma list (default: {','.join(BULK_KINDS)})",
+        help=f"Comma list of dataset kinds. Choices: {','.join(BULK_KINDS)} "
+        f"(default: {','.join(BULK_KINDS)})",
     )
     p.add_argument(
         "--days", type=int, default=7, help="Max days back to fill via bulk (default 7)"
@@ -468,23 +531,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    lane_names = args.lanes or list(LANES)
-    bad = [n for n in lane_names if n not in LANES]
+    lane_names, bad, not_bulk = resolve_lanes(args.lanes)
     if bad:
-        print(f"unknown lane(s): {', '.join(bad)}", file=sys.stderr)
+        print(
+            f"unknown lane(s): {', '.join(bad)}. Choices: {', '.join(lane_choices())}",
+            file=sys.stderr,
+        )
         return 2
     kinds = {k.strip() for k in args.kinds.split(",") if k.strip()}
     as_of = pd.Timestamp(args.as_of)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    session = requests.Session()
-    session.params = {"api_token": _get_api_key()}  # type: ignore[assignment]
+    # A dry-run is free by contract: it plans from the state sidecars alone and
+    # never opens a session (each bulk call costs BULK_UNITS units, so a plan
+    # that queried would spend thousands of units per day behind). Only --run
+    # needs the key.
+    session: requests.Session | None = None
+    if args.run:
+        session = requests.Session()
+        session.params = {"api_token": _get_api_key()}  # raises without a key
     cache: dict[tuple[str, str, str], list[dict]] = {}
+    planned: set[tuple[str, str, str]] = set()
 
     mode = "RUN" if args.run else "DRY-RUN"
     print(
-        f"Bulk fast refresh ({mode}) — as-of {as_of.date()}, up to {args.days}d back\n"
+        f"Bulk fast refresh ({mode}) - as-of {as_of.date()}, up to {args.days}d back\n"
     )
+    if not args.run:
+        print(
+            "  note: dry-run plans from the state sidecars only (planning offline); "
+            "the bulk endpoints are not queried, so new_rows reads 0 here\n"
+        )
+    for name in not_bulk:
+        print(f"  {name:<16} [no bulk-refreshable dataset in this lane; skipped]")
     total_new = total_skipped = 0
     split_tickers: list[str] = []
     for lane_name in lane_names:
@@ -501,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_days=args.days,
                 now=now,
                 dry_run=not args.run,
+                planned=planned,
             )
             total_new += s["new_rows"]
             total_skipped += s["skipped"]
@@ -512,11 +592,17 @@ def main(argv: list[str] | None = None) -> int:
                 f"{extra}{note}"
             )
 
-    print(
-        f"\nbulk calls: {len(cache)}  |  new rows: {total_new}  |  skipped pairs (need per-ticker): {total_skipped}"
-    )
-    if not args.run:
-        print("Dry-run only. Re-run with --run to write.")
+    if args.run:
+        print(
+            f"\nbulk calls: {len(cache)}  |  new rows: {total_new}  |  "
+            f"skipped pairs (need per-ticker): {total_skipped}"
+        )
+    else:
+        print(
+            f"\nplanned bulk calls: {len(planned)}  (~{len(planned) * BULK_UNITS:,} "
+            f"API units)  |  skipped pairs (need per-ticker): {total_skipped}"
+        )
+        print("Dry-run only. Re-run with --run to fetch and write.")
     return 0
 
 

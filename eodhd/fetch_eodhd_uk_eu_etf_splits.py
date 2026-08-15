@@ -48,7 +48,7 @@ log = logging.getLogger("eodhd_uk_eu_etf_splits")
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fetch EODHD UK/EU ETF split history into btest"
+        description="Fetch EODHD UK/EU ETF split history into the data root"
     )
     parser.add_argument(
         "--tickers", nargs="*", default=[], help="Explicit TICKER.EXCHANGE identifiers"

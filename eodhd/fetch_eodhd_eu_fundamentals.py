@@ -43,7 +43,11 @@ import pandas as pd
 import requests
 from _datadir import EODHD_RAW_ROOT
 
-_ROOT = Path(__file__).resolve().parents[2]
+#: Repo root (datacli). Key files and ``.env`` are looked up here first.
+_ROOT = Path(__file__).resolve().parents[1]
+#: The repo's parent -- where the original ``btest`` layout kept
+#: ``configs/local``; still searched so existing setups keep working.
+_LEGACY_ROOT = _ROOT.parent
 RAW_DIR = EODHD_RAW_ROOT / "uk_eu"
 RAW_CACHE_DIR = RAW_DIR / "cache" / "fundamentals"
 
@@ -197,7 +201,21 @@ def _get_api_key_from_windows_user_env() -> str:
         return ""
 
 
+#: Where the EODHD key is looked for, in order (documented in the READMEs).
+API_KEY_SOURCES = (
+    "EODHD_API_KEY environment variable",
+    "EODHD_API_KEY in the Windows user environment (setx)",
+    "<repo>/configs/local/eodhd_api_key.txt or <repo>/local_cache/eodhd_api_key.txt",
+    "EODHD_API_KEY=... in ./.env or <repo>/.env",
+)
+
+
 def _get_api_key() -> str:
+    """Resolve the EODHD API key (see :data:`API_KEY_SOURCES`).
+
+    Raises:
+        RuntimeError: when no source yields a key.
+    """
     key = os.environ.get("EODHD_API_KEY", "").strip()
     if key:
         return key
@@ -210,6 +228,8 @@ def _get_api_key() -> str:
     key_locations = [
         _ROOT / "configs" / "local" / "eodhd_api_key.txt",
         _ROOT / "local_cache" / "eodhd_api_key.txt",
+        _LEGACY_ROOT / "configs" / "local" / "eodhd_api_key.txt",
+        _LEGACY_ROOT / "local_cache" / "eodhd_api_key.txt",
     ]
     for key_file in key_locations:
         try:
@@ -221,7 +241,7 @@ def _get_api_key() -> str:
         except Exception:
             continue
 
-    for env_file in [Path.cwd() / ".env", _ROOT / ".env"]:
+    for env_file in [Path.cwd() / ".env", _ROOT / ".env", _LEGACY_ROOT / ".env"]:
         try:
             if not env_file.exists():
                 continue
@@ -238,9 +258,11 @@ def _get_api_key() -> str:
             continue
 
     raise RuntimeError(
-        "EODHD API key not found. Set environment variable EODHD_API_KEY, "
-        "or create a local file at 'configs/local/eodhd_api_key.txt' or 'local_cache/eodhd_api_key.txt' "
-        "containing only your key. Get a key at https://eodhd.com/register"
+        "EODHD API key not found. Looked in: "
+        + "; ".join(API_KEY_SOURCES)
+        + f" (repo = {_ROOT}). Easiest: $env:EODHD_API_KEY = '<key>' "
+        "(persist with setx EODHD_API_KEY <key>). Get a key at "
+        "https://eodhd.com/register"
     )
 
 
@@ -657,7 +679,7 @@ def compute_coverage(df: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fetch EODHD UK/EU fundamentals into btest"
+        description="Fetch EODHD UK/EU fundamentals into the data root"
     )
     parser.add_argument(
         "--smoke", action="store_true", help="Smoke test: 20 known tickers only"
@@ -1094,7 +1116,7 @@ def main() -> None:
         print(f"  Firms with any Assets data:   {n_with_assets}")
         print(f"  Firms with any CapEx data:    {n_with_capex}")
         print(f"  Firms with both >=56Q (2011-2025): {n_both_60q}")
-        print(f"  Output: {RAW_DIR.relative_to(_ROOT)}/")
+        print(f"  Output: {RAW_DIR}/")
         if n_both_60q >= 80:
             print(f"\n  >> GATE G1 THRESHOLD MET: {n_both_60q} >= 80 firms")
         elif n_both_60q >= 60:

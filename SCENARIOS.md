@@ -91,7 +91,7 @@ verdict follow at the end.
 
 ## Black-box test log
 
-_Run as a first-time user against the real local snapshot (16 datasets, ~54M rows).
+_Run as a first-time user against the real local snapshot (at the time: 16 datasets, ~54M rows; the registry now has 17 incl. `news`).
 Scenarios 1–3 run end-to-end; 4–5 exercise the guided boundary because the optional
 `lab` extra / live models / paid fetches are intentionally not invoked here._
 
@@ -156,7 +156,7 @@ uv run python scripts/blackbox.py --only S1,S2     # a subset
 ```
 
 - **`--check`** currently passes **12/12** deterministic steps (S1–S3 + S5's macro
-  steps); the two LLM steps (S4, S5·investigate) auto-skip unless `--live`.
+  steps); the three LLM steps (S4 ×2, S5·investigate) auto-skip unless `--live`.
 - **`--demo`** types each command at a shell prompt and prints its output slowly —
   a reproducible walkthrough / screencast script.
 - Building the harness immediately surfaced a real bug: capturing the commands'
