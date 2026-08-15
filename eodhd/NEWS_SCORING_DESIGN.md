@@ -1,6 +1,6 @@
 # News Scoring — Design Request (draft for brainstorm)
 
-**Status:** DRAFT-REQUEST — requirements + design space; nothing decided, nothing built  
+**Status:** DECIDED (§8) — building the substrate  
 **Created:** 2026-08-15  
 **Depends on:** the `news` corpus (`EODHD_NEWS_SENTIMENT_FINDINGS.md`), roadmap item 3
 (`NEWS_ROADMAP.md`)  
@@ -202,3 +202,35 @@ can show coverage the same way it does for the crawl.
 
 Real-time streaming; training our own models; alerts; anything that writes back
 to EODHD.
+
+## 8. Decision (2026-08-15)
+
+Agreed in the brainstorm; the rest of the open questions take the starting
+positions in §6 unless noted.
+
+- **Architecture: D** — embeddings as the wide substrate, an LLM-extracted rich
+  record on the targeted tier, vendor/classifier as baselines, one schema
+  mechanism for all backends.
+- **First schema: `event_v1`** — the rich event record; sentiment fields are part
+  of it, so a narrow sentiment schema is a projection, not a separate pass.
+- **Local-only first.** The first tier runs entirely on the local machine: the LLM
+  backend targets Ollama (default `local` tier = `ollama/qwen2.5-coder:7b`, the
+  model already installed; swap via config), embeddings via a local Ollama
+  embedding model. API models stay available as backends but are opt-in per run
+  with an explicit budget. Consequence: the first targeted pass is small (recent
+  window, universe ∩ ≤ 3 symbols) and grows as a continuous top-up.
+- **Lift the model layer.** `lab/models.py`, `lab/cache.py`, the completion/usage
+  types and the tier map move to a shared, dependency-light `llm/` package;
+  `lab` imports it (thin compatibility shims keep the old import paths working);
+  `scoring` imports it and does **not** depend on the `lab` extra.
+- Q3 default window: last 90 days first · Q6 per-symbol only when ≤ 3 symbols ·
+  Q7 embeddings: local Ollama embedding model, title + lead text · Q8 derived
+  categories as views first · Q9 gold set is the first evaluation deliverable ·
+  Q10 `score` command (refresh top-up later) · Q11 score sidecars are datasets in
+  the `news` lane.
+
+Build order: (1) `llm/` lift with lab shims → (2) `scoring/` substrate (schema
+loader + `event_v1`, backends `vendor`/`llm`/`embed`, select, store, runner,
+cli, tests with an injected completion) → (3) integration (registry, DuckDB
+views, shell `score`, docs) and a real local smoke run to measure quality and
+seconds/article on `qwen2.5-coder:7b`.

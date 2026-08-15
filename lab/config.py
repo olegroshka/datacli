@@ -16,15 +16,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "datacli.toml"
 
-# Model tiers -> concrete LiteLLM model ids. Personas pick a tier by name.
-# `local` targets a 12GB GPU via Ollama; step up to qwen2.5-coder:14b (~9GB Q4)
-# for more quality, or qwen2.5-coder:32b on a 24GB+ card.
-DEFAULT_MODELS: dict[str, str] = {
-    "local": "ollama/qwen2.5-coder:7b",
-    "cheap": "openai/gpt-4o-mini",
-    "mid": "anthropic/claude-sonnet-5",
-    "strong": "anthropic/claude-opus-4-8",
-}
+# Model tiers -> concrete LiteLLM model ids live in the shared ``llm`` package;
+# personas pick a tier by name and ``[lab.models]`` overrides any entry.
+from llm.tiers import DEFAULT_MODELS  # noqa: E402
 
 
 @dataclass(frozen=True)

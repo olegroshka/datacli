@@ -10,28 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
-@dataclass(frozen=True)
-class Usage:
-    """Token accounting for one model call."""
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-
-    @property
-    def total_tokens(self) -> int:
-        return self.prompt_tokens + self.completion_tokens
-
-
-@dataclass(frozen=True)
-class Completion:
-    """The result of a single model call."""
-
-    text: str
-    model: str
-    usage: Usage = field(default_factory=Usage)
-    cost_usd: float = 0.0
-    cached: bool = False
+# Usage / Completion live in the shared ``llm`` package and are re-exported here
+# so ``lab.types.Usage`` keeps working.
+from llm.types import Completion, Usage  # noqa: E402,F401
 
 
 @dataclass(frozen=True)
