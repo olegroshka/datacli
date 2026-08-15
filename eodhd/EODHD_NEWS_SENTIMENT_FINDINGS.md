@@ -229,7 +229,7 @@ the lane; `sql` and `schema` cover it.
 Tracked in detail in `NEWS_ROADMAP.md`; the scoring design in `NEWS_SCORING_DESIGN.md`.
 
 0. ~~Full backfill~~ — done 2026-08-15 (§2.4); daily `refresh` keeps it current.
-1. **Derived daily panel** `news_symbol_daily.parquet` (`date, ticker, exchange, n,
+1. ~~**Derived daily panel**~~ — done 2026-08-15: `news_symbol_daily.parquet` (`build_news_symbol_daily.py`, kind `news_daily`, view `news_daily`; `share_of_day` is the normalised volume feature). Original scope: `news_symbol_daily.parquet` (`date, ticker, exchange, n,
    polarity_mean, …`) built locally from the corpus — replaces `/sentiments`.
 2. **Issuer mapping** so UK/EU tickers pick up their US/ADR/Frankfurt lines.
 3. **Own scoring / embeddings** over `content` (model outputs stored as sidecar

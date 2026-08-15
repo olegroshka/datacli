@@ -1,6 +1,6 @@
 # News Lane & Refresh — Roadmap
 
-**Status:** PLANNED (items 1–5) · **Created:** 2026-08-15  
+**Status:** item 1 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · 2, 4, 5 PLANNED · **Created:** 2026-08-15  
 **Context:** the `news` lane substrate is built and backfilled
 (`EODHD_NEWS_SENTIMENT_FINDINGS.md`); this file is the ordered plan for turning it
 into something models can consume, plus the refresh improvements surfaced by the
@@ -39,6 +39,12 @@ after the news top-up, tests, doc section in the findings file, lab schema conte
 **Acceptance.** `describe AAPL.US` shows the panel; `status news` shows both
 datasets; rebuild of the full history < 10 min; `refresh --run` keeps it current
 without extra flags.
+
+**Status.** DONE 2026-08-15 — `eodhd/build_news_symbol_daily.py`; kind `news_daily`
+in the news lane (ticker-keyed, snapshot); DuckDB view `news_daily`; runs after the
+news top-up in `refresh` (default kind); full build 6.95 M rows / 104 MB in ~2 min,
+incremental rebuilds only new/changed days. Columns as specified plus `symbol`,
+`n_articles_day`, `neg_share`, `built_at`.
 
 **Size.** ~1 day.
 

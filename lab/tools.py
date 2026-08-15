@@ -62,6 +62,14 @@ def schema_context() -> str:
         "(ticker, exchange, coverage_through, latest_data_date, status); "
         "news_state (date, status, articles) -- one row per crawled UTC day"
     )
+    if "news_daily" in sch.datasets():
+        lines.append(
+            "- news_daily (derived, present only if built): one row per (date, ticker, "
+            "exchange) with n_articles, share_of_day (= n_articles / that day's global "
+            "article count -- use this, not raw counts: volume is not stationary across "
+            "years), n_solo (articles with <= 3 symbol tags), n_sources, vendor "
+            "polarity_mean/pos_share/neg_share, first/last_published_at"
+        )
     if "news" in sch.datasets():
         lines.append(
             "- news_scores_<schema> (e.g. news_scores_event; present only after `score "

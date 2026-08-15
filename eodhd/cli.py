@@ -96,11 +96,12 @@ LIFECYCLE: list[tuple[str, str, bool]] = [
     ("6. explore", "describe, find, rows, coverage, sql", False),
 ]
 
-KNOWN_KINDS = ("prices", "dividends", "splits", "fundamentals", "news")
+KNOWN_KINDS = ("prices", "dividends", "splits", "fundamentals", "news", "news_daily")
 # news rides the default refresh: its registry args cap each run to a bounded
 # top-up (newest days first), so a routine refresh never turns into a backfill.
 # The one-off backfill is an explicit `python eodhd/fetch_eodhd_news.py`.
-DEFAULT_KINDS = ("prices", "dividends", "splits", "news")
+# news_daily is the local, seconds-cheap panel build that follows the news top-up.
+DEFAULT_KINDS = ("prices", "dividends", "splits", "news", "news_daily")
 # Kinds whose fetchers accept the incremental passthrough flags (--to/--limit/...).
 # fundamentals is refreshed via its own --update mode and takes different flags;
 # news is a day-keyed crawl that must never receive --full-refresh/--tickers.

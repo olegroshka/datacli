@@ -27,6 +27,7 @@ __all__ = [
     "event_spec",
     "fundamentals_spec",
     "news_spec",
+    "news_daily_spec",
     "derived_spec",
     "iter_datasets",
     "registered_lane_names",
@@ -259,6 +260,25 @@ def news_spec(fetcher: str | None = "fetch_eodhd_news.py") -> DatasetSpec:
     )
 
 
+def news_daily_spec(fetcher: str | None = "build_news_symbol_daily.py") -> DatasetSpec:
+    """The derived ``news_symbol_daily`` panel: one row per (date, ticker, exchange).
+
+    Built locally from the article partitions (no API); ticker-keyed so the
+    explorer's ticker verbs and the catalog cover it; snapshot semantics
+    (freshness = newest ``date`` in the file, no state sidecar). ``refresh``
+    runs the build after the news top-up.
+    """
+    return DatasetSpec(
+        kind="news_daily",
+        output="news_symbol_daily.parquet",
+        state=None,
+        as_of_data_col="date",
+        key_cols=("ticker", "exchange"),
+        label="news_symbol_daily",
+        fetcher=fetcher,
+    )
+
+
 def derived_spec(kind: str, output: str, *, label: str | None = None) -> DatasetSpec:
     """A locally derived, day-partitioned sidecar (no fetcher, no state).
 
@@ -387,6 +407,7 @@ LANES: dict[str, LaneConfig] = {
         None,
         [
             news_spec(),
+            news_daily_spec(),
             derived_spec("news_scores", "scores"),
             derived_spec("news_embeddings", "embeddings"),
         ],

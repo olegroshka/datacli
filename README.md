@@ -373,6 +373,11 @@ the full backfill is 4.46 M articles / 6.96 GB / 5,511 pages ≈ 28k units and t
 - **Query it with `sql`** — `news` (article-level) and `news_state` (one row per
   crawled day). The ticker verbs (`describe`/`find`/`rows`/`coverage`) and `qc`
   skip it because it is day-keyed, not ticker-keyed.
+- **Ask it per ticker and day** — `news_daily` (`news_symbol_daily.parquet`, built
+  locally by `refresh` after the news top-up): one row per `(date, ticker, exchange)`
+  with `n_articles`, `share_of_day` (volume normalised by that day's global count),
+  `n_solo`, `n_sources`, vendor `polarity_mean/pos_share/neg_share`. `describe`,
+  `rows`, `coverage` and the catalog cover it like any ticker-keyed dataset.
 - **Score it yourself** — `score plan` / `score run --run` extract a rich event
   record per article (`event_v1`: event type, summary, sentiment, materiality,
   horizon, per-symbol role/direction) with a **local** model by default and write

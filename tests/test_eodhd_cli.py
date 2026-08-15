@@ -111,7 +111,8 @@ def test_news_rides_default_refresh_capped_and_without_passthrough() -> None:
             "news",
             "fetch_eodhd_news.py",
             ["--limit-days", str(reg.NEWS_REFRESH_MAX_DAYS)],
-        )
+        ),
+        ("news_daily", "build_news_symbol_daily.py", []),
     ]
     # ...and no universe step is invented for it
     assert all(s.kind != "universe" for s in news_steps)
@@ -127,7 +128,7 @@ def test_fast_path_extra_kinds_exclude_bulk_and_fundamentals() -> None:
         with_universe=False,
         passthrough=[],
     )
-    assert [(s.lane, s.kind) for s in extra] == [("news", "news")]
+    assert [(s.lane, s.kind) for s in extra] == [("news", "news"), ("news", "news_daily")]
 
 
 def test_passthrough_not_applied_to_fundamentals() -> None:

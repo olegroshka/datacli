@@ -61,6 +61,7 @@ DATE_COL = {
     "splits": "ex_date",
     "fundamentals": "filing_date",
     "news": "date",
+    "news_daily": "date",
 }
 STATE_ASOF = {
     "prices": "latest_data_date",
@@ -68,6 +69,7 @@ STATE_ASOF = {
     "splits": "latest_data_date",
     "fundamentals": "latest_filing_date",
     "news": "date",
+    "news_daily": None,
 }
 STATE_COVERAGE = {
     "prices": "coverage_through",
@@ -75,6 +77,7 @@ STATE_COVERAGE = {
     "splits": "coverage_through",
     "fundamentals": None,
     "news": "date",
+    "news_daily": None,
 }
 DEFAULT_COLS = {
     "prices": ["date", "open", "high", "low", "close", "adjusted_close", "volume"],
@@ -89,6 +92,16 @@ DEFAULT_COLS = {
     "splits": ["ex_date", "split_factor", "numerator", "denominator", "split_ratio"],
     "fundamentals": ["statement", "date", "filing_date", "currency"],
     "news": ["published_at", "title", "source", "symbols", "polarity"],
+    "news_daily": [
+        "date",
+        "n_articles",
+        "share_of_day",
+        "n_solo",
+        "n_sources",
+        "polarity_mean",
+        "pos_share",
+        "neg_share",
+    ],
 }
 INDEX_PATH = EODHD_RAW_ROOT / "_datacli_index.parquet"
 META_PATH = EODHD_RAW_ROOT / "_datacli_meta.json"

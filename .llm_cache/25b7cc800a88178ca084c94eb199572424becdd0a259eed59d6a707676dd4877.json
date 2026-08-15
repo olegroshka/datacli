@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"macro\", \"summary\": \"Euro Area GDP expands 0.4% in Q2, meeting estimates.\", \"sentiment\": 0.0, \"confidence\": 1.0, \"materiality\": 2, \"novelty\": false, \"horizon\": \"quarters\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1187, "completion_tokens": 87}, "cost_usd": 0.0}

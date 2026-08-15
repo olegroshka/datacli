@@ -263,6 +263,10 @@ uv run python eodhd/cli.py status news
 `--limit-days 30` so a routine refresh can never become a backfill. Ticker-style
 flags (`--tickers`, `--to`, `--full-refresh`) never reach the crawler.
 
+The derived panel `news_symbol_daily.parquet` (`build_news_symbol_daily.py`, kind
+`news_daily`) is rebuilt incrementally by `refresh` after the news top-up; `--full`
+rebuilds every day (~2 min).
+
 Own scores over the corpus: `uv run python -m scoring.cli plan|run --run|status`
 (shell: `score …`), local model by default; sidecars land under
 `news/scores/<schema>@<v>/<backend>/` and show up in `status news` and the

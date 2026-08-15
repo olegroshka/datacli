@@ -16,7 +16,7 @@ extra fundamentals fields ride along via ``SELECT *``.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2  # v2: + news (article corpus)
+SCHEMA_VERSION = 3  # v2: + news (article corpus); v3: + news_daily (derived panel)
 
 # canonical column -> role, per dataset
 SCHEMAS: dict[str, dict[str, str]] = {
@@ -59,6 +59,26 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "date": "date",
         "filing_date": "value",
         "currency": "value",
+    },
+    # Derived daily panel from the news corpus: one row per (date, ticker,
+    # exchange); share_of_day is the volume feature (normalised by the day's
+    # global article count), polarity_* are vendor-sentiment aggregates.
+    "news_daily": {
+        "ticker": "key",
+        "exchange": "key",
+        "date": "date",
+        "symbol": "value",
+        "n_articles": "value",
+        "n_articles_day": "value",
+        "share_of_day": "value",
+        "n_sources": "value",
+        "n_solo": "value",
+        "polarity_mean": "value",
+        "polarity_std": "value",
+        "pos_share": "value",
+        "neg_share": "value",
+        "first_published_at": "value",
+        "last_published_at": "value",
     },
     # Article-level corpus (news lane); ``symbols``/``tags`` are list<string>
     # columns -- unnest them for symbol- or tag-level views.
