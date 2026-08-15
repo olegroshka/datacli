@@ -226,6 +226,8 @@ the lane; `sql` and `schema` cover it.
 
 ## 6. Follow-on phases (not in the substrate)
 
+Tracked in detail in `NEWS_ROADMAP.md`; the scoring design in `NEWS_SCORING_DESIGN.md`.
+
 0. ~~Full backfill~~ — done 2026-08-15 (§2.4); daily `refresh` keeps it current.
 1. **Derived daily panel** `news_symbol_daily.parquet` (`date, ticker, exchange, n,
    polarity_mean, …`) built locally from the corpus — replaces `/sentiments`.

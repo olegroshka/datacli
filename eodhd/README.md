@@ -136,6 +136,8 @@ pre-fetch numbers. The news lane is day-keyed, so the ticker verbs skip it; use 
 - `FUNDAMENTALS_REFRESH_DESIGN.md`: design notes for the fundamentals refresh (why append-only was a problem, the fix).
 - `EODHD_*_MANIFEST.md`: per-lane factual inventories of scope, local artefacts, and observed counts (dated).
 - `EODHD_NEWS_SENTIMENT_FINDINGS.md`: what the subscription exposes for news / sentiment (measured live), the `news` lane design, and the backfill result.
+- `NEWS_ROADMAP.md`: the ordered plan for the news lane and refresh improvements (derived panel, issuer mapping, own scoring, refresh fixes, gap-fill).
+- `NEWS_SCORING_DESIGN.md`: design request for the pluggable, schema-driven scoring layer over the corpus (brainstorm → decision → build).
 - `fetch_eodhd_*.py`: the actual fetchers.
 
 ## 5. Current EODHD lane map
