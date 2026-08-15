@@ -391,3 +391,74 @@ def test_register_score_views_and_status_dataset(tmp_path: Path) -> None:
         lane, scores_ds, as_of_ts=pd.Timestamp("2026-08-15"), stale_days=7, deep=True
     )
     assert rec["rows"] == 2 and rec["last_data"] == "2026-08-13" and rec["pairs"] == 1
+
+
+def test_evaluate_pure_metrics() -> None:
+    from scoring import evaluate as ev
+
+    df = pd.DataFrame(
+        {
+            "article_id": ["a", "b", "c", "d", "e"],
+            "date": ["2026-08-13"] * 5,
+            "backend": ["m1"] * 5,
+            "status": ["ok", "ok", "ok", "ok", "invalid"],
+            "seconds": [2.0, 2.0, 2.0, 2.0, 1.0],
+            "cached": [False] * 5,
+            "prompt_tokens": [1000] * 5,
+            "event_type": ["earnings", "earnings", "other", "m_and_a", None],
+            "sentiment": [0.5, -0.5, 0.0, 0.5, None],
+            "confidence": [0.9, 0.8, 0.5, 0.9, None],
+            "materiality": [2, 2, 1, 3, None],
+            "novelty": [True, False, True, True, None],
+            "horizon": ["quarters", "weeks", "n_a", "years", None],
+            "vendor_polarity": [0.9, 0.95, 0.99, -0.2, 0.5],
+            "summary": ["s"] * 5,
+            "model": ["x"] * 5,
+            "completion_tokens": [10] * 5,
+            "cost_usd": [0.0] * 5,
+            "source": ["y"] * 5,
+        }
+    )
+    h = ev.health(df)
+    assert (
+        h.loc[0, "articles"] == 5
+        and h.loc[0, "invalid"] == 1
+        and h.loc[0, "invalid_share"] == 0.2
+    )
+    vv = ev.vs_vendor(df)
+    assert vv["n"] == 4 and -1 <= vv["pearson"] <= 1 and -1 <= vv["spearman"] <= 1
+    tbl = vv["sign_table"]
+    assert (
+        tbl.loc["pos", "pos"] == 1
+        and tbl.loc["neg", "pos"] == 1
+        and tbl.loc["pos", "neg"] == 1
+    )
+    assert vv["sign_agreement"] == 0.25
+    dist = ev.distributions(
+        df,
+        pd.DataFrame(
+            {
+                "article_id": ["a", "b"],
+                "symbol": ["X", "Y"],
+                "backend": ["m1"] * 2,
+                "role": ["subject", "peer"],
+                "direction": ["up", "down"],
+                "relevance": [1.0, 0.2],
+                "sentiment": [0.5, -0.5],
+            }
+        ),
+    )
+    assert (
+        dist["event_type"].iloc[0]["event_type"] == "earnings"
+        and dist["event_type"].iloc[0]["n"] == 2
+    )
+    assert set(dist["symbol_direction"]["direction"]) == {"up", "down"}
+    # compare a backend with itself -> perfect agreement, kappa 1
+    cmp_ = ev.compare(df, df.assign(backend="m2"))
+    assert (
+        cmp_["n"] == 4
+        and cmp_["event_type_agreement"] == 1.0
+        and cmp_["event_type_kappa"] == 1.0
+    )
+    assert ev.cohen_kappa(pd.Series(["a", "b", "a"]), pd.Series(["a", "b", "b"])) < 1.0
+    assert ev.vs_vendor(df.head(2)) == {"n": 2}

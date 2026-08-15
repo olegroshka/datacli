@@ -278,6 +278,34 @@ uv run python -m scoring.cli status
 uv run python eodhd/cli.py sql "SELECT event_type, count(*) FROM news_scores_event WHERE symbol IS NULL GROUP BY 1 ORDER BY 2 DESC"
 ```
 
-Next (roadmap item 3, continued): run the 90-day local pass; `score eval` (agreement
-vs vendor, inter-backend); the gold set; the embedding pass (`ollama pull
-nomic-embed-text` first); a `refresh` post-step for the daily top-up.
+### `score eval` and the first read (168 articles, 2026-08-15)
+
+`score eval [--schema event] [--backend ID] [--compare A B]` prints health per
+backend, our `sentiment` vs the vendor `polarity` (Pearson / Spearman / 3×3 sign
+table with a ±0.05 dead band), the field distributions, and — with two backends
+on the same articles — sentiment correlation, event_type / direction agreement
+with Cohen's kappa, and materiality MAE.
+
+First read on the running 90-day pass (`qwen2.5-coder:7b`, 168 articles, 0
+invalid, 2.1 s/item):
+
+| | ours | vendor |
+|---|---|---|
+| mean sentiment | 0.21 | 0.89 |
+| share positive / negative | 59 % / 24 % | 95 % / 5 % |
+| p10 / p50 / p90 | −0.5 / 0.5 / 0.5 | 0.89 / 0.996 / 0.999 |
+
+Pearson 0.15, sign agreement 0.60 — the vendor calls almost everything positive;
+ours disagrees on 36 articles it calls negative. Distributions: `event_type`
+earnings 33 %, **other 40 %**; `materiality` **2 on 82 %** of articles; horizon
+`n_a` 33 %; per-symbol role subject 70 % / peer 25 %, direction up 51 % / down
+18 %. Calibration signals for an `event_v2` prompt once the pass has more data:
+the model quantises sentiment to ±0.5 (ask for finer granularity / anchors),
+`materiality` collapses onto 2 (give anchored examples per level), and 40 %
+`other` suggests missing categories (index/ETF flows, dividends declared,
+partnerships) or a stronger nudge to pick the closest class.
+
+Next (roadmap item 3, continued): let the 90-day pass finish; gold set (needs a
+paid model with an explicit `--budget-usd`, or hand labels) → `--compare`; the
+embedding pass (`ollama pull nomic-embed-text` first); `event_v2` prompt from the
+eval findings; a `refresh` post-step for the daily top-up.

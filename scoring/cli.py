@@ -25,6 +25,7 @@ for p in (str(_REPO_ROOT), str(_EODHD)):
         sys.path.insert(0, p)
 
 from scoring import config as cfg_mod  # noqa: E402
+from scoring import evaluate as ev  # noqa: E402
 from scoring import runner, store  # noqa: E402
 from scoring.backends import BACKENDS, get_backend  # noqa: E402
 from scoring.schema import SchemaError, list_schemas, load_schema  # noqa: E402
@@ -136,6 +137,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--run", action="store_true", help="Actually score (default: show the plan)"
     )
     sub.add_parser("status", help="What score/embedding sidecars exist on disk")
+    sp_eval = sub.add_parser(
+        "eval",
+        help="Health, agreement with the vendor score, distributions, backend vs backend",
+    )
+    sp_eval.add_argument(
+        "--schema", default="event", help="Schema name (default: event)"
+    )
+    sp_eval.add_argument("--backend", default=None, help="Restrict to one backend id")
+    sp_eval.add_argument(
+        "--compare",
+        nargs=2,
+        metavar=("BACKEND_A", "BACKEND_B"),
+        default=None,
+        help="Agreement between two backend ids on the articles both scored",
+    )
     sub.add_parser("schemas", help="List available schemas")
     sub.add_parser("backends", help="List backends and the resolved default models")
     return p
@@ -268,6 +284,79 @@ def cmd_status() -> int:
     return 0
 
 
+def _df_table(console: Any, df: Any, title: str) -> None:
+    import _render  # type: ignore[import-not-found]
+
+    if df is None or len(df) == 0:
+        console.print(f"[dim]{title}: (nothing)[/dim]")
+        return
+    console.print(_render.df_table(df, title=title))
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    console = _console()
+    con = _connect()
+    view = f"news_scores_{args.schema}"
+    from scoring.select import has_view
+
+    if not has_view(con, view):
+        console.print(
+            f"[yellow]no view {view}[/yellow] -- nothing scored yet for schema "
+            f"{args.schema!r}? try: {PROG} run --run"
+        )
+        return 0
+    df = ev.load_scores(con, view, backend=args.backend)
+    syms = ev.load_symbol_scores(con, view, backend=args.backend)
+    if df.empty:
+        console.print(f"[yellow]no rows in {view}[/yellow]")
+        return 0
+    _df_table(console, ev.health(df), "health by backend")
+    vv = ev.vs_vendor(df)
+    if vv.get("n", 0) >= 3:
+        console.print(
+            f"[bold]vs vendor polarity[/bold]  n={vv['n']:,}  pearson={vv['pearson']}  "
+            f"spearman={vv['spearman']}  sign agreement={vv['sign_agreement']}"
+        )
+        table = vv["sign_table"].copy()
+        table.index = [f"ours={i}" for i in table.index]
+        table.columns = [f"vendor={c}" for c in table.columns]
+        _df_table(
+            console, table.reset_index(names="sign"), "sign agreement (rows = ours)"
+        )
+        for label, d in (("ours:  ", vv["ours"]), ("vendor:", vv["vendor"])):
+            console.print(
+                f"{label} mean={d['mean']} std={d['std']} "
+                f"p10/50/90={d['p10']}/{d['p50']}/{d['p90']} "
+                f"pos={d['share_pos']} neg={d['share_neg']}"
+            )
+    else:
+        console.print("[dim]vs vendor: fewer than 3 comparable articles[/dim]")
+    dist = ev.distributions(df, syms)
+    for key in (
+        "event_type",
+        "sentiment_by_event_type",
+        "horizon",
+        "materiality",
+        "novelty",
+        "symbol_role",
+        "symbol_direction",
+    ):
+        if key in dist:
+            _df_table(console, dist[key], key)
+    if args.compare:
+        a_id, b_id = args.compare
+        a = ev.load_scores(con, view, backend=a_id)
+        b = ev.load_scores(con, view, backend=b_id)
+        sa = ev.load_symbol_scores(con, view, backend=a_id)
+        sb = ev.load_symbol_scores(con, view, backend=b_id)
+        cmp_ = ev.compare(a, b, sa, sb)
+        console.print(
+            f"[bold]{a_id} vs {b_id}[/bold]  "
+            + "  ".join(f"{k}={v}" for k, v in cmp_.items())
+        )
+    return 0
+
+
 def cmd_schemas() -> int:
     console = _console()
     for key, s in list_schemas().items():
@@ -306,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = cfg_mod.load()
     if args.command == "status":
         return cmd_status()
+    if args.command == "eval":
+        return cmd_eval(args)
     if args.command == "schemas":
         return cmd_schemas()
     if args.command == "backends":
