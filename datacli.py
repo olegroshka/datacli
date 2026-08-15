@@ -438,7 +438,14 @@ class DataCli(cmd2.Cmd):
         "all",
     )
     _QC_DATASETS = ("prices", "dividends", "splits")
-    _ROW_DATASETS = ("prices", "dividends", "splits", "fundamentals", "news_daily")
+    _ROW_DATASETS = (
+        "prices",
+        "dividends",
+        "splits",
+        "fundamentals",
+        "news_daily",
+        "news_issuer_daily",
+    )
     _CONFIG_ACTIONS = ("show", "get", "set")
     _CONFIG_KEYS = tuple(eodhd_cli.CONFIG_KEYS)
     _FETCH_FLAGS = (

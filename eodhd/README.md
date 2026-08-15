@@ -271,9 +271,13 @@ uv run python eodhd/cli.py status news
 `--limit-days 30` so a routine refresh can never become a backfill. Ticker-style
 flags (`--tickers`, `--to`, `--full-refresh`) never reach the crawler.
 
-The derived panel `news_symbol_daily.parquet` (`build_news_symbol_daily.py`, kind
-`news_daily`) is rebuilt incrementally by `refresh` after the news top-up; `--full`
-rebuilds every day (~2 min).
+The derived panels are rebuilt incrementally by `refresh` after the news top-up
+(all local, no API): `news_symbol_daily.parquet` (kind `news_daily`, per symbol
+tag), `issuer_map.parquet` (kind `issuer_map`: symbol line → issuer, from the
+fundamentals cache's LEI/ISIN/PrimaryTicker/Listings plus corpus co-tagging) and
+`news_issuer_daily.parquet` (kind `news_issuer_daily`: per issuer, one row per
+covered member ticker — use this for UK/EU names). `--full` rebuilds every day
+(~2–3 min each).
 
 Own scores over the corpus: `uv run python -m scoring.cli plan|run --run|status`
 (shell: `score …`), local model by default; sidecars land under

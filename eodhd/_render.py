@@ -34,6 +34,8 @@ KIND_HUE: dict[str, str] = {
     "fundamentals": "yellow",
     "news": "blue",
     "news_daily": "bright_blue",
+    "issuer_map": "bright_blue",
+    "news_issuer_daily": "bright_blue",
     "news_scores": "bright_blue",
     "news_embeddings": "bright_blue",
 }

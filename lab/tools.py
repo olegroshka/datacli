@@ -62,6 +62,16 @@ def schema_context() -> str:
         "(ticker, exchange, coverage_through, latest_data_date, status); "
         "news_state (date, status, articles) -- one row per crawled UTC day"
     )
+    if "news_issuer_daily" in sch.datasets():
+        lines.append(
+            "- news_issuer_daily (derived): like news_daily but at ISSUER grain -- every "
+            "article counted once per company across all its listing lines (US line, "
+            "ADR, Frankfurt mirrors ...), then written for each of our tickers of that "
+            "issuer. Prefer it over news_daily for UK/EU names, whose home-exchange tag "
+            "under-counts badly (SAP.XETRA 1 vs SAP SE 243 articles/month). "
+            "issuer_map(symbol -> issuer_id, issuer_name, primary_symbol, evidence) is the "
+            "mapping behind it."
+        )
     if "news_daily" in sch.datasets():
         lines.append(
             "- news_daily (derived, present only if built): one row per (date, ticker, "

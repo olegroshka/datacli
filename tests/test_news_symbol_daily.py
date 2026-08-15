@@ -192,4 +192,6 @@ def test_registry_and_schema_wiring() -> None:
             ["--limit-days", str(reg.NEWS_REFRESH_MAX_DAYS)],
         ),
         ("news_daily", "build_news_symbol_daily.py", []),
+        ("issuer_map", "build_issuer_map.py", []),
+        ("news_issuer_daily", "build_news_issuer_daily.py", []),
     ]

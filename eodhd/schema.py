@@ -16,7 +16,7 @@ extra fundamentals fields ride along via ``SELECT *``.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 3  # v2: + news (article corpus); v3: + news_daily (derived panel)
+SCHEMA_VERSION = 4  # v2: + news; v3: + news_daily; v4: + issuer_map, news_issuer_daily
 
 # canonical column -> role, per dataset
 SCHEMAS: dict[str, dict[str, str]] = {
@@ -73,6 +73,42 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "share_of_day": "value",
         "n_sources": "value",
         "n_solo": "value",
+        "polarity_mean": "value",
+        "polarity_std": "value",
+        "pos_share": "value",
+        "neg_share": "value",
+        "first_published_at": "value",
+        "last_published_at": "value",
+    },
+    # Symbol line -> issuer (vendor LEI/ISIN/PrimaryTicker/Listings + corpus
+    # co-tagging). Not ticker-keyed (one row per symbol string).
+    "issuer_map": {
+        "symbol": "key",
+        "ticker": "value",
+        "exchange": "value",
+        "issuer_id": "value",
+        "issuer_name": "value",
+        "primary_symbol": "value",
+        "evidence": "value",
+        "cotag_p": "value",
+        "n_articles": "value",
+        "lane": "value",
+        "in_universe": "value",
+    },
+    # Issuer-grain daily news panel replicated onto every covered member ticker.
+    "news_issuer_daily": {
+        "ticker": "key",
+        "exchange": "key",
+        "date": "date",
+        "issuer_id": "value",
+        "issuer_name": "value",
+        "primary_symbol": "value",
+        "n_articles": "value",
+        "n_articles_day": "value",
+        "share_of_day": "value",
+        "n_sources": "value",
+        "n_solo": "value",
+        "n_symbols": "value",
         "polarity_mean": "value",
         "polarity_std": "value",
         "pos_share": "value",

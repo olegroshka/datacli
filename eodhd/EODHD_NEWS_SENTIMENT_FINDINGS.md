@@ -231,7 +231,7 @@ Tracked in detail in `NEWS_ROADMAP.md`; the scoring design in `NEWS_SCORING_DESI
 0. ~~Full backfill~~ — done 2026-08-15 (§2.4); daily `refresh` keeps it current.
 1. ~~**Derived daily panel**~~ — done 2026-08-15: `news_symbol_daily.parquet` (`build_news_symbol_daily.py`, kind `news_daily`, view `news_daily`; `share_of_day` is the normalised volume feature). Original scope: `news_symbol_daily.parquet` (`date, ticker, exchange, n,
    polarity_mean, …`) built locally from the corpus — replaces `/sentiments`.
-2. **Issuer mapping** so UK/EU tickers pick up their US/ADR/Frankfurt lines.
+2. ~~**Issuer mapping**~~ — done 2026-08-15: `issuer_map.parquet` + `news_issuer_daily.parquet` (`build_issuer_map.py`, `build_news_issuer_daily.py`); UK/EU tickers now see their US/ADR/Frankfurt lines' articles counted once per issuer.
 3. **Own scoring / embeddings** over `content` (model outputs stored as sidecar
    parquet keyed by `article_id`, never mutating the raw corpus).
 4. **Lab persona updates** — remove the "no news data" claims once the lane is live.

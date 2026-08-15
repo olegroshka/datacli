@@ -19,6 +19,8 @@ def test_datasets_and_canonical_columns() -> None:
         "fundamentals",
         "news",
         "news_daily",
+        "issuer_map",
+        "news_issuer_daily",
     }
     assert "ex_date" in schema.canonical_columns("dividends")
     assert "article_id" in schema.canonical_columns("news")

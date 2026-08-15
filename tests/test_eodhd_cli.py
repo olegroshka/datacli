@@ -113,6 +113,8 @@ def test_news_rides_default_refresh_capped_and_without_passthrough() -> None:
             ["--limit-days", str(reg.NEWS_REFRESH_MAX_DAYS)],
         ),
         ("news_daily", "build_news_symbol_daily.py", []),
+        ("issuer_map", "build_issuer_map.py", []),
+        ("news_issuer_daily", "build_news_issuer_daily.py", []),
     ]
     # ...and no universe step is invented for it
     assert all(s.kind != "universe" for s in news_steps)
@@ -131,6 +133,8 @@ def test_fast_path_extra_kinds_exclude_bulk_and_fundamentals() -> None:
     assert [(s.lane, s.kind) for s in extra] == [
         ("news", "news"),
         ("news", "news_daily"),
+        ("news", "issuer_map"),
+        ("news", "news_issuer_daily"),
     ]
 
 

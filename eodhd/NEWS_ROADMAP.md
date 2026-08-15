@@ -1,6 +1,6 @@
 # News Lane & Refresh — Roadmap
 
-**Status:** items 1, 4 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · 2, 5 PLANNED · **Created:** 2026-08-15  
+**Status:** items 1, 2, 4 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · 5 PLANNED · **Created:** 2026-08-15  
 **Context:** the `news` lane substrate is built and backfilled
 (`EODHD_NEWS_SENTIMENT_FINDINGS.md`); this file is the ordered plan for turning it
 into something models can consume, plus the refresh improvements surfaced by the
@@ -65,6 +65,19 @@ tests, a QC of the mapping (collisions, coverage per lane).
 **Acceptance.** Every `uk_eu` ticker with fundamentals resolves to an issuer;
 spot-check list (SAP, HSBA, ASML, SIE, NESN, MC, VOD) maps to the expected lines.
 
+**Status.** DONE 2026-08-15 — `build_issuer_map.py` (vendor `LEI`/`ISIN`/
+`PrimaryTicker`/`Listings` from the fundamentals cache + corpus co-tagging with
+`P(parent|line) ≥ 0.9`, `n ≥ 30`, ETF/index/junk exclusions and a *different-known-
+identity* guard against peer contamination; 22.6k symbols → 12.5k issuers, 0 LEI
+collisions) and `build_news_issuer_daily.py` (issuer-grain panel, each article
+counted once per issuer, rows for every covered member ticker; 2.74 M rows). Both
+are local default kinds after `news_daily`; views `issuer_map` /
+`news_issuer_daily`; `describe`/`rows` cover the panel. 30-day check: SAP.XETRA
+1 → 243 articles, HSBA.LSE 6 → 308, ASML.AS 127 → 506, VOD.LSE 2 → 36. Known
+misses: ADR lines with `P` just under 0.9 (Nestlé's NSRGY.US at 0.80) stay
+separate — a `--min-p` knob exists; the vendor `Listings` block fills most such
+gaps over time.
+
 **Size.** ~2 days (the matching rules need iteration).
 
 ## 3. Own scoring over the text (pluggable, dynamic categories)
@@ -121,6 +134,11 @@ default kind; the manifests now carry a "Live counts" pointer to `status` /
   caps; measure on 20 tickers before deciding (5 units/page).
 - **Lab personas / skills:** add a `news` skill (coverage + polarity sanity per
   lane) and let the `event-study` persona use `news_symbol_daily`.
+- **Atomic parquet writes:** the price/event fetchers and the bulk path rewrite
+  `prices_daily.parquet` in place, so a reader during a refresh can see a torn
+  file (seen once during the `--fast --days 10` catch-up) and a crash mid-write
+  loses the dataset. Write to `<name>.parquet.tmp` and `os.replace`
+  (`build_news_issuer_daily.write_panel` already does).
 - **Corpus hygiene report:** empty-content share, junk symbol tags
   (`USDUSD.FOREX`), re-publication rate, per-source volume — as a `qc news`
   extension once the QC map is registry-driven (item 4).

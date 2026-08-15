@@ -377,6 +377,11 @@ the full backfill is 4.46 M articles / 6.96 GB / 5,511 pages ≈ 28k units and t
   with `n_articles`, `share_of_day` (volume normalised by that day's global count),
   `n_solo`, `n_sources`, vendor `polarity_mean/pos_share/neg_share`. `describe`,
   `rows`, `coverage` and the catalog cover it like any ticker-keyed dataset.
+- **…and per issuer** — `news_issuer_daily` maps every tag line to its issuer
+  (`issuer_map`: vendor LEI/ISIN/listings + corpus co-tagging) and counts each
+  article once per company, so a UK/EU ticker sees its US line/ADR/Frankfurt
+  mirrors' coverage (SAP.XETRA 1 → 243 articles/month). Rows exist for every
+  covered ticker of the issuer.
 - **Score it yourself** — `score plan` / `score run --run` extract a rich event
   record per article (`event_v1`: event type, summary, sentiment, materiality,
   horizon, per-symbol role/direction) with a **local** model by default and write

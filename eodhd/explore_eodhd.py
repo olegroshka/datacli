@@ -62,6 +62,8 @@ DATE_COL = {
     "fundamentals": "filing_date",
     "news": "date",
     "news_daily": "date",
+    "issuer_map": "built_at",
+    "news_issuer_daily": "date",
 }
 STATE_ASOF = {
     "prices": "latest_data_date",
@@ -70,6 +72,8 @@ STATE_ASOF = {
     "fundamentals": "latest_filing_date",
     "news": "date",
     "news_daily": None,
+    "issuer_map": None,
+    "news_issuer_daily": None,
 }
 STATE_COVERAGE = {
     "prices": "coverage_through",
@@ -78,6 +82,8 @@ STATE_COVERAGE = {
     "fundamentals": None,
     "news": "date",
     "news_daily": None,
+    "issuer_map": None,
+    "news_issuer_daily": None,
 }
 DEFAULT_COLS = {
     "prices": ["date", "open", "high", "low", "close", "adjusted_close", "volume"],
@@ -98,6 +104,18 @@ DEFAULT_COLS = {
         "share_of_day",
         "n_solo",
         "n_sources",
+        "polarity_mean",
+        "pos_share",
+        "neg_share",
+    ],
+    "issuer_map": ["symbol", "issuer_id", "issuer_name", "primary_symbol", "evidence"],
+    "news_issuer_daily": [
+        "date",
+        "issuer_name",
+        "n_articles",
+        "share_of_day",
+        "n_solo",
+        "n_symbols",
         "polarity_mean",
         "pos_share",
         "neg_share",

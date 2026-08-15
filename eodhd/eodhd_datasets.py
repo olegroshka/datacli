@@ -28,6 +28,8 @@ __all__ = [
     "fundamentals_spec",
     "news_spec",
     "news_daily_spec",
+    "issuer_map_spec",
+    "news_issuer_daily_spec",
     "derived_spec",
     "iter_datasets",
     "registered_lane_names",
@@ -291,6 +293,38 @@ def news_daily_spec(fetcher: str | None = "build_news_symbol_daily.py") -> Datas
     )
 
 
+def issuer_map_spec(fetcher: str | None = "build_issuer_map.py") -> DatasetSpec:
+    """``issuer_map.parquet``: every symbol line -> issuer (vendor keys + corpus
+    co-tagging). Keyed by ``symbol``; local build; a snapshot."""
+    return DatasetSpec(
+        kind="issuer_map",
+        output="issuer_map.parquet",
+        state=None,
+        as_of_data_col=None,
+        key_cols=("symbol",),
+        label="issuer_map",
+        fetcher=fetcher,
+        local=True,
+    )
+
+
+def news_issuer_daily_spec(
+    fetcher: str | None = "build_news_issuer_daily.py",
+) -> DatasetSpec:
+    """``news_issuer_daily``: the daily news panel at issuer grain, one row per
+    (date, ticker, exchange) for every member of the issuer we cover."""
+    return DatasetSpec(
+        kind="news_issuer_daily",
+        output="news_issuer_daily.parquet",
+        state=None,
+        as_of_data_col="date",
+        key_cols=("ticker", "exchange"),
+        label="news_issuer_daily",
+        fetcher=fetcher,
+        local=True,
+    )
+
+
 def derived_spec(kind: str, output: str, *, label: str | None = None) -> DatasetSpec:
     """A locally derived, day-partitioned sidecar (no fetcher, no state).
 
@@ -429,6 +463,8 @@ LANES: dict[str, LaneConfig] = {
         [
             news_spec(),
             news_daily_spec(),
+            issuer_map_spec(),
+            news_issuer_daily_spec(),
             derived_spec("news_scores", "scores"),
             derived_spec("news_embeddings", "embeddings"),
         ],
