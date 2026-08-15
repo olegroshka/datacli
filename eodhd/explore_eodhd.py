@@ -36,23 +36,38 @@ from _datadir import EODHD_RAW_ROOT  # type: ignore[import-not-found]  # noqa: E
 from eodhd_datasets import LANES  # type: ignore[import-not-found]  # noqa: E402
 
 DATASETS = sch.datasets()
+# Datasets whose rows are identified by (ticker, exchange). The ticker-centric
+# verbs (describe / find / rows / coverage / reindex) only look at these; a
+# day-keyed corpus like ``news`` is reachable through ``sql`` and ``schema``.
+TICKER_DATASETS = tuple(
+    kind
+    for kind in DATASETS
+    if any(
+        ds.kind == kind and ds.ticker_keyed
+        for lane in LANES.values()
+        for ds in lane.datasets
+    )
+)
 DATE_COL = {
     "prices": "date",
     "dividends": "ex_date",
     "splits": "ex_date",
     "fundamentals": "filing_date",
+    "news": "date",
 }
 STATE_ASOF = {
     "prices": "latest_data_date",
     "dividends": "latest_data_date",
     "splits": "latest_data_date",
     "fundamentals": "latest_filing_date",
+    "news": "date",
 }
 STATE_COVERAGE = {
     "prices": "coverage_through",
     "dividends": "coverage_through",
     "splits": "coverage_through",
     "fundamentals": None,
+    "news": "date",
 }
 DEFAULT_COLS = {
     "prices": ["date", "open", "high", "low", "close", "adjusted_close", "volume"],
@@ -66,6 +81,7 @@ DEFAULT_COLS = {
     ],
     "splits": ["ex_date", "split_factor", "numerator", "denominator", "split_ratio"],
     "fundamentals": ["statement", "date", "filing_date", "currency"],
+    "news": ["published_at", "title", "source", "symbols", "polarity"],
 }
 INDEX_PATH = EODHD_RAW_ROOT / "_datacli_index.parquet"
 META_PATH = EODHD_RAW_ROOT / "_datacli_meta.json"
@@ -97,6 +113,22 @@ def _cols(con: Any, source_sql: str) -> list[str]:
     ]
 
 
+def _output_source(lane: Any, ds: Any) -> str | None:
+    """``read_parquet(...)`` for a dataset's output, or ``None`` when absent.
+
+    Partitioned outputs are read through their ``*.parquet`` glob; a partition
+    directory with no files yet counts as absent.
+    """
+    root = lane.resolved_root()
+    base = root / ds.output
+    if not base.exists():
+        return None
+    if ds.partitioned and not any(base.glob("*.parquet")):
+        return None
+    pattern = Path(ds.output_glob(root)).as_posix()
+    return f"read_parquet('{pattern}')"
+
+
 def connect() -> Any:
     """In-memory DuckDB with a projected UNION view per dataset (+ ``*_state`` and,
     if built, a ``catalog``)."""
@@ -109,10 +141,9 @@ def connect() -> Any:
             ds = _spec_for(lane, kind)
             if ds is None:
                 continue
-            path = lane.resolved_root() / ds.output
-            if not path.exists():
+            src = _output_source(lane, ds)
+            if src is None:
                 continue
-            src = f"read_parquet('{path.as_posix()}')"
             cols = _cols(con, src)
             parts.append(f"SELECT {sch.projection(kind, cols, lane.name)} FROM {src}")
         if parts:
@@ -163,9 +194,9 @@ def _raw_columns(con: Any, kind: str) -> list[str]:
         ds = _spec_for(lane, kind)
         if ds is None:
             continue
-        path = lane.resolved_root() / ds.output
-        if path.exists():
-            for c in _cols(con, f"read_parquet('{path.as_posix()}')"):
+        src = _output_source(lane, ds)
+        if src is not None:
+            for c in _cols(con, src):
                 if c not in cols:
                     cols.append(c)
     return cols
@@ -221,7 +252,7 @@ def describe(con: Any, spec: str) -> int:
 
     lanes_seen: set[str] = set()
     cov_values: dict[str, str] = {}
-    for kind in DATASETS:
+    for kind in TICKER_DATASETS:
         n, dmin, dmax, lane = _dataset_summary(con, kind, cond, params)
         if lane:
             lanes_seen.add(lane)
@@ -280,7 +311,7 @@ def find(con: Any, pattern: str) -> int:
         ).fetchall():
             rows.setdefault((ticker, exchange, lane), set()).add(dataset)
     else:
-        for kind in DATASETS:
+        for kind in TICKER_DATASETS:
             view = (
                 f"{kind}_state"
                 if _has_view(con, f"{kind}_state")
@@ -314,9 +345,10 @@ def find(con: Any, pattern: str) -> int:
 
 def rows(con: Any, spec: str, dataset: str, head: int, cols: str | None) -> int:
     console = _console()
-    if dataset not in DATASETS:
+    if dataset not in TICKER_DATASETS:
         console.print(
-            f"[red]unknown dataset '{dataset}'[/red]. Choose: {', '.join(DATASETS)}"
+            f"[red]unknown dataset '{dataset}'[/red]. "
+            f"Choose: {', '.join(TICKER_DATASETS)}"
         )
         return 2
     if not _has_view(con, dataset):
@@ -357,7 +389,7 @@ def coverage(con: Any, spec: str) -> int:
     for col in ("dataset", "coverage_through", "last_data", "status"):
         table.add_column(col)
     cov_values: dict[str, str] = {}
-    for kind in DATASETS:
+    for kind in TICKER_DATASETS:
         cov, asof, status = _state_lookup(con, kind, cond, params)
         if cov is None and asof is None and status is None:
             continue
@@ -465,7 +497,7 @@ def cmd_schema(con: Any) -> int:
 def cmd_reindex(con: Any) -> int:
     console = _console()
     frames = []
-    for kind in DATASETS:
+    for kind in TICKER_DATASETS:
         if not _has_view(con, kind):
             continue
         dcol = DATE_COL[kind]
@@ -509,7 +541,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("find").add_argument("pattern")
     r = sub.add_parser("rows")
     r.add_argument("ticker")
-    r.add_argument("dataset", choices=DATASETS)
+    r.add_argument("dataset", choices=TICKER_DATASETS)
     r.add_argument("--head", type=int, default=20)
     r.add_argument("--cols", default=None, help="comma list, or '*' for all")
     sub.add_parser("coverage").add_argument("ticker")

@@ -83,6 +83,39 @@ def test_fundamentals_only_selects_common_lanes_and_skips_universe() -> None:
     ]
 
 
+def test_news_rides_default_refresh_capped_and_without_passthrough() -> None:
+    # news is a default kind, but a routine refresh must be a bounded top-up:
+    # the registry pins --limit-days, and ticker-style passthrough flags
+    # (--full-refresh / --tickers) never reach the crawler, so `refresh --run`
+    # can never turn into a 2,000-day backfill.
+    assert "news" in cli.DEFAULT_KINDS
+    plan = cli.build_refresh_plan(
+        list(reg.LANES),
+        kinds=set(cli.DEFAULT_KINDS),
+        with_universe=True,
+        passthrough=["--full-refresh", "--tickers", "AAPL"],
+    )
+    news_steps = [s for s in plan if s.lane == "news"]
+    assert [(s.kind, s.script, s.args) for s in news_steps] == [
+        ("news", "fetch_eodhd_news.py", ["--limit-days", str(reg.NEWS_REFRESH_MAX_DAYS)])
+    ]
+    # ...and no universe step is invented for it
+    assert all(s.kind != "universe" for s in news_steps)
+
+
+def test_fast_path_extra_kinds_exclude_bulk_and_fundamentals() -> None:
+    # `refresh --fast` delegates prices/dividends/splits to the bulk script and
+    # then runs the remaining default kinds (news) as ordinary steps.
+    kinds = set(cli.DEFAULT_KINDS) | {"fundamentals"}
+    extra = cli.build_refresh_plan(
+        list(reg.LANES),
+        kinds=kinds - cli.INCREMENTAL_KINDS - {"fundamentals"},
+        with_universe=False,
+        passthrough=[],
+    )
+    assert [(s.lane, s.kind) for s in extra] == [("news", "news")]
+
+
 def test_passthrough_not_applied_to_fundamentals() -> None:
     # fundamentals runs via its own --update mode and doesn't accept --to/etc, so
     # price/event passthrough must stop at the incremental fetchers.

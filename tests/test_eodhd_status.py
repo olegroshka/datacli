@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -185,7 +185,7 @@ def test_discovery_flags_unregistered_dir(tmp_path: Path) -> None:
     assert unregistered == ["mystery_lane"]
 
 
-def test_registry_covers_all_six_lanes() -> None:
+def test_registry_covers_all_lanes() -> None:
     assert set(reg.LANES) == {
         "us_common",
         "uk_eu",
@@ -193,7 +193,65 @@ def test_registry_covers_all_six_lanes() -> None:
         "index_ref",
         "uk_eu_etf",
         "uk_eu_index_ref",
+        "news",
     }
     # us_common carries prices, both event lanes, and a fundamentals snapshot.
     kinds = {d.kind for d in reg.LANES["us_common"].datasets}
     assert kinds == {"prices", "dividends", "splits", "fundamentals"}
+
+
+def test_news_lane_is_day_keyed_and_partitioned(tmp_path: Path) -> None:
+    (news_ds,) = reg.LANES["news"].datasets
+    assert news_ds.kind == "news"
+    assert news_ds.partitioned is True
+    assert news_ds.key_cols == ("date",)
+    assert news_ds.ticker_keyed is False
+    assert news_ds.output_glob(tmp_path) == str(tmp_path / "articles" / "*.parquet")
+    # ticker-keyed datasets keep the plain path
+    (prices_ds,) = [d for d in reg.LANES["us_common"].datasets if d.kind == "prices"]
+    assert prices_ds.ticker_keyed is True
+    assert prices_ds.output_glob(tmp_path) == str(tmp_path / "prices_daily.parquet")
+
+
+def test_status_reads_partitioned_output(tmp_path: Path) -> None:
+    """A partition directory is counted across all its files; empty dir = absent."""
+    lane_root = tmp_path / "news"
+    part_dir = lane_root / "articles"
+    part_dir.mkdir(parents=True)
+    assert st.parquet_num_rows(part_dir) is None
+    assert st.parquet_columns(part_dir) == set()
+    for month, n in (("2026-07", 3), ("2026-08", 2)):
+        pd.DataFrame(
+            {
+                "article_id": [f"{month}-{i}" for i in range(n)],
+                "date": ["2026-07-01"] * n,
+            }
+        ).to_parquet(part_dir / f"{month}.parquet", index=False)
+    assert st.parquet_num_rows(part_dir) == 5
+    assert st.parquet_columns(part_dir) == {"article_id", "date"}
+    assert st.parquet_max_date(part_dir, "date") == pd.Timestamp("2026-07-01")
+
+    (news_ds,) = reg.LANES["news"].datasets
+    lane = reg.LaneConfig(
+        name="news",
+        region="Global",
+        asset_class="news",
+        datasets=(news_ds,),
+        root=lane_root,
+    )
+    pd.DataFrame(
+        {
+            "date": ["2026-08-13", "2026-08-14"],
+            "status": ["ok", "ok"],
+            "articles": [2837, 2900],
+            "fetched_at": ["2026-08-15T10:00:00+00:00"] * 2,
+        }
+    ).to_csv(lane_root / "news_fetch_state.csv", index=False)
+    rec = st.collect_dataset(
+        lane, news_ds, as_of_ts=pd.Timestamp("2026-08-15"), stale_days=7, deep=True
+    )
+    assert rec["rows"] == 5
+    assert rec["pairs"] == 2  # distinct crawled days
+    assert rec["freshness"] == "2026-08-14"
+    assert rec["stale"] is False
+    assert rec["output_max"] == "2026-07-01"

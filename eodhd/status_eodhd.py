@@ -55,18 +55,32 @@ DEFAULT_STALE_DAYS = 7
 # --------------------------------------------------------------------------- #
 # small readers
 # --------------------------------------------------------------------------- #
+def _parquet_files(path: Path) -> list[Path]:
+    """The parquet file(s) behind an output: itself, or ``*.parquet`` inside a
+    partition directory (sorted, so "first file" is deterministic)."""
+    if path.is_dir():
+        return sorted(path.glob("*.parquet"))
+    return [path]
+
+
 def parquet_num_rows(path: Path) -> int | None:
-    """Row count from the parquet footer only (no column data read)."""
+    """Row count from the parquet footer(s) only (no column data read)."""
     try:
-        return int(pq.ParquetFile(path).metadata.num_rows)
+        files = _parquet_files(path)
+        if not files:
+            return None
+        return sum(int(pq.ParquetFile(f).metadata.num_rows) for f in files)
     except Exception:
         return None
 
 
 def parquet_columns(path: Path) -> set[str]:
-    """Column names from the parquet schema."""
+    """Column names from the parquet schema (first partition for directories)."""
     try:
-        return set(pq.ParquetFile(path).schema.names)
+        files = _parquet_files(path)
+        if not files:
+            return set()
+        return set(pq.ParquetFile(files[0]).schema.names)
     except Exception:
         return set()
 
@@ -415,7 +429,8 @@ def render_markdown(
         "`uv run python eodhd/status_eodhd.py --write`.",
         "",
         "Freshness anchor per dataset: prices = last real bar; dividends/splits = "
-        "query coverage (not last event date); fundamentals = latest filing date.",
+        "query coverage (not last event date); fundamentals = latest filing date; "
+        "news = last crawled UTC day.",
         "",
         "| lane | dataset | last data | coverage | fetched | rows | pairs | age (d) | flag | status |",
         "|------|---------|-----------|----------|---------|-----:|------:|--------:|------|--------|",

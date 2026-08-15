@@ -26,6 +26,7 @@ __all__ = [
     "prices_spec",
     "event_spec",
     "fundamentals_spec",
+    "news_spec",
     "iter_datasets",
     "registered_lane_names",
     "discover_lane_dirs",
@@ -73,6 +74,10 @@ class DatasetSpec:
             this dataset, or ``None`` if it has no standalone fetcher.
         fetcher_args: Fixed CLI arguments always passed to ``fetcher`` (e.g.
             ``("--universe", "provider")`` for the US ETF lane).
+        partitioned: ``True`` when ``output`` is a *directory* of parquet
+            partitions (``<output>/*.parquet``) rather than a single file.
+            Large append-mostly corpora (news) use this so a flush rewrites one
+            partition, not the whole dataset.
     """
 
     kind: str
@@ -89,11 +94,27 @@ class DatasetSpec:
     label: str | None = None
     fetcher: str | None = None
     fetcher_args: tuple[str, ...] = ()
+    partitioned: bool = False
 
     @property
     def display(self) -> str:
         """Human-facing dataset name."""
         return self.label or self.kind
+
+    @property
+    def ticker_keyed(self) -> bool:
+        """Whether rows are identified by ``(ticker, exchange)``.
+
+        Ticker-oriented verbs (``find``, ``reindex``, ``--ticker`` filters) only
+        apply to such datasets; a day-keyed corpus like news is skipped.
+        """
+        return "ticker" in self.key_cols
+
+    def output_glob(self, root: Path) -> str:
+        """Path (or ``*.parquet`` glob for partitioned outputs) for readers such
+        as DuckDB that take a file pattern rather than a directory."""
+        base = root / self.output
+        return str(base / "*.parquet") if self.partitioned else str(base)
 
 
 @dataclass(frozen=True)
@@ -182,6 +203,35 @@ def fundamentals_spec(fetcher: str | None = None) -> DatasetSpec:
         label="fundamentals_q",
         fetcher=fetcher,
         fetcher_args=("--update",),
+    )
+
+
+#: Days a routine ``refresh`` may crawl per run. The crawler works newest-first,
+#: so a capped run always keeps the corpus current and only then fills history;
+#: the one-off backfill runs the fetcher directly (uncapped).
+NEWS_REFRESH_MAX_DAYS = 30
+
+
+def news_spec(fetcher: str | None = "fetch_eodhd_news.py") -> DatasetSpec:
+    """Article-level news corpus spec (freshness = last crawled UTC day).
+
+    The output is a directory of daily parquet partitions and the state
+    sidecar has one row per crawled day, so the dataset is keyed by ``date``
+    rather than ``(ticker, exchange)``. See ``EODHD_NEWS_SENTIMENT_FINDINGS.md``.
+    """
+    return DatasetSpec(
+        kind="news",
+        output="articles",
+        state="news_fetch_state.csv",
+        as_of_state_col="date",
+        coverage_col="date",
+        freshness_col="date",
+        as_of_data_col="date",
+        key_cols=("date",),
+        label="news_articles",
+        fetcher=fetcher,
+        fetcher_args=("--limit-days", str(NEWS_REFRESH_MAX_DAYS)),
+        partitioned=True,
     )
 
 
@@ -280,6 +330,9 @@ LANES: dict[str, LaneConfig] = {
         [prices_spec("fetch_eodhd_uk_eu_index_ref_prices.py")],
         universe_fetcher="fetch_eodhd_uk_eu_index_ref_universe.py",
     ),
+    # Global article corpus crawled by day; no universe (symbol tags come with
+    # each article and symbol-level views are derived locally).
+    "news": _lane("news", "Global", "news", None, [news_spec()]),
 }
 
 

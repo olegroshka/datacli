@@ -67,6 +67,7 @@ the catalog current.
 - `fundamentals_refresh_common.py`: shared incremental-refresh helpers for the fundamentals fetchers (target selection, state sidecar, earnings-calendar lookup).
 - `FUNDAMENTALS_REFRESH_DESIGN.md`: design notes for the fundamentals refresh (why append-only was a problem, the fix).
 - `EODHD_*_MANIFEST.md`: per-lane factual inventories of scope, local artefacts, and current observed counts.
+- `EODHD_NEWS_SENTIMENT_FINDINGS.md`: what the subscription exposes for news / sentiment (measured live) and the design of the `news` lane.
 - `fetch_eodhd_*.py`: the actual fetchers.
 - `tmp_poll_eodhd_progress.py` at repo root: ad hoc progress snapshot across the ETF and index-reference lanes.
 
@@ -83,6 +84,10 @@ the catalog current.
 - Common-stock lane: `EODHD_UK_EU_DATA_MANIFEST.md`
 - ETF lane: `EODHD_UK_EU_ETF_DATA_MANIFEST.md`
 - Index / benchmark lane: `EODHD_UK_EU_INDEX_REF_DATA_MANIFEST.md`
+
+### Global
+
+- News / sentiment lane: `EODHD_NEWS_SENTIMENT_FINDINGS.md`
 
 ## Resume model
 

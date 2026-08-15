@@ -16,7 +16,7 @@ extra fundamentals fields ride along via ``SELECT *``.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2: + news (article corpus)
 
 # canonical column -> role, per dataset
 SCHEMAS: dict[str, dict[str, str]] = {
@@ -59,6 +59,23 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "date": "date",
         "filing_date": "value",
         "currency": "value",
+    },
+    # Article-level corpus (news lane); ``symbols``/``tags`` are list<string>
+    # columns -- unnest them for symbol- or tag-level views.
+    "news": {
+        "article_id": "key",
+        "date": "date",
+        "published_at": "value",
+        "title": "value",
+        "content": "value",
+        "link": "value",
+        "source": "value",
+        "symbols": "value",
+        "tags": "value",
+        "polarity": "value",
+        "neg": "value",
+        "neu": "value",
+        "pos": "value",
     },
 }
 

@@ -94,8 +94,8 @@ def build_server() -> Any:
     @server.tool()
     def sql(query: str) -> dict:
         """Run a read-only SELECT/WITH query over datacli's DuckDB views (prices,
-        dividends, splits, fundamentals, and macro / macro_country / catalog when
-        present). Every view has a `lane` column. Returns {columns, rows, sql}."""
+        dividends, splits, fundamentals, news, and macro / macro_country / catalog
+        when present). Every view has a `lane` column. Returns {columns, rows, sql}."""
         return run_sql(query)
 
     @server.tool()

@@ -12,8 +12,15 @@ import schema  # type: ignore  # noqa: E402
 
 
 def test_datasets_and_canonical_columns() -> None:
-    assert set(schema.datasets()) == {"prices", "dividends", "splits", "fundamentals"}
+    assert set(schema.datasets()) == {
+        "prices",
+        "dividends",
+        "splits",
+        "fundamentals",
+        "news",
+    }
     assert "ex_date" in schema.canonical_columns("dividends")
+    assert "article_id" in schema.canonical_columns("news")
     assert schema.canonical_columns("nonexistent") == []
 
 

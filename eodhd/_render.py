@@ -32,6 +32,7 @@ KIND_HUE: dict[str, str] = {
     "dividends": "green",
     "splits": "magenta",
     "fundamentals": "yellow",
+    "news": "blue",
 }
 KIND_DOT = "●"  # ●
 

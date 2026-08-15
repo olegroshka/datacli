@@ -59,8 +59,16 @@ def schema_context() -> str:
         lines.append(f"- {dataset}({cols})")
     lines.append(
         "- state sidecars: prices_state, dividends_state, splits_state "
-        "(ticker, exchange, coverage_through, latest_data_date, status)"
+        "(ticker, exchange, coverage_through, latest_data_date, status); "
+        "news_state (date, status, articles) -- one row per crawled UTC day"
     )
+    if "news" in sch.datasets():
+        lines.append(
+            "- news is article-level (present only if crawled): symbols and tags are "
+            "list<string> columns -- use unnest(symbols) or list_contains(symbols, "
+            "'AAPL.US') for symbol-level views; polarity/neg/neu/pos are the "
+            "vendor's per-article sentiment"
+        )
     lines.append(
         "- catalog(dataset, lane, ticker, exchange, n_rows, first_date, last_date) "
         "-- present only if the data has been reindexed"

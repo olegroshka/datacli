@@ -67,10 +67,14 @@ COMMAND_HELP: list[tuple[str, str]] = [
     ("reindex", "(Re)build the fast query catalog after new data"),
 ]
 
-KNOWN_KINDS = ("prices", "dividends", "splits", "fundamentals")
-DEFAULT_KINDS = ("prices", "dividends", "splits")
+KNOWN_KINDS = ("prices", "dividends", "splits", "fundamentals", "news")
+# news rides the default refresh: its registry args cap each run to a bounded
+# top-up (newest days first), so a routine refresh never turns into a backfill.
+# The one-off backfill is an explicit `python eodhd/fetch_eodhd_news.py`.
+DEFAULT_KINDS = ("prices", "dividends", "splits", "news")
 # Kinds whose fetchers accept the incremental passthrough flags (--to/--limit/...).
-# fundamentals is refreshed via its own --update mode and takes different flags.
+# fundamentals is refreshed via its own --update mode and takes different flags;
+# news is a day-keyed crawl that must never receive --full-refresh/--tickers.
 INCREMENTAL_KINDS = frozenset({"prices", "dividends", "splits"})
 
 
@@ -97,7 +101,7 @@ def top_help() -> str:
         f"  {PROG} status --write         # also refresh STATUS.md / STATUS.json",
         f"  {PROG} lanes                  # what lanes/datasets exist",
         f"  {PROG} refresh                # show the refresh plan (no fetch)",
-        f"  {PROG} refresh --run          # execute: prices + events, all lanes",
+        f"  {PROG} refresh --run          # execute: prices + events + news top-up, all lanes",
         f"  {PROG} refresh us_common --run",
         f"  {PROG} refresh --with-fundamentals --run",
         f"  {PROG} probe AAPL MSFT NVDA   # ad-hoc availability check",
@@ -245,7 +249,8 @@ def cmd_refresh(argv: list[str]) -> int:
         "--fast",
         action="store_true",
         help="Use bulk end-of-day endpoints for prices/dividends/splits "
-        "(one call per exchange -> minutes instead of hours).",
+        "(one call per exchange -> minutes instead of hours); the news top-up "
+        "still runs afterwards if selected.",
     )
     parser.add_argument(
         "--days",
@@ -298,7 +303,20 @@ def cmd_refresh(argv: list[str]) -> int:
         ]
         if args.run:
             forwarded.append("--run")
-        return delegate("fetch_eodhd_bulk.py", forwarded)
+        rc = delegate("fetch_eodhd_bulk.py", forwarded)
+        # Kinds the bulk endpoint cannot serve but that are cheap, self-bounded
+        # crawls (news) still run here, so --fast keeps every default dataset
+        # current rather than silently skipping the non-ticker lanes.
+        extra_kinds = kinds - INCREMENTAL_KINDS - {"fundamentals"}
+        extra = build_refresh_plan(
+            lane_names, kinds=extra_kinds, with_universe=False, passthrough=[]
+        )
+        if extra:
+            rc_extra = _print_and_run_steps(
+                extra, run=args.run, keep_going=args.keep_going
+            )
+            rc = rc or rc_extra
+        return rc
 
     passthrough: list[str] = []
     if args.full_refresh:
@@ -319,13 +337,29 @@ def cmd_refresh(argv: list[str]) -> int:
 
     if not steps:
         print("Nothing to do (no matching datasets for the selected lanes/kinds).")
+        opt_in = sorted(
+            {
+                ds.kind
+                for name in lane_names
+                for ds in LANES[name].datasets
+                if ds.kind in KNOWN_KINDS and ds.kind not in DEFAULT_KINDS
+            }
+            - kinds
+        )
+        if opt_in:
+            print(f"hint: opt in with --datasets {','.join(opt_in)}")
         return 0
 
+    return _print_and_run_steps(steps, run=args.run, keep_going=args.keep_going)
+
+
+def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> int:
+    """Show the plan table; execute the steps in order when ``run`` is set."""
     from rich.text import Text
 
     console = _render.make_console()
-    mode = "RUN" if args.run else "DRY-RUN"
-    mode_style = "bold red" if args.run else "yellow"
+    mode = "RUN" if run else "DRY-RUN"
+    mode_style = "bold red" if run else "yellow"
     title = Text("refresh plan  ", style="bold")
     title.append(f"[{mode}]", style=mode_style)
     title.append(f"  {len(steps)} step(s)", style="dim")
@@ -348,7 +382,7 @@ def cmd_refresh(argv: list[str]) -> int:
         prev_lane = step.lane
     console.print(table)
 
-    if not args.run:
+    if not run:
         console.print(
             Text(
                 "dry-run only — re-run with --run to execute (hits the paid EODHD API).",
@@ -365,7 +399,7 @@ def cmd_refresh(argv: list[str]) -> int:
         if rc != 0:
             failures.append((step, rc))
             print(f"    -> FAILED (exit {rc})")
-            if not args.keep_going:
+            if not keep_going:
                 print("Stopping (use --keep-going to continue past failures).")
                 break
 
@@ -521,7 +555,11 @@ def cmd_qc(argv: list[str]) -> int:
     Validated up front so a typo yields a friendly hint, not an argparse dump.
     """
     pos, rest = _leading_positionals(argv)
-    lanes = (*LANES, "all")
+    # QC audits price-bearing lanes only (the QC script keys off prices_daily).
+    lanes = (
+        *(n for n, lane in LANES.items() if any(ds.kind == "prices" for ds in lane.datasets)),
+        "all",
+    )
     if pos and pos[0] not in lanes:
         _bad_choice("lane", pos[0], lanes)
         return 2
