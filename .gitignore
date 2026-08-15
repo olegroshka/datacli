@@ -27,3 +27,5 @@ lab_reports/
 .DS_Store
 .idea/
 .vscode/
+
+tmp/

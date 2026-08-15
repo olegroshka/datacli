@@ -305,6 +305,8 @@ def discover_lane_dirs(raw_root: Path | None = None) -> list[str]:
 
     Used for the auto-discovery guard: any directory here that is not a
     registered lane (and not in :data:`NON_LANE_DIRS`) is unmonitored data.
+    Hidden directories (leading dot, e.g. ``.sync``) are infrastructure
+    metadata, never lanes, and are skipped.
 
     Args:
         raw_root: Root to scan (defaults to :data:`RAW_EODHD`).
@@ -312,4 +314,8 @@ def discover_lane_dirs(raw_root: Path | None = None) -> list[str]:
     root = raw_root if raw_root is not None else RAW_EODHD
     if not root.exists():
         return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith(".")
+    )

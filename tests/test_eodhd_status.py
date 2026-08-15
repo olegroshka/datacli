@@ -173,8 +173,10 @@ def test_discovery_flags_unregistered_dir(tmp_path: Path) -> None:
     (tmp_path / "us_common").mkdir()
     (tmp_path / "mystery_lane").mkdir()
     (tmp_path / "probe_cache").mkdir()
+    (tmp_path / ".sync").mkdir()
     found = reg.discover_lane_dirs(tmp_path)
     assert "mystery_lane" in found
+    assert ".sync" not in found
     unregistered = [
         name
         for name in found
