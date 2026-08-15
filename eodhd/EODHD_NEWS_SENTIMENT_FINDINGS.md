@@ -1,6 +1,6 @@
 # EODHD News & Sentiment Feeds — Findings and Lane Design
 
-**Status:** FINDINGS-COMPLETE / SUBSTRATE-BUILT (smoke-crawled 2026-08-13..15)  
+**Status:** FINDINGS-COMPLETE / SUBSTRATE-BUILT / BACKFILL-COMPLETE (2021-01-01..2026-08-15)  
 **Created:** 2026-08-15  
 **Purpose:** what the current EODHD subscription exposes for news / sentiment, measured
 live, and the design of the `news` lane that lands it in the data root for downstream
@@ -52,6 +52,38 @@ Three vendor endpoints were probed: `/news`, `/sentiments`, `/tweets-sentiments`
 
 HTTP 200 with an empty list for `AAPL.US` in Aug-2025. Ignore.
 
+### 2.4 Backfill result (run 2026-08-15, 12:50–15:53 local)
+
+One uncapped `fetch_eodhd_news.py` run, newest-first, single-threaded:
+
+| | |
+|---|---|
+| Days crawled | `2,053` (2021-01-01 → 2026-08-15), all `ok`, `0` failures, `0` page-cap hits |
+| Pages / API units | `5,511` pages ⇒ `≈ 27,600` units |
+| Rows / unique articles | `4,457,038` / `4,457,020` (18 cross-midnight re-publications) |
+| On disk | `6.96 GB` in `2,053` daily partitions (`≈ 3.4 MB/day`, `≈ 1.25 GB/yr`) |
+| Mean text | `≈ 4,700` chars/article over the whole corpus (recent years run `≈ 7,000`) |
+| Empty content | `6,275` (`0.14%`) |
+| No symbol tags | `621,458` (`14%`) — untargetable by ticker without NER |
+| No topic tags | `1,484,312` (`33%`) |
+| Mean vendor polarity | `0.71` |
+
+Articles per day by year — note the **2024 dip**, a vendor-side coverage change:
+
+| year | rows | per day |
+|---|---|---|
+| 2021 | `883,019` | `2,419` |
+| 2022 | `809,921` | `2,219` |
+| 2023 | `785,482` | `2,152` |
+| 2024 | `453,430` | **`1,239`** |
+| 2025 | `958,829` | `2,627` |
+| 2026 (to 08-15) | `566,357` | `2,495` |
+
+Sources all-time: finance.yahoo.com `65%`, globenewswire.com `21%` (press releases),
+then fxstreet, reuters, nasdaq, seekingalpha, u.today, coindesk. Most-tagged symbols:
+`GSPC.INDX`, `NVDA.US`, `AAPL.US`, `USDUSD.FOREX` (a junk tag — filter it), `MSFT.US`,
+`TSLA.US`, `DJI.INDX`.
+
 ## 3. Cost / size envelope
 
 | Item | Measured / derived |
@@ -60,13 +92,14 @@ HTTP 200 with an empty list for `AAPL.US` in Aug-2025. Ignore.
 | One `/news` page | 5 units, `≤ 1000` articles |
 | One global day | `3`–`4` pages ⇒ `15`–`20` units |
 | Full backfill 2021-01-01 → today (~2,050 days) | `≈ 8,000` calls ⇒ `≈ 40,000` units — **under one day's quota** |
-| Text per article (title + content) | `≈ 7 KB` mean (measured on `5,056` articles, 2026-08-13..15) |
-| On disk (zstd parquet, pinned schema) | `≈ 2.4 KB/article` ⇒ `≈ 7 MB/day` ⇒ `≈ 2.5 GB/yr` ⇒ **`≈ 14 GB` for 2021→today** |
+| Text per article (title + content) | `≈ 7 KB` mean in 2026, `≈ 4.7 KB` over the whole corpus |
+| On disk (zstd parquet, pinned schema) | measured **`6.96 GB` for 2021→2026-08-15** (`≈ 3.4 MB/day` avg, `≈ 7 MB/day` recently) |
 | Incremental refresh | re-crawl last 2 days ⇒ `< 50` units, `≈ 15 MB` rewritten |
+| Backfill wall-clock | `≈ 3 h` single-threaded (`≈ 5 s/day`, download-bound) |
 
 The disk figure is the reason the corpus is partitioned **per day** (§5.1): a
-month would be `≈ 200 MB` on disk / `≈ 600 MB` of text, and rewriting it on every
-flush during a backfill would push peak RAM past a couple of GB.
+month would be `≈ 100–200 MB` on disk / up to `≈ 600 MB` of text, and rewriting it
+on every flush during a backfill would push peak RAM past a couple of GB.
 
 ## 4. Gotchas that matter for ML
 
@@ -82,6 +115,11 @@ flush during a backfill would push peak RAM past a couple of GB.
   (`PRICE-TARGET` / `PRICE TARGET`, `EARNINGS` / `EARNINGS REPORT`), `~7%` untagged.
 - **Tagging bursts:** AAPL had `1,097` articles on 2025-08-15 (~30% of the whole
   global feed that day). Counts need outlier handling before use as a signal.
+- **Volume is not stationary:** 2024 carries roughly half the daily volume of the
+  surrounding years (§2.4). Any count-based feature must be normalised against the
+  day's global total, not used raw.
+- **`14%` of articles have no symbol tags** — reachable only via text (NER / issuer
+  matching), and `USDUSD.FOREX` is a junk symbol tag to filter.
 - **Duplicates:** the same article appears under every tagged symbol; `link` is the
   practical identity (`997/1000` unique in a per-symbol pull, `2,808/2,837` in a
   global-day pull). Dedup on a hash of `link`.
@@ -188,6 +226,7 @@ the lane; `sql` and `schema` cover it.
 
 ## 6. Follow-on phases (not in the substrate)
 
+0. ~~Full backfill~~ — done 2026-08-15 (§2.4); daily `refresh` keeps it current.
 1. **Derived daily panel** `news_symbol_daily.parquet` (`date, ticker, exchange, n,
    polarity_mean, …`) built locally from the corpus — replaces `/sentiments`.
 2. **Issuer mapping** so UK/EU tickers pick up their US/ADR/Frankfurt lines.
