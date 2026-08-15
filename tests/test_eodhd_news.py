@@ -294,3 +294,20 @@ def test_get_page_retries_on_429(monkeypatch) -> None:
     )
     assert status == "ok" and data is not None and len(data) == 1
     assert session.n == 3
+
+
+def test_crawl_estimate_and_dry_run_flag() -> None:
+    pages, units = news.crawl_estimate(100)
+    assert (
+        pages == round(100 * news.PAGES_PER_DAY)
+        and units == pages * news.UNITS_PER_PAGE
+    )
+    assert news.crawl_estimate(0) == (0, 0)
+    import argparse
+
+    # --dry-run is a real flag and the key is only resolved on a real crawl
+    src = open(news.__file__, encoding="utf-8").read()
+    assert '"--dry-run"' in src
+    assert src.index("if args.dry_run:") < src.index(
+        "api_key = _get_api_key()  # only a real crawl needs the key"
+    )

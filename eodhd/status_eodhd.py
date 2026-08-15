@@ -217,6 +217,7 @@ def collect_dataset(
         "freshness": None,
         "stale_days": None,
         "stale": None,
+        "pairs_behind": None,
         "status": {},
     }
 
@@ -237,6 +238,9 @@ def collect_dataset(
         record["coverage"] = _iso_date(_max_date(state, dataset.coverage_col))
         record["fetched"] = _fetched_iso(_max_timestamp(state, dataset.fetched_col))
         freshness = _max_date(state, dataset.freshness_col)
+        record["pairs_behind"] = pairs_behind(
+            state, dataset.freshness_col, as_of_ts=as_of_ts, days=stale_days
+        )
         if deep and present and dataset.as_of_data_col in parquet_columns(out_path):
             record["output_max"] = _iso_date(
                 parquet_max_date(out_path, dataset.as_of_data_col)
@@ -263,6 +267,39 @@ def collect_dataset(
     record["stale_days"] = age
     record["stale"] = None if age is None else age > stale_days
     return record
+
+
+def pairs_behind(
+    state: pd.DataFrame, column: str, *, as_of_ts: pd.Timestamp, days: int
+) -> int | None:
+    """How many state rows have ``column`` more than ``days`` before ``as_of_ts``.
+
+    Why it matters: the bulk ``refresh --fast`` path fills at most ``--days`` back
+    and never hole-punches, so a pair further behind than that is *skipped* and
+    silently stops advancing until a per-ticker ``refresh <lane> --run`` (or a
+    larger ``--days``) catches it up. ``None`` when the column is absent.
+    """
+    if column not in state.columns:
+        return None
+    dates = pd.to_datetime(state[column], errors="coerce")
+    cutoff = as_of_ts.normalize() - pd.Timedelta(days=days)
+    return int((dates.notna() & (dates < cutoff)).sum())
+
+
+def catch_up_hints(records: list[dict[str, Any]], *, stale_days: int) -> list[str]:
+    """One line per state-backed dataset with pairs more than ``stale_days`` behind."""
+    hints: list[str] = []
+    for r in records:
+        n = r.get("pairs_behind")
+        if not n or r.get("kind") not in ("prices", "dividends", "splits"):
+            continue
+        total = r.get("pairs") or 0
+        hints.append(
+            f"{r['lane']}/{r['dataset']}: {n:,} of {total:,} pairs are > {stale_days}d "
+            f"behind -- `refresh --fast` (default --days 7) skips them; catch up with "
+            f"`refresh {r['lane']} --run` or `refresh --fast --days N --run`"
+        )
+    return hints
 
 
 def _fetched_iso(value: pd.Timestamp | None) -> str | None:
@@ -457,6 +494,8 @@ def print_status(
     hint = first_fill_hint(records, RAW_EODHD)
     if hint:
         console.print(Text(hint, style="dim"))
+    for line in catch_up_hints(records, stale_days=stale_days):
+        console.print(Text(f"⚠ {line}", style="yellow"))
 
 
 def render_markdown(
@@ -498,6 +537,10 @@ def render_markdown(
     hint = first_fill_hint(records, RAW_EODHD)
     if hint:
         lines += ["", f"> **Note:** {hint}"]
+    catch_up = catch_up_hints(records, stale_days=stale_days)
+    if catch_up:
+        lines += ["", "## Catch-up needed", ""]
+        lines += [f"- {c}" for c in catch_up]
     warnings = discovery_warnings()
     if warnings:
         lines += ["", "## Discovery warnings", ""]

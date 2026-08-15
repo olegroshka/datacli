@@ -1,6 +1,6 @@
 # News Lane & Refresh — Roadmap
 
-**Status:** item 1 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · 2, 4, 5 PLANNED · **Created:** 2026-08-15  
+**Status:** items 1, 4 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · 2, 5 PLANNED · **Created:** 2026-08-15  
 **Context:** the `news` lane substrate is built and backfilled
 (`EODHD_NEWS_SENTIMENT_FINDINGS.md`); this file is the ordered plan for turning it
 into something models can consume, plus the refresh improvements surfaced by the
@@ -100,6 +100,17 @@ Surfaced by the documentation review; small, independent, worth doing together.
   panel build) so `refresh --run` produces derived tables without extra flags.
 - **Manifests.** Refresh the dated `EODHD_*_MANIFEST.md` "current observed" counts
   from `status --write` output rather than by hand (a `--manifests` flag).
+
+**Status.** DONE 2026-08-15 — `fetch_eodhd_news.py --dry-run` (pending days + unit
+estimate, no key needed); `status` computes `pairs_behind` per state-backed
+dataset and prints a yellow catch-up line (also a "Catch-up needed" section in
+STATUS.md) — on the day it landed it showed all 2,595 `us_common` price pairs 8 days
+behind, i.e. a plain `--fast` would have skipped them all; QC's lane map is derived
+from the registry (`lanes_from_registry`, universe-file metadata now on
+`LaneConfig`); `DatasetSpec.local` marks no-API steps and the refresh plan says how
+many steps hit the API; the post-step need is covered by `news_daily` being a
+default kind; the manifests now carry a "Live counts" pointer to `status` /
+`STATUS.md` instead of a generator.
 
 **Size.** ~1 day total.
 

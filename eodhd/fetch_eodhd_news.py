@@ -414,12 +414,27 @@ def parse_args() -> argparse.Namespace:
         default=MAX_PAGES,
         help="Safety cap on pages per day",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the pending-day plan and the API-unit estimate; crawl nothing",
+    )
     return parser.parse_args()
+
+
+#: Planning constants (measured on the 2021-2026 backfill: 5,511 pages / 2,053 days).
+PAGES_PER_DAY = 2.7
+UNITS_PER_PAGE = 5
+
+
+def crawl_estimate(n_days: int) -> tuple[int, int]:
+    """``(pages, api_units)`` a crawl of ``n_days`` will roughly cost."""
+    pages = int(round(n_days * PAGES_PER_DAY))
+    return pages, pages * UNITS_PER_PAGE
 
 
 def main() -> None:
     args = parse_args()
-    api_key = _get_api_key()
 
     existing_state = pd.read_csv(STATE_PATH, dtype=str) if STATE_PATH.exists() else None
     state_lookup = build_state_lookup(existing_state)
@@ -432,17 +447,33 @@ def main() -> None:
     )
     if args.limit_days > 0:
         days = days[: args.limit_days]
+    pages, units = crawl_estimate(len(days))
     log.info(
-        "News crawl: %d day(s) pending in %s..%s (overlap=%d, full_refresh=%s)",
+        "News crawl: %d day(s) pending in %s..%s (overlap=%d, full_refresh=%s) "
+        "~%d pages ~%d API units",
         len(days),
         args.from_date,
         args.to_date,
         args.overlap_days,
         args.full_refresh,
+        pages,
+        units,
     )
+    if args.dry_run:
+        if days:
+            log.info(
+                "dry-run: newest %s .. oldest %s; nothing crawled. Re-run without "
+                "--dry-run to fetch.",
+                days[0].isoformat(),
+                days[-1].isoformat(),
+            )
+        else:
+            log.info("dry-run: nothing pending.")
+        return
     if not days:
         return
 
+    api_key = _get_api_key()  # only a real crawl needs the key
     session = requests.Session()
     session.params = {"api_token": api_key}
 

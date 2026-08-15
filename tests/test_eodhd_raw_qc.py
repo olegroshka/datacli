@@ -312,3 +312,30 @@ def test_audit_lane_skips_missing_event_history(tmp_path: Path) -> None:
     assert summary["skipped_datasets"] == ["dividends", "splits"]
     assert set(summary["datasets"]) == {"prices"}
     assert flags.empty
+
+
+def test_qc_lanes_derive_from_registry() -> None:
+    import eodhd_datasets as reg  # type: ignore
+
+    lanes = qc.lanes_from_registry()
+    # every price-bearing registry lane, and nothing else (no news)
+    assert set(lanes) == {
+        n for n, ln in reg.LANES.items() if any(d.kind == "prices" for d in ln.datasets)
+    }
+    assert "news" not in lanes
+    common = lanes["us_common"]
+    assert (
+        common.universe_path is None
+        and common.default_exchange == "US"
+        and common.include_events
+    )
+    idx = lanes["index_ref"]
+    assert (
+        idx.universe_path.name == "tickers_INDX.parquet"
+        and idx.volume_sensitive is False
+        and idx.include_events is False
+    )
+    assert lanes["uk_eu_etf"].universe_exchange_column == "source_exchange"
+    assert (
+        lanes["uk_eu"].universe_path is None and lanes["uk_eu"].default_exchange is None
+    )

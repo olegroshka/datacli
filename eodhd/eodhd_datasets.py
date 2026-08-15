@@ -77,6 +77,8 @@ class DatasetSpec:
             this dataset, or ``None`` if it has no standalone fetcher.
         fetcher_args: Fixed CLI arguments always passed to ``fetcher`` (e.g.
             ``("--universe", "provider")`` for the US ETF lane).
+        local: ``True`` when the fetcher is a local build (no API calls, no
+            quota) -- ``refresh`` marks such steps so the plan's cost is honest.
         partitioned: ``True`` when ``output`` is a *directory* of parquet
             partitions (``<output>/*.parquet``) rather than a single file.
             Large append-mostly corpora (news) use this so a flush rewrites one
@@ -98,6 +100,7 @@ class DatasetSpec:
     fetcher: str | None = None
     fetcher_args: tuple[str, ...] = ()
     partitioned: bool = False
+    local: bool = False
 
     @property
     def display(self) -> str:
@@ -137,6 +140,11 @@ class LaneConfig:
             is a by-product of another stage (common-stock lanes) or the lane
             has no universe at all (news).
         universe_fetcher_args: Fixed CLI arguments for ``universe_fetcher``.
+        universe_code_column: Column of the universe parquet holding the ticker.
+        universe_exchange_column: Column holding the exchange, when the universe
+            spans several exchanges (``None`` -> ``default_exchange`` applies).
+        default_exchange: Exchange for every universe row when the file has no
+            exchange column (single-exchange lanes).
         bootstrap_file: File (under the lane root) that the incremental
             prices/dividends/splits fetchers require before they can run, or
             ``None``. For the common-stock lanes this is ``coverage_summary.csv``,
@@ -153,6 +161,9 @@ class LaneConfig:
     root: Path | None = None
     universe_fetcher: str | None = None
     universe_fetcher_args: tuple[str, ...] = ()
+    universe_code_column: str = "Code"
+    universe_exchange_column: str | None = None
+    default_exchange: str | None = None
     bootstrap_file: str | None = None
 
     def resolved_root(self) -> Path:
@@ -276,6 +287,7 @@ def news_daily_spec(fetcher: str | None = "build_news_symbol_daily.py") -> Datas
         key_cols=("ticker", "exchange"),
         label="news_symbol_daily",
         fetcher=fetcher,
+        local=True,
     )
 
 
@@ -308,6 +320,8 @@ def _lane(
     *,
     universe_fetcher: str | None = None,
     bootstrap_file: str | None = None,
+    default_exchange: str | None = None,
+    universe_exchange_column: str | None = None,
 ) -> LaneConfig:
     return LaneConfig(
         name=name,
@@ -317,6 +331,8 @@ def _lane(
         datasets=tuple(datasets),
         universe_fetcher=universe_fetcher,
         bootstrap_file=bootstrap_file,
+        default_exchange=default_exchange,
+        universe_exchange_column=universe_exchange_column,
     )
 
 
@@ -334,6 +350,7 @@ LANES: dict[str, LaneConfig] = {
             fundamentals_spec("fetch_eodhd_us_fundamentals.py"),
         ],
         bootstrap_file="coverage_summary.csv",
+        default_exchange="US",
     ),
     "uk_eu": _lane(
         "uk_eu",
@@ -369,6 +386,7 @@ LANES: dict[str, LaneConfig] = {
             ),
         ],
         universe_fetcher="fetch_eodhd_us_etf_universe.py",
+        default_exchange="US",
     ),
     "index_ref": _lane(
         "index_ref",
@@ -377,6 +395,7 @@ LANES: dict[str, LaneConfig] = {
         "tickers_INDX.parquet",
         [prices_spec("fetch_eodhd_index_ref_prices.py")],
         universe_fetcher="fetch_eodhd_index_ref_universe.py",
+        default_exchange="INDX",
     ),
     "uk_eu_etf": _lane(
         "uk_eu_etf",
@@ -389,6 +408,7 @@ LANES: dict[str, LaneConfig] = {
             event_spec("splits", "fetch_eodhd_uk_eu_etf_splits.py"),
         ],
         universe_fetcher="fetch_eodhd_uk_eu_etf_universe.py",
+        universe_exchange_column="source_exchange",
     ),
     "uk_eu_index_ref": _lane(
         "uk_eu_index_ref",
@@ -397,6 +417,7 @@ LANES: dict[str, LaneConfig] = {
         "tickers_INDX_UK_EU.parquet",
         [prices_spec("fetch_eodhd_uk_eu_index_ref_prices.py")],
         universe_fetcher="fetch_eodhd_uk_eu_index_ref_universe.py",
+        default_exchange="INDX",
     ),
     # Global article corpus crawled by day; no universe (symbol tags come with
     # each article and symbol-level views are derived locally).

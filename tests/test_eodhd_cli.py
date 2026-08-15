@@ -128,7 +128,10 @@ def test_fast_path_extra_kinds_exclude_bulk_and_fundamentals() -> None:
         with_universe=False,
         passthrough=[],
     )
-    assert [(s.lane, s.kind) for s in extra] == [("news", "news"), ("news", "news_daily")]
+    assert [(s.lane, s.kind) for s in extra] == [
+        ("news", "news"),
+        ("news", "news_daily"),
+    ]
 
 
 def test_passthrough_not_applied_to_fundamentals() -> None:
@@ -230,3 +233,12 @@ def test_step_display_and_argv() -> None:
     assert argv[0] == sys.executable
     assert argv[1].endswith("fetch_eodhd_us_prices.py")
     assert argv[-2:] == ["--to", "2026-07-06"]
+
+
+def test_local_steps_are_marked() -> None:
+    plan = cli.build_refresh_plan(
+        ["news"], kinds=set(cli.DEFAULT_KINDS), with_universe=False, passthrough=[]
+    )
+    by_kind = {s.kind: s for s in plan}
+    assert by_kind["news_daily"].local is True and by_kind["news"].local is False
+    assert reg.LANES["news"].datasets[1].local is True  # news_daily spec

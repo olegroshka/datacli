@@ -5,6 +5,8 @@
 **Purpose:** btest-owned operational inventory for the EODHD index / benchmark reference workflow  
 **Source provenance:** separate reference sleeve alongside the completed US common-stock and expanding ETF lanes in `eodhd/`
 
+**Live counts:** the numbers below were observed on the date shown and are not auto-updated; for current on-disk counts run `uv run python eodhd/cli.py status <lane>` or read `<data-root>/STATUS.md` (written by `status --write`).
+
 ## 1. Scope
 
 This file is the `btest`-local execution note for the index / benchmark reference lane under EODHD.

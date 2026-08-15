@@ -105,7 +105,7 @@ compact version of this map. `$` = hits the paid EODHD API (needs `EODHD_API_KEY
 |---|---|---|
 | **1. setup** | `config set data-root <path>` · set `EODHD_API_KEY` · `lanes` | data root = where the parquet lives; the key is an env var, never in config |
 | **2. first fill** `$` | `refresh <lane> --datasets fundamentals --run` → `refresh --run` → `python eodhd/fetch_eodhd_news.py` | order matters for the common-stock lanes; see [Quickstart B](#quickstart-b-from-zero-with-only-an-api-key) |
-| **3. routine** `$` | `refresh --fast --run` (daily; prices/events via bulk + news top-up) · `refresh --datasets fundamentals --run` (weekly) | `--fast` is a top-up for lanes that already have state |
+| **3. routine** `$` | `refresh --fast --run` (daily; prices/events via bulk + news top-up + local panel build) · `refresh --datasets fundamentals --run` (weekly) | `--fast` fills at most `--days` (7) back; `status` warns when pairs have fallen further behind |
 | **4. verify** | `status [lane]` · `qc [lane] [dataset]` | freshness + structural QC with the remediation per finding |
 | **5. index** | `reindex` | `describe`/`find` read the catalog — **run it after every fetch** |
 | **6. explore** | `describe` · `find` · `rows` · `coverage` · `sql` | `sql` also covers `news`, `news_state`, `catalog`, macro views |
@@ -170,9 +170,8 @@ uv run python eodhd/cli.py refresh us_common uk_eu --run
 # 2. ETF / index lanes bootstrap themselves (universe step first)
 uv run python eodhd/cli.py refresh us_etf index_ref uk_eu_etf uk_eu_index_ref --run
 
-# 3. news backfill (2021 -> today, ~3 h, ~7 GB, ~28k units) -- deliberately NOT part of refresh;
-#    it has no dry-run, so smoke-test with --limit-days 3 first if you like
-uv run python eodhd/fetch_eodhd_news.py --limit-days 3
+# 3. news backfill (2021 -> today, ~3 h, ~7 GB, ~28k units) -- deliberately NOT part of refresh
+uv run python eodhd/fetch_eodhd_news.py --dry-run     # pending days + unit estimate, crawls nothing
 uv run python eodhd/fetch_eodhd_news.py
 
 # 4. verify, index, explore

@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"US equity futures rise slightly pre-bell as traders await inflation data\", \"sentiment\": 0.0, \"confidence\": 0.8, \"materiality\": 0, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 867, "completion_tokens": 87}, "cost_usd": 0.0}

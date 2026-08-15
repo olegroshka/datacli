@@ -324,3 +324,52 @@ def test_parser_prog_from_env(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     with pytest.raises(SystemExit):
         st.parse_args(["--help"])
     assert "usage: eodhd status" not in capsys.readouterr().out
+
+
+def test_pairs_behind_and_catch_up_hints() -> None:
+    state = pd.DataFrame(
+        {
+            "ticker": ["A", "B", "C", "D"],
+            "exchange": ["US"] * 4,
+            "latest_data_date": ["2026-08-14", "2026-08-07", "2026-08-01", None],
+        }
+    )
+    as_of = pd.Timestamp("2026-08-15")
+    # cutoff = as_of - 7d = 2026-08-08: B (08-07) and C (08-01) are behind; D unknown
+    assert st.pairs_behind(state, "latest_data_date", as_of_ts=as_of, days=7) == 2
+    assert st.pairs_behind(state, "missing_col", as_of_ts=as_of, days=7) is None
+    records = [
+        {
+            "lane": "us_common",
+            "dataset": "prices",
+            "kind": "prices",
+            "pairs": 4,
+            "pairs_behind": 2,
+        },
+        {
+            "lane": "us_common",
+            "dataset": "dividends",
+            "kind": "dividends",
+            "pairs": 4,
+            "pairs_behind": 0,
+        },
+        {
+            "lane": "us_common",
+            "dataset": "fundamentals_q",
+            "kind": "fundamentals",
+            "pairs": 4,
+            "pairs_behind": 3,
+        },
+        {
+            "lane": "news",
+            "dataset": "news_articles",
+            "kind": "news",
+            "pairs": 4,
+            "pairs_behind": None,
+        },
+    ]
+    hints = st.catch_up_hints(records, stale_days=7)
+    assert len(hints) == 1 and hints[0].startswith(
+        "us_common/prices: 2 of 4 pairs are > 7d behind"
+    )
+    assert "refresh us_common --run" in hints[0] and "--fast --days N" in hints[0]

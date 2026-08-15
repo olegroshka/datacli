@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Stocks rise before the open as oil prices ease, awaiting U.S. PPI data.\", \"sentiment\": 0.1, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2296, "completion_tokens": 92}, "cost_usd": 0.0}

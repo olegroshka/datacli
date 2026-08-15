@@ -43,55 +43,43 @@ class LaneConfig:
     include_events: bool = True
 
 
-LANES: dict[str, LaneConfig] = {
-    "us_common": LaneConfig(
-        name="us_common",
-        root=_RAW_EODHD / "us_common",
-        universe_path=None,  # qualifying subset -> derive from prices_fetch_state.csv
-        default_exchange="US",
-        volume_sensitive=True,
-        include_events=True,
-    ),
-    "uk_eu": LaneConfig(
-        name="uk_eu",
-        root=_RAW_EODHD / "uk_eu",
-        universe_path=None,  # universe split across tickers_* files -> use state
-        volume_sensitive=True,
-        include_events=True,
-    ),
-    "us_etf": LaneConfig(
-        name="us_etf",
-        root=_RAW_EODHD / "us_etf",
-        universe_path=_RAW_EODHD / "us_etf" / "tickers_US_ETF.parquet",
-        default_exchange="US",
-        volume_sensitive=True,
-        include_events=True,
-    ),
-    "index_ref": LaneConfig(
-        name="index_ref",
-        root=_RAW_EODHD / "index_ref",
-        universe_path=_RAW_EODHD / "index_ref" / "tickers_INDX.parquet",
-        default_exchange="INDX",
-        volume_sensitive=False,
-        include_events=False,
-    ),
-    "uk_eu_etf": LaneConfig(
-        name="uk_eu_etf",
-        root=_RAW_EODHD / "uk_eu_etf",
-        universe_path=_RAW_EODHD / "uk_eu_etf" / "tickers_UK_EU_ETF.parquet",
-        universe_exchange_column="source_exchange",
-        volume_sensitive=True,
-        include_events=True,
-    ),
-    "uk_eu_index_ref": LaneConfig(
-        name="uk_eu_index_ref",
-        root=_RAW_EODHD / "uk_eu_index_ref",
-        universe_path=_RAW_EODHD / "uk_eu_index_ref" / "tickers_INDX_UK_EU.parquet",
-        default_exchange="INDX",
-        volume_sensitive=False,
-        include_events=False,
-    ),
-}
+def lane_from_registry(lane: Any) -> LaneConfig:
+    """Derive the QC configuration for a registry lane.
+
+    Common-stock lanes (``bootstrap_file`` set) have no single universe parquet
+    -- their qualifying subset is derived from ``prices_fetch_state.csv``; the
+    other lanes audit against their universe file. Index lanes are not
+    volume-sensitive; event checks run where the lane has dividend/split data.
+    """
+    kinds = {ds.kind for ds in lane.datasets}
+    return LaneConfig(
+        name=lane.name,
+        root=lane.resolved_root(),
+        universe_path=None if lane.bootstrap_file else lane.universe_path,
+        universe_code_column=lane.universe_code_column,
+        universe_exchange_column=lane.universe_exchange_column,
+        default_exchange=lane.default_exchange,
+        volume_sensitive=lane.asset_class != "index_ref",
+        include_events=bool(kinds & {"dividends", "splits"}),
+    )
+
+
+def lanes_from_registry() -> dict[str, LaneConfig]:
+    """QC lane map = every registry lane that has a prices dataset."""
+    from eodhd_datasets import (
+        LANES as REGISTRY,
+    )  # local import: keeps QC importable alone
+
+    return {
+        name: lane_from_registry(lane)
+        for name, lane in REGISTRY.items()
+        if any(ds.kind == "prices" for ds in lane.datasets)
+    }
+
+
+#: Driven by the registry (``eodhd_datasets.LANES``): a new price-bearing lane
+#: is audited automatically; the news lane (no prices) is excluded.
+LANES: dict[str, LaneConfig] = lanes_from_registry()
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 

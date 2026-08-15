@@ -201,6 +201,7 @@ class Step:
     kind: str
     script: str
     args: list[str] = field(default_factory=list)
+    local: bool = False  # a local build: no API calls, no quota
 
     def display(self) -> str:
         tail = (" " + " ".join(self.args)) if self.args else ""
@@ -248,7 +249,9 @@ def build_refresh_plan(
             step_args = list(ds.fetcher_args)
             if ds.kind in INCREMENTAL_KINDS:  # these fetchers accept passthrough flags
                 step_args += passthrough
-            lane_steps.append(Step(name, ds.kind, ds.fetcher, step_args))
+            lane_steps.append(
+                Step(name, ds.kind, ds.fetcher, step_args, local=ds.local)
+            )
         if lane.bootstrap_missing():
             # First fill of a common-stock lane: the per-ticker fetchers need
             # the coverage file the fundamentals stage writes. Run fundamentals
@@ -502,14 +505,25 @@ def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> i
         kind = Text()
         kind.append_text(_render.kind_dot(step.kind))
         kind.append(f" {step.kind}")
+        command = Text(step.display())
+        if step.local:
+            command.append("  (local, no API)", style="green")
         table.add_row(
             str(i),
             "" if step.lane == prev_lane else step.lane,
             kind,
-            step.display(),
+            command,
         )
         prev_lane = step.lane
     console.print(table)
+    n_api = sum(1 for s in steps if not s.local)
+    console.print(
+        Text(
+            f"{n_api} of {len(steps)} step(s) hit the paid EODHD API"
+            + (f"; {len(steps) - n_api} local" if n_api < len(steps) else ""),
+            style="dim",
+        )
+    )
 
     if not run:
         console.print(

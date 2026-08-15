@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"macro\", \"summary\": \"US Equity Indexes Mixed as Soft Wholesale Inflation Helps Lift Bets for Fed Policy Pause\", \"sentiment\": 0.0, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": false, \"horizon\": \"weeks\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 872, "completion_tokens": 72}, "cost_usd": 0.0}

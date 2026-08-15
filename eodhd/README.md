@@ -80,7 +80,7 @@ uv run python eodhd/cli.py refresh us_common uk_eu --run
 uv run python eodhd/cli.py refresh us_etf index_ref uk_eu_etf uk_eu_index_ref --run
 
 # 3. news corpus backfill (2021 -> today; ~3 h, ~7 GB, ~28k units). Deliberately NOT part of refresh.
-#    No dry-run: smoke-test with --limit-days 3 first if you like.
+uv run python eodhd/fetch_eodhd_news.py --dry-run     # pending days + unit estimate
 uv run python eodhd/fetch_eodhd_news.py
 
 # 4. verify, index, explore
@@ -201,6 +201,13 @@ so multiple dividends on one ex-date are preserved. State advances only to each
 pair's actual newest bar (never past real data), so nothing is ever skipped. The
 news top-up (capped, newest days first) runs after the bulk step.
 
+**Cadence.** Run `refresh --fast --run` at least every `--days` (default 7): the
+bulk path only fills that many days back and never hole-punches, so a pair that
+has fallen further behind is *skipped* and silently stops advancing. `status`
+prints a yellow **catch-up** line per dataset with the count of such pairs; fix
+with `refresh <lane> --run` (per-ticker) or `refresh --fast --days N --run` with a
+larger window (each extra day ≈ 4k units across the 13 exchanges).
+
 Caveats / when to still use the per-ticker path:
 - **First fill:** `--fast` only tops up lanes that already have a state sidecar. On
   an empty root it reports `[no state sidecar]` for every lane and fetches nothing
@@ -253,6 +260,7 @@ day-keyed `news_fetch_state.csv`. See `EODHD_NEWS_SENTIMENT_FINDINGS.md` for the
 measured feed facts, the design, and the backfill result.
 
 ```powershell
+uv run python eodhd/fetch_eodhd_news.py --dry-run              # pending days + API-unit estimate, crawls nothing
 uv run python eodhd/fetch_eodhd_news.py                        # backfill / resume (uncapped; newest days first)
 uv run python eodhd/fetch_eodhd_news.py --from 2026-08-01      # bounded window
 uv run python eodhd/cli.py refresh news --run                  # top-up only (capped at 30 days by the registry)

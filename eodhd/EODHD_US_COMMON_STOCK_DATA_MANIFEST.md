@@ -5,6 +5,8 @@
 **Purpose:** btest-owned operational inventory for the US common-stock EODHD workflow  
 **Source provenance:** adapted from the completed UK/EU EODHD workflow in `eodhd/`
 
+**Live counts:** the numbers below were observed on the date shown and are not auto-updated; for current on-disk counts run `uv run python eodhd/cli.py status <lane>` or read `<data-root>/STATUS.md` (written by `status --write`).
+
 ## 1. Scope
 
 This file is the `btest`-local execution note for the US common-stock lane under EODHD.
