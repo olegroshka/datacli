@@ -1,6 +1,6 @@
 # News Scoring — Design Request (draft for brainstorm)
 
-**Status:** SUBSTRATE BUILT (§9) — first local pass pending  
+**Status:** BUILT — `event@2` 90-day local pass running (§10)  
 **Created:** 2026-08-15  
 **Depends on:** the `news` corpus (`EODHD_NEWS_SENTIMENT_FINDINGS.md`), roadmap item 3
 (`NEWS_ROADMAP.md`)  
@@ -309,3 +309,28 @@ Next (roadmap item 3, continued): let the 90-day pass finish; gold set (needs a
 paid model with an explicit `--budget-usd`, or hand labels) → `--compare`; the
 embedding pass (`ollama pull nomic-embed-text` first); `event_v2` prompt from the
 eval findings; a `refresh` post-step for the daily top-up.
+
+## 10. `event_v2` (2026-08-16) and the running pass
+
+Recalibrated from ~30k `event@1` records (§9 findings), same shape so v1/v2 rows
+compare field by field:
+
+| change | why | v1 → v2 on the same 40 articles |
+|---|---|---|
+| `event_type` gains `supply_chain`, `competition`, `partnership`, `economic_data`, `index_etf_flow`, `technical_analysis`; prompt says "closest class, never invent one" | 85 % of invalid records were invented classes; 40 % `other` | `other` 38 % → 10 %, 0 invalid |
+| anchored seven-point sentiment scale (−1/−0.6/−0.3/0/+0.3/+0.6/+1), "use the whole range" | v1 quantised at ±0.5 | values now spread over −0.6…+0.6; corr(v1,v2) 0.75 |
+| materiality anchored per level with a stated base rate ("most articles are 0 or 1") | 82 % landed on 2 | share of 2s 73 % → 57 % (still no 0s on company-specific articles) |
+| `horizon`: `n_a` only when nothing is price-relevant | 33 % `n_a` | inconclusive on 40 articles (watch at scale) |
+
+Also landed with it: repair turns on validation problems (enum drift, missing
+fields) and a `max_tokens` cap; the earlier invalid rows were re-scored (all
+rescued on the swept days).
+
+**Pass:** the v1 pass was stopped at 17/90 days (~35k articles, kept on disk as
+`event@1`) and restarted as `event@2` over the same 90-day window (134k
+articles, ~2.3 s/article). `news_scores_event` now points at v2;
+`news_scores_event_v1` remains for comparison (`SELECT … FROM
+news_scores_event_v1 JOIN news_scores_event_v2 USING (article_id)`).
+
+Next: eval at scale when the pass lands (`score eval`, v1-vs-v2 join); embedding
+pass; gold set; the daily top-up as a `refresh` post-step.

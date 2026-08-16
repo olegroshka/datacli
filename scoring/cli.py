@@ -284,6 +284,19 @@ def cmd_status() -> int:
     return 0
 
 
+def score_view_name(schema_spec: str) -> str:
+    """``event`` -> ``news_scores_event`` (latest); ``event@2`` / ``event_v2`` ->
+    ``news_scores_event_v2``."""
+    spec = schema_spec.strip()
+    if "@" in spec:
+        name, _, ver = spec.partition("@")
+        return f"news_scores_{name}_v{ver}"
+    if "_v" in spec and spec.rsplit("_v", 1)[1].isdigit():
+        name, ver = spec.rsplit("_v", 1)
+        return f"news_scores_{name}_v{ver}"
+    return f"news_scores_{spec}"
+
+
 def _df_table(console: Any, df: Any, title: str) -> None:
     import _render  # type: ignore[import-not-found]
 
@@ -296,7 +309,7 @@ def _df_table(console: Any, df: Any, title: str) -> None:
 def cmd_eval(args: argparse.Namespace) -> int:
     console = _console()
     con = _connect()
-    view = f"news_scores_{args.schema}"
+    view = score_view_name(args.schema)
     from scoring.select import has_view
 
     if not has_view(con, view):

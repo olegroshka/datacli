@@ -22,7 +22,7 @@ from scoring.backends.llm import LLMBackend, LocalOnlyError, parse_json  # noqa:
 from scoring.backends.vendor import VendorBackend  # noqa: E402
 from scoring.config import ScoringConfig  # noqa: E402
 
-EVENT = sch.load_schema("event")
+EVENT = sch.load_schema("event@1")  # tests pin v1; "event" resolves to the latest
 
 
 # --------------------------------------------------------------------------- #
@@ -41,6 +41,18 @@ def test_event_schema_loads_and_identifies() -> None:
     assert shape["properties"]["symbols"]["required"] == ["AAPL.US"]
     assert sch.load_schema("event@1").key == "event@1"
     assert sch.load_schema("event_v1").key == "event@1"
+    latest = sch.load_schema("event")
+    assert latest.version >= 2 and latest.name == "event"
+    assert set(EVENT.field_names()) == set(latest.field_names())  # v2 keeps v1's shape
+    assert (
+        "supply_chain"
+        in next(f for f in latest.fields if f.name == "event_type").values
+    )
+    from scoring.cli import score_view_name
+
+    assert score_view_name("event") == "news_scores_event"
+    assert score_view_name("event@2") == "news_scores_event_v2"
+    assert score_view_name("event_v1") == "news_scores_event_v1"
     with pytest.raises(sch.SchemaError):
         sch.load_schema("nope")
 
