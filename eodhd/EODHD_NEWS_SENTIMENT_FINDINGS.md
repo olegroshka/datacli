@@ -58,7 +58,7 @@ One uncapped `fetch_eodhd_news.py` run, newest-first, single-threaded:
 
 | | |
 |---|---|
-| Days crawled | `2,053` (2021-01-01 → 2026-08-15), all `ok`, `0` failures, `0` page-cap hits |
+| Days crawled | `2,053` (2021-01-01 → 2026-08-15), all `ok`, `0` failures, `0` page-cap hits; **+731 days 2019–2020 on 2026-08-16** (841 pages, 441,330 articles) |
 | Pages / API units | `5,511` pages ⇒ `≈ 27,600` units |
 | Rows / unique articles | `4,457,038` / `4,457,020` (18 cross-midnight re-publications) |
 | On disk | `6.96 GB` in `2,053` daily partitions (`≈ 3.4 MB/day`, `≈ 1.25 GB/yr`) |
@@ -235,8 +235,11 @@ Tracked in detail in `NEWS_ROADMAP.md`; the scoring design in `NEWS_SCORING_DESI
 3. **Own scoring / embeddings** over `content` (model outputs stored as sidecar
    parquet keyed by `article_id`, never mutating the raw corpus).
 4. **Lab persona updates** — remove the "no news data" claims once the lane is live.
-5. Optional: per-symbol `/news` gap-fill for names whose history predates the global
-   feed density (2019–2020).
+5. ~~Optional: per-symbol `/news` gap-fill~~ — measured 2026-08-16: the corpus had no
+   2019–2020 because the backfill started at 2021; the global feed for 2019–2020 was
+   crawled instead (731 days, 841 pages ≈ 4.2k units, 441,330 articles; ~490/day in
+   2019, ~720/day in 2020). Per-symbol pulls were not needed. `qc news` now reports
+   crawl gaps, empty/untagged shares, junk symbols, re-publications and bursts.
 
 ## 7. Maintenance rule
 

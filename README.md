@@ -250,7 +250,7 @@ Run any command with `--help` for its full options.
 | Command | What it does | Direct entry point |
 |---|---|---|
 | `status [lane]` | As-of dashboard: what data exists and how fresh it is | `eodhd/cli.py status` |
-| `qc [lane] [dataset]` | Raw-data quality triage with recommended fixes (price-bearing lanes) | `eodhd/cli.py qc` |
+| `qc [lane] [dataset]` | Raw-data quality triage with recommended fixes (price-bearing lanes); `qc news` = corpus hygiene (gaps, empty/untagged, junk tags, bursts) | `eodhd/cli.py qc` |
 | `lanes` | List registered lanes, datasets, universe sources and fetchers | `eodhd/cli.py lanes` |
 | `describe TICKER` | Everything about one ticker, across datasets (reads the catalog → `reindex` first) | `eodhd/cli.py describe` |
 | `find PATTERN` | Locate a ticker (lane / exchange / datasets) (reads the catalog) | `eodhd/cli.py find` |

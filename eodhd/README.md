@@ -384,7 +384,10 @@ uv run python eodhd/report_eodhd_raw_quality.py --lane all --write-report
 ```
 
 `status`/`qc` take an optional positional `[lane]` (and `qc` a second `[dataset]`
-= `prices|dividends|splits`); any `--flags` after them are forwarded untouched. On
+= `prices|dividends|splits`); any `--flags` after them are forwarded untouched.
+`qc news` runs the corpus hygiene report instead (`report_news_quality.py`: crawl
+gaps, empty/untagged shares, junk symbol tags, re-publications, tagging bursts,
+volume by year; trailing 365 days, `--all` for the whole corpus). On
 an empty root both say so and name the first-fill command
 (`refresh <lane> --with-fundamentals --run`, see §2) instead of failing.
 

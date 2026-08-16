@@ -1,0 +1,1 @@
+{"text": "{\"name\": \"Fundstrat\", \"value\": 4799.85, \"change\": 0.0, \"change_percentage\": 0.0, \"market_cap\": 320.85}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2050, "completion_tokens": 53}, "cost_usd": 0.0}

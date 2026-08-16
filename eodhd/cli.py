@@ -47,6 +47,7 @@ DELEGATED: dict[str, str] = {
 # Scripts behind the positional-scoped commands (status/qc take `[lane] [dataset]`).
 STATUS_SCRIPT = "status_eodhd.py"
 QC_SCRIPT = "report_eodhd_raw_quality.py"
+NEWS_QC_SCRIPT = "report_news_quality.py"
 # Datasets QC can drill into (mirrors report_eodhd_raw_quality.py's --dataset).
 QC_DATASETS = ("prices", "dividends", "splits")
 
@@ -739,18 +740,22 @@ def cmd_qc(argv: list[str]) -> int:
     Validated up front so a typo yields a friendly hint, not an argparse dump.
     """
     pos, rest = _leading_positionals(argv)
-    # QC audits price-bearing lanes only (the QC script keys off prices_daily).
-    lanes = (
-        *(
-            n
-            for n, lane in LANES.items()
-            if any(ds.kind == "prices" for ds in lane.datasets)
-        ),
-        "all",
+    # The price QC engine audits price-bearing lanes; the news lane has its own
+    # corpus-hygiene report (report_news_quality.py).
+    price_lanes = tuple(
+        n
+        for n, lane in LANES.items()
+        if any(ds.kind == "prices" for ds in lane.datasets)
     )
+    lanes = (*price_lanes, *(("news",) if "news" in LANES else ()), "all")
     if pos and pos[0] not in lanes:
         _bad_choice("lane", pos[0], lanes)
         return 2
+    if pos and pos[0] == "news":
+        if len(pos) > 1:
+            _bad_choice("dataset", pos[1], ())
+            return 2
+        return delegate(NEWS_QC_SCRIPT, rest, prog="qc news")
     if len(pos) > 1 and pos[1] not in QC_DATASETS:
         _bad_choice("dataset", pos[1], QC_DATASETS)
         return 2

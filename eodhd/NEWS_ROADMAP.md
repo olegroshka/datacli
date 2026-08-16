@@ -1,6 +1,6 @@
 # News Lane & Refresh — Roadmap
 
-**Status:** items 1, 2, 4 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · 5 PLANNED · **Created:** 2026-08-15  
+**Status:** items 1, 2, 4, 5 DONE · item 3 SUBSTRATE BUILT (90-day pass running) · **Created:** 2026-08-15  
 **Context:** the `news` lane substrate is built and backfilled
 (`EODHD_NEWS_SENTIMENT_FINDINGS.md`); this file is the ordered plan for turning it
 into something models can consume, plus the refresh improvements surfaced by the
@@ -142,6 +142,19 @@ default kind; the manifests now carry a "Live counts" pointer to `status` /
 - **Corpus hygiene report:** empty-content share, junk symbol tags
   (`USDUSD.FOREX`), re-publication rate, per-source volume — as a `qc news`
   extension once the QC map is registry-driven (item 4).
+
+**Status.** DONE 2026-08-16 —
+- Gap-fill: the probe showed the corpus had **no** 2019–2020 at all (the backfill
+  started at 2021-01-01) while the vendor holds it (AAPL 344, PFE 251, MSFT 206
+  articles per symbol in those two years). Per-ticker pulls were unnecessary: the
+  **global crawl** was extended (`fetch_eodhd_news.py --from 2019-01-01 --to
+  2020-12-31`): 731 days, 841 pages ≈ 4.2k units, **441,330 articles**, 0 failures;
+  panels rebuilt incrementally. The corpus now spans 2019-01-01 → today.
+- `qc news` → `report_news_quality.py`: crawl gaps / state, empty & untagged
+  shares, junk symbols, re-publications, tagging bursts, volume by year, sources
+  (trailing 365 days by default, `--all` for history).
+- Lab skill `news-coverage`; personas already point at the news views.
+- Atomic parquet/CSV writes everywhere (`eodhd/_atomic.py`).
 
 **Size.** ~1 day.
 
