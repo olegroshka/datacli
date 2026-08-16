@@ -10,6 +10,7 @@ Keys (all optional)::
     max_symbols  = 3                    # per-symbol scoring only up to this many target symbols
     window_days  = 90                   # default target window for `score plan/run`
     batch_size   = 16                   # embed batch size
+    max_tokens   = 800                  # completion cap for the llm backend (runaway guard)
 
 Model tiers come from ``[lab.models]`` (shared with the lab; see ``llm.tiers``).
 API keys never live here -- they come from the environment.
@@ -37,6 +38,7 @@ class ScoringConfig:
     max_symbols: int = 3
     window_days: int = 90
     batch_size: int = 16
+    max_tokens: int = 800
     models: dict[str, str] = field(default_factory=lambda: dict(tiers.DEFAULT_MODELS))
 
     def resolve_model(self, tier_or_id: str) -> str:
@@ -81,5 +83,6 @@ def load(path: Path = CONFIG_PATH) -> ScoringConfig:
         max_symbols=int(section.get("max_symbols", 3)),
         window_days=int(section.get("window_days", 90)),
         batch_size=int(section.get("batch_size", 16)),
+        max_tokens=int(section.get("max_tokens", 800)),
         models=models,
     )

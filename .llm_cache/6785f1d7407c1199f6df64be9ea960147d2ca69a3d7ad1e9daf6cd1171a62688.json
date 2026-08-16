@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"macro\", \"summary\": \"US jobs report and Persian Gulf views lifted Wall Street pre-bell\", \"sentiment\": 0.2, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 866, "completion_tokens": 87}, "cost_usd": 0.0}

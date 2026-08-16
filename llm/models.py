@@ -57,6 +57,7 @@ class CompletionFn(Protocol):
         messages: list[dict[str, Any]],
         temperature: float,
         response_format: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> Any: ...
 
 
@@ -154,6 +155,7 @@ class LLM:
         messages: list[dict[str, Any]],
         temperature: float,
         response_format: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> Any:
         litellm = self._litellm()
         kwargs: dict[str, Any] = {
@@ -163,6 +165,8 @@ class LLM:
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
         return litellm.completion(**kwargs)
 
     def _litellm_embedding(self, *, model: str, input: list[str]) -> Any:
@@ -185,17 +189,22 @@ class LLM:
         model: str,
         temperature: float = 0.0,
         response_format: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> Completion:
         """Run one completion. ``model`` is a tier name or a raw model id.
 
         Returns a cached result for free when available; otherwise checks the
         budget, calls the model, charges the cost, and caches the response.
-        ``response_format`` (e.g. ``{"type": "json_object"}``) is passed through
-        and is part of the cache key.
+        ``response_format`` (e.g. ``{"type": "json_object"}``) and ``max_tokens``
+        are passed through and are part of the cache key.
         """
         model_id = self.resolve_model(model)
-        extra = {"response_format": response_format} if response_format else None
-        key = cache_mod.make_key(model_id, messages, temperature, extra)
+        extra: dict[str, Any] = {}
+        if response_format:
+            extra["response_format"] = response_format
+        if max_tokens is not None:
+            extra["max_tokens"] = max_tokens
+        key = cache_mod.make_key(model_id, messages, temperature, extra or None)
 
         hit = self.cache.get(key)
         if hit is not None:
@@ -220,6 +229,8 @@ class LLM:
         }
         if response_format is not None:  # keep plain injected fns compatible
             call_kwargs["response_format"] = response_format
+        if max_tokens is not None:
+            call_kwargs["max_tokens"] = max_tokens
         resp = fn(**call_kwargs)
         text = _extract_text(resp)
         usage = _extract_usage(resp)

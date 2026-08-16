@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Consumer stocks were higher late Tuesday afternoon.\", \"sentiment\": 0.1, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 856, "completion_tokens": 63}, "cost_usd": 0.0}

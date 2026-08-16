@@ -462,3 +462,43 @@ def test_evaluate_pure_metrics() -> None:
     )
     assert ev.cohen_kappa(pd.Series(["a", "b", "a"]), pd.Series(["a", "b", "b"])) < 1.0
     assert ev.vs_vendor(df.head(2)) == {"n": 2}
+
+
+def test_llm_backend_repairs_validation_problems_and_caps_tokens(
+    tmp_path: Path,
+) -> None:
+    bad = json.dumps(
+        {
+            "article": {
+                "event_type": "supply_chain",  # not in the enum
+                "summary": "x",
+                "sentiment": 0.1,
+                "confidence": 0.5,
+                "materiality": 1,
+                "novelty": False,
+                "horizon": "weeks",
+            },
+            "symbols": {
+                "AAPL.US": {"role": "subject", "direction": "up", "relevance": 1.0}
+            },
+        }
+    )
+    llm, calls = _fake_llm(tmp_path, [bad, _good_json(["AAPL.US"])])
+    be = LLMBackend(ScoringConfig(max_tokens=512), model="local", llm=llm)
+    [res] = be.score([_item()], EVENT)
+    assert res.status == "ok" and res.article["event_type"] == "earnings"
+    assert len(calls) == 2
+    assert calls[0]["max_tokens"] == 512
+    complaint = calls[1]["messages"][-1]["content"]
+    assert (
+        "supply_chain" in complaint
+        and "not in enum" in complaint
+        and "event_type" in complaint
+    )
+    # a backend that never fixes it keeps the most complete attempt and reports invalid
+    llm2, calls2 = _fake_llm(tmp_path / "b", [bad])
+    be2 = LLMBackend(ScoringConfig(), model="local", llm=llm2, max_repairs=2)
+    [res2] = be2.score([_item()], EVENT)
+    assert res2.status == "invalid" and len(calls2) == 3
+    assert res2.article["horizon"] == "weeks" and res2.article["event_type"] is None
+    assert any("event_type" in p for p in res2.problems)

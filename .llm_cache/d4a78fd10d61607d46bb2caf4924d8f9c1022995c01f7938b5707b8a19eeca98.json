@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"macro\", \"summary\": \"Germany's Q2 GDP rises 0.9% Y/Y, beating estimates.\", \"sentiment\": 0.5, \"confidence\": 0.9, \"materiality\": 2, \"novelty\": true, \"horizon\": \"quarters\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1248, "completion_tokens": 88}, "cost_usd": 0.0}

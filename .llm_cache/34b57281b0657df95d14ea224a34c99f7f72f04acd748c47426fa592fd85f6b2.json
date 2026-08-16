@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"European markets gain as PMI data and corporate earnings are reported.\", \"sentiment\": 0.5, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1884, "completion_tokens": 86}, "cost_usd": 0.0}

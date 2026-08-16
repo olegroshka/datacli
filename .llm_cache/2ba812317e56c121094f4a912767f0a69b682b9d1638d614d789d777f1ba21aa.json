@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"earnings\", \"summary\": \"Microsoft's quarterly results spark a rebound in chipmakers ahead of Amazon's earnings\", \"sentiment\": 0.5, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": true, \"horizon\": \"quarters\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 877, "completion_tokens": 70}, "cost_usd": 0.0}

@@ -1,0 +1,1 @@
+{"text": "{\"name\": \"Morgan Stanley\", \"change\": -19.0, \"change_percentage\": -0.36, \"market_cap\": 533.68}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2050, "completion_tokens": 42}, "cost_usd": 0.0}

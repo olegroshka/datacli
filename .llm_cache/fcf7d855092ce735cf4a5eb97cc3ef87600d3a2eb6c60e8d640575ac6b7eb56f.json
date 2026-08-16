@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Tech stocks were mixed late Wednesday afternoon.\", \"sentiment\": 0, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 857, "completion_tokens": 61}, "cost_usd": 0.0}

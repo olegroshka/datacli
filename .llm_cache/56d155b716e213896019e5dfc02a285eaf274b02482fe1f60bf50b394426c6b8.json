@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"US stocks rise pre-bell on hopes for Hormuz deal\", \"sentiment\": 0.5, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": true, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 869, "completion_tokens": 68}, "cost_usd": 0.0}

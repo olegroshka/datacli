@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Energy stocks declined 0.7% in afternoon trading.\", \"sentiment\": -0.5, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 862, "completion_tokens": 67}, "cost_usd": 0.0}

@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"US equity markets end higher on Monday as crude oil falls due to US-Iran talks\", \"sentiment\": 0.2, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 872, "completion_tokens": 73}, "cost_usd": 0.0}

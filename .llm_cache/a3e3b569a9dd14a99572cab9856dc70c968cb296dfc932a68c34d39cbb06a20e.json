@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Asian shares rise as oil prices gain amid concerns over Iran-Iraq conflict\", \"sentiment\": 0.2, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"n_a\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1532, "completion_tokens": 87}, "cost_usd": 0.0}

@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"S&P 500 and Dow Futures Eye New Records While Tech Gains Lag\", \"sentiment\": 0.0, \"confidence\": 1.0, \"materiality\": 0, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 864, "completion_tokens": 91}, "cost_usd": 0.0}

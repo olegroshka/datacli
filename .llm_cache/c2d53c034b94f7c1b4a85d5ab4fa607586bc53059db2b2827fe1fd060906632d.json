@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Potential Strait of Hormuz deal boosts US equity futures pre-bell\", \"sentiment\": 0.5, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": true, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 866, "completion_tokens": 87}, "cost_usd": 0.0}

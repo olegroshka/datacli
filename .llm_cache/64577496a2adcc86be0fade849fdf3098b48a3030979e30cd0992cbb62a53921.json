@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Oil prices fall, boosting Wall Street pre-bell\", \"sentiment\": 0.2, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 864, "completion_tokens": 66}, "cost_usd": 0.0}

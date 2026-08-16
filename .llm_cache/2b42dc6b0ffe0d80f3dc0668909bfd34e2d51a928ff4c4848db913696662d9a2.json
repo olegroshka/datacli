@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Dow surges 700 points after Trump cancels Iran strikes, oil drops\", \"sentiment\": 0.5, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1343, "completion_tokens": 92}, "cost_usd": 0.0}

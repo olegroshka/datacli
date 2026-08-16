@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"S&P 500 and Dow notch new highs on earnings boost and Hormuz deal optimism\", \"sentiment\": 0.5, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": false, \"horizon\": \"n_a\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 886, "completion_tokens": 74}, "cost_usd": 0.0}

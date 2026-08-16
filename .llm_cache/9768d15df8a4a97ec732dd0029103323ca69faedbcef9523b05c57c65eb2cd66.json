@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"Fed's hawkish stance likely intact despite soft jobs data\", \"sentiment\": -0.2, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": true, \"horizon\": \"weeks\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1447, "completion_tokens": 83}, "cost_usd": 0.0}

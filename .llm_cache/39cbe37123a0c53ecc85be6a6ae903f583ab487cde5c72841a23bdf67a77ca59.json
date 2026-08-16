@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"macro\", \"summary\": \"Europe markets mixed ahead of BOE interest rate decision\", \"sentiment\": 0.0, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"weeks\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1687, "completion_tokens": 82}, "cost_usd": 0.0}

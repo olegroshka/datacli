@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"other\", \"summary\": \"US Equity Indexes Mixed as SpaceX Hits Nasdaq, Deal Reportedly Reached on Proposed Hormuz Route\", \"sentiment\": 0, \"confidence\": 0.5, \"materiality\": 1, \"novelty\": false, \"horizon\": \"n_a\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 874, "completion_tokens": 73}, "cost_usd": 0.0}
