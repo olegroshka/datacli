@@ -35,6 +35,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_us_fundamentals import _get_api_key
 
@@ -231,9 +232,7 @@ def write_partition(df: pd.DataFrame, path: Path) -> None:
         df[ARTICLE_COLUMNS], schema=ARTICLE_SCHEMA, preserve_index=False
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, path, compression="zstd")
-
-
+    _atomic.write_table(table, path, compression="zstd")
 def read_partition(path: Path) -> pd.DataFrame | None:
     return pd.read_parquet(path) if path.exists() else None
 
@@ -496,7 +495,7 @@ def main() -> None:
         if new_state_rows:
             merged_state = merge_state_rows(existing_state, new_state_rows)
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            merged_state.to_csv(STATE_PATH, index=False)
+            _atomic.to_csv(merged_state, STATE_PATH, index=False)
             existing_state = merged_state
             new_state_rows.clear()
         days_since_flush = 0

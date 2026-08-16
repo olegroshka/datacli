@@ -153,7 +153,7 @@ def main() -> None:
         .sort_values(["Code"])
         .reset_index(drop=True)
     )
-    provider_df.to_parquet(INDEX_TICKERS_PATH, index=False)
+    _atomic.to_parquet(provider_df, INDEX_TICKERS_PATH, index=False)
     log.info("Saved provider UK/EU index / benchmark list: %d rows", len(provider_df))
     if "Country" in provider_df.columns:
         print("Country counts:")

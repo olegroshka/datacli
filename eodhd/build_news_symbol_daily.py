@@ -31,6 +31,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 
 RAW_DIR = EODHD_RAW_ROOT / "news"
@@ -190,9 +191,7 @@ def write_panel(df: pd.DataFrame, path: Path) -> None:
         work[PANEL_COLUMNS], schema=PANEL_SCHEMA, preserve_index=False
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, path, compression="zstd")
-
-
+    _atomic.write_table(table, path, compression="zstd")
 def read_panel_days(path: Path) -> set[str]:
     if not path.exists():
         return set()

@@ -99,21 +99,21 @@ def main() -> None:
                 key_columns=["ticker", "exchange", "ex_date", "dividend"],
             )
             DIVIDENDS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            merged.to_parquet(DIVIDENDS_PATH, index=False)
+            _atomic.to_parquet(merged, DIVIDENDS_PATH, index=False)
             existing_output = merged
         if new_audit_rows:
             existing_audit = merge_audit_rows(existing_audit, new_audit_rows)
         if new_state_rows:
             merged_state = merge_pair_state_rows(existing_state, new_state_rows)
             DIVIDENDS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            merged_state.to_csv(DIVIDENDS_STATE_PATH, index=False)
+            _atomic.to_csv(merged_state, DIVIDENDS_STATE_PATH, index=False)
             existing_state = merged_state
         rebuilt = rebuild_event_audit(
             output=existing_output, state=existing_state, existing_audit=existing_audit
         )
         if rebuilt is not None and not rebuilt.empty:
             DIVIDENDS_AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-            rebuilt.to_csv(DIVIDENDS_AUDIT_PATH, index=False)
+            _atomic.to_csv(rebuilt, DIVIDENDS_AUDIT_PATH, index=False)
             existing_audit = rebuilt
         new_frames.clear()
         new_audit_rows.clear()

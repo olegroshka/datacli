@@ -469,9 +469,9 @@ def process_dataset(
 
     existing = pd.read_parquet(out_path) if out_path.exists() else pd.DataFrame()
     merged = merge_output(existing, new_rows, OUTPUT_KEYS[ds.kind])
-    merged.to_parquet(out_path, index=False)
+    _atomic.to_parquet(merged, out_path, index=False)
     updated_state = advance_state(state, new_max_by_pair=new_max_by_pair, now=now)
-    updated_state.to_csv(state_path, index=False)
+    _atomic.to_csv(updated_state, state_path, index=False)
     return summary
 
 

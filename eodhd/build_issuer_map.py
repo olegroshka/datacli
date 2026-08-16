@@ -51,6 +51,7 @@ from typing import Any, Iterable
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 
 RAW_DIR = EODHD_RAW_ROOT / "news"
@@ -586,7 +587,7 @@ def build(
     )
     table = pa.Table.from_pandas(df, schema=MAP_SCHEMA, preserve_index=False)
     map_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, map_path, compression="zstd")
+    _atomic.write_table(table, map_path, compression="zstd")
     summary = qc_summary(df, records)
     log.info(
         "wrote %s: %d symbols, %d issuers (%.0fs)",

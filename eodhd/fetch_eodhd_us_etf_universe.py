@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_fundamentals import parse_ticker_spec
 from fetch_eodhd_us_fundamentals import _ROOT, _api_get, _get_api_key
@@ -176,7 +177,7 @@ def main() -> None:
 
     provider_df = fetch_exchange_etfs(session)
     if not provider_df.empty:
-        provider_df.to_parquet(ETF_TICKERS_PATH, index=False)
+        _atomic.to_parquet(provider_df, ETF_TICKERS_PATH, index=False)
         log.info("Saved provider ETF list: %d rows", len(provider_df))
     else:
         log.warning(
@@ -184,7 +185,7 @@ def main() -> None:
         )
 
     starter_df = build_starter_universe(provider_df)
-    starter_df.to_csv(STARTER_UNIVERSE_PATH, index=False)
+    _atomic.to_csv(starter_df, STARTER_UNIVERSE_PATH, index=False)
     log.info("Saved ETF starter universe: %d rows", len(starter_df))
     print(starter_df.to_string(index=False))
 

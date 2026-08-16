@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_prices import (
     DEFAULT_FROM,
@@ -147,19 +148,19 @@ def main() -> None:
             if new_state_rows:
                 merged_state = merge_fetch_state_rows(existing_state, new_state_rows)
                 PRICES_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-                merged_state.to_csv(PRICES_STATE_PATH, index=False)
+                _atomic.to_csv(merged_state, PRICES_STATE_PATH, index=False)
                 existing_state = merged_state
                 new_state_rows.clear()
             return
         new_df = pd.concat(new_frames, ignore_index=True)
         merged = merge_price_frames(existing, new_df)
         PRICES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        merged.to_parquet(PRICES_PATH, index=False)
+        _atomic.to_parquet(merged, PRICES_PATH, index=False)
         existing = merged
         if new_state_rows:
             merged_state = merge_fetch_state_rows(existing_state, new_state_rows)
             PRICES_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            merged_state.to_csv(PRICES_STATE_PATH, index=False)
+            _atomic.to_csv(merged_state, PRICES_STATE_PATH, index=False)
             existing_state = merged_state
         log.info(
             "  [FLUSH] %d total US price rows on disk (%d firms)",

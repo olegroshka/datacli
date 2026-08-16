@@ -41,6 +41,7 @@ from pathlib import Path
 import fundamentals_refresh_common as fr
 import pandas as pd
 import requests
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 
 #: Repo root (datacli). Key files and ``.env`` are looked up here first.
@@ -823,7 +824,7 @@ def main() -> None:
                 ticker_df = fetch_exchange_tickers(session, exchange)
                 if ticker_df.empty:
                     continue
-                ticker_df.to_parquet(ticker_path, index=False)
+                _atomic.to_parquet(ticker_df, ticker_path, index=False)
                 log.info(
                     "  %s: fetched and saved %d common stocks", exchange, len(ticker_df)
                 )
@@ -861,7 +862,7 @@ def main() -> None:
                 new_df,
                 key_columns=["ticker", "exchange", "statement", "date"],
             )
-            merged.to_parquet(fund_path, index=False)
+            _atomic.to_parquet(merged, fund_path, index=False)
             existing_fund = merged
 
         if new_metadata:
@@ -871,7 +872,7 @@ def main() -> None:
                 new_meta_df,
                 key_columns=["ticker", "exchange_code"],
             )
-            merged_meta.to_parquet(meta_path, index=False)
+            _atomic.to_parquet(merged_meta, meta_path, index=False)
             existing_meta = merged_meta
 
         for output_name, frames in new_section_outputs.items():
@@ -887,7 +888,7 @@ def main() -> None:
                 key_columns=list(SECTION_OUTPUT_SPECS[output_name]["keys"]),
             )
             output_path = SECTION_OUTPUT_SPECS[output_name]["path"]
-            merged_output.to_parquet(output_path, index=False)
+            _atomic.to_parquet(merged_output, output_path, index=False)
             existing_section_outputs[output_name] = merged_output
 
         fund_rows = (
@@ -1099,8 +1100,7 @@ def main() -> None:
     if not fundamentals_df.empty:
         coverage = compute_coverage(fundamentals_df)
         out_path = RAW_DIR / "coverage_summary.csv"
-        coverage.to_csv(out_path, index=False)
-
+        _atomic.to_csv(coverage, out_path, index=False)
         n_both_60q = coverage["both_60q"].sum()
         n_with_assets = (coverage["n_assets_2011_2025"] > 0).sum()
         n_with_capex = (coverage["n_capex_2011_2025"] > 0).sum()

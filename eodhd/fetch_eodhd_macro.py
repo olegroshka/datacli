@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_fundamentals import _get_api_key
 
@@ -231,7 +232,7 @@ def main() -> None:
     if all_series:
         macro_df = pd.concat(all_series, ignore_index=True)
         out_path = RAW_DIR / "macro_eu.parquet"
-        macro_df.to_parquet(out_path, index=False)
+        _atomic.to_parquet(macro_df, out_path, index=False)
         log.info(
             "\nSaved %s (%d rows, %d series)",
             out_path.name,
@@ -241,7 +242,7 @@ def main() -> None:
 
     cov_df = pd.DataFrame(coverage)
     cov_path = RAW_DIR / "macro_coverage.csv"
-    cov_df.to_csv(cov_path, index=False)
+    _atomic.to_csv(cov_df, cov_path, index=False)
     log.info("Saved %s", cov_path.name)
 
     print("\n" + "=" * 60)

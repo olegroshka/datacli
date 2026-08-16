@@ -26,6 +26,18 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from scoring.backends.base import Result
+
+
+def _write_table_atomic(table: pa.Table, path: Path, **kwargs: Any) -> None:
+    """Write via ``<name>.tmp`` + ``os.replace`` so readers never see a torn file."""
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    pq.write_table(table, tmp, **kwargs)
+    os.replace(tmp, path)
+
+
 from scoring.schema import Field, Schema
 
 PROVENANCE_COLUMNS = [
@@ -271,7 +283,7 @@ def upsert_partition(
     merged = merged.drop_duplicates(subset=keys, keep="last")
     merged = merged.sort_values(keys).reset_index(drop=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(_prepare(merged, arrow), path, compression="zstd")
+    _write_table_atomic(_prepare(merged, arrow), path, compression="zstd")
     return int(len(merged))
 
 

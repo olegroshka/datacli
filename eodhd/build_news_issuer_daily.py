@@ -42,6 +42,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 from build_news_symbol_daily import (
     DEAD_BAND,
@@ -243,7 +244,7 @@ def write_panel(df: pd.DataFrame, path: Path) -> None:
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".parquet.tmp")
-    pq.write_table(table, tmp, compression="zstd")
+    _atomic.write_table(table, tmp, compression="zstd")
     tmp.replace(path)
 
 

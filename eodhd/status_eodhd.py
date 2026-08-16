@@ -46,6 +46,7 @@ import pandas as pd
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _atomic  # noqa: E402
 import _render  # noqa: E402
 from eodhd_datasets import RAW_EODHD  # noqa: E402
 from eodhd_datasets import (
@@ -644,7 +645,7 @@ def main(argv: list[str] | None = None) -> None:
                 " ".join(f"{k}={v}" for k, v in s.items()) if isinstance(s, dict) else s
             )
         )
-        flat.to_csv(args.csv, index=False)
+        _atomic.to_csv(flat, args.csv, index=False)
         print(f"\nWrote records -> {args.csv}")
 
     if args.write:

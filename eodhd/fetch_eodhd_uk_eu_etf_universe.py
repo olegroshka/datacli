@@ -124,7 +124,7 @@ def main() -> None:
         .sort_values(["Exchange", "Code"])
         .reset_index(drop=True)
     )
-    provider_df.to_parquet(ETF_TICKERS_PATH, index=False)
+    _atomic.to_parquet(provider_df, ETF_TICKERS_PATH, index=False)
     log.info("Saved provider UK/EU ETF list: %d rows", len(provider_df))
 
     exchange_counts = (

@@ -39,6 +39,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _render  # type: ignore[import-not-found]  # noqa: E402
 import schema as sch  # type: ignore[import-not-found]  # noqa: E402
+import _atomic
 from _datadir import EODHD_RAW_ROOT  # type: ignore[import-not-found]  # noqa: E402
 from eodhd_datasets import LANES  # type: ignore[import-not-found]  # noqa: E402
 
@@ -717,7 +718,7 @@ def cmd_reindex(con: Any) -> int:
         return 0
     catalog = pd.concat(frames, ignore_index=True)
     EODHD_RAW_ROOT.mkdir(parents=True, exist_ok=True)
-    catalog.to_parquet(INDEX_PATH, index=False)
+    _atomic.to_parquet(catalog, INDEX_PATH, index=False)
     meta = {
         "schema_version": sch.SCHEMA_VERSION,
         "indexed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

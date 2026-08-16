@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+import _atomic
 from _datadir import EODHD_RAW_ROOT
 from fetch_eodhd_eu_fundamentals import parse_ticker_spec
 from fetch_eodhd_us_fundamentals import _ROOT, _api_get, _get_api_key
@@ -109,7 +110,7 @@ def main() -> None:
     if provider_df.empty:
         raise RuntimeError("Provider index / benchmark universe fetch returned no rows")
 
-    provider_df.to_parquet(INDEX_TICKERS_PATH, index=False)
+    _atomic.to_parquet(provider_df, INDEX_TICKERS_PATH, index=False)
     log.info("Saved provider index / benchmark list: %d rows", len(provider_df))
     if "Country" in provider_df.columns:
         top_countries = provider_df["Country"].fillna("Unknown").value_counts().head(10)

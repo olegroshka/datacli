@@ -100,12 +100,12 @@ def main() -> None:
                 existing, pd.concat(new_frames, ignore_index=True)
             )
             PRICES_PATH.parent.mkdir(parents=True, exist_ok=True)
-            merged.to_parquet(PRICES_PATH, index=False)
+            _atomic.to_parquet(merged, PRICES_PATH, index=False)
             existing = merged
         if new_state_rows:
             merged_state = merge_fetch_state_rows(existing_state, new_state_rows)
             PRICES_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            merged_state.to_csv(PRICES_STATE_PATH, index=False)
+            _atomic.to_csv(merged_state, PRICES_STATE_PATH, index=False)
             existing_state = merged_state
         if new_frames or new_state_rows:
             rows = 0 if existing is None or existing.empty else len(existing)
