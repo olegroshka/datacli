@@ -31,6 +31,7 @@ from scoring import evaluate as ev  # noqa: E402
 from scoring import runner, store  # noqa: E402
 from scoring.backends import BACKENDS, get_backend  # noqa: E402
 from scoring.schema import SchemaError, list_schemas, load_schema  # noqa: E402
+from llm import tiers  # noqa: E402
 
 PROG = "uv run python -m scoring.cli"
 
@@ -161,7 +162,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_bench.add_argument(
         "--configs",
         required=True,
-        help="Comma list of MODEL[:SCHEMA] (schema defaults to 'event'), e.g. "
+        help="Comma list of MODEL[:SCHEMA] (schema defaults to 'event'). A bare "
+        "ollama tag gets its 'ollama/' prefix added, e.g. "
         "'qwen2.5-coder:7b,ollama/qwen2.5:7b-instruct:event@2'",
     )
     sp_bench.add_argument(
@@ -412,7 +414,7 @@ def _parse_configs(spec: str) -> list[Any]:
             head, _, tail = raw.rpartition(":")
             if tail.split("@")[0].split("_v")[0].isalpha() and head:
                 raw, schema = head, tail
-        out.append(bench_mod.Config(model=raw, schema_spec=schema))
+        out.append(bench_mod.Config(model=tiers.normalize_model(raw), schema_spec=schema))
     return out
 
 

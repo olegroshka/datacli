@@ -33,3 +33,19 @@ def resolve(tier_or_id: str, models: Mapping[str, str] | None = None) -> str:
 def is_local(model_id: str) -> bool:
     """``True`` for models served by Ollama (no API key, no network cost)."""
     return model_id.startswith("ollama/") or model_id.startswith("ollama_chat/")
+
+
+def normalize_model(model_id: str) -> str:
+    """Give a bare Ollama tag its provider prefix.
+
+    ``qwen2.5-coder:7b`` and ``ollama/qwen2.5-coder:7b`` name the same model, but
+    only the prefixed form is recognised by :func:`is_local`, so the bare form
+    would be refused as a paid model in a local-only run. A model string that
+    carries a ``:`` tag but no provider ``/`` is an Ollama tag in practice --
+    LiteLLM's own ids are either bare names (``gpt-4o-mini``) or prefixed
+    (``openai/gpt-4o-mini``). Tier keys and prefixed ids pass through untouched.
+    """
+    m = model_id.strip()
+    if not m or "/" in m or ":" not in m or m in DEFAULT_MODELS:
+        return m
+    return f"ollama/{m}"

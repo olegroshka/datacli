@@ -301,6 +301,22 @@ def config_metrics(
                 )
                 m["sent_hit_rate"] = round(hit, 3)
                 m["sent_edge_pp"] = round((hit - max(base, 1 - base)) * 100, 1)
+                # The same edge measured on r1 -- strictly *after* the session the
+                # article lands in. r0 is contaminated: an article that reports
+                # "shares fell 8%" makes the direction trivially inferable, so a
+                # high r0 edge can be pure hindsight. r1 is the number that would
+                # matter for prediction, and it is the one event@3's
+                # `price_move_mentioned` exists to let us condition on.
+                base1 = float((subj["r1"] > 0).mean())
+                hit1 = float(
+                    (
+                        (committed["sentiment"].astype(float) > 0)
+                        == (committed["r1"] > 0)
+                    ).mean()
+                )
+                m["r1_pos_base_rate"] = round(base1, 3)
+                m["sent_hit_rate_r1"] = round(hit1, 3)
+                m["sent_edge_r1_pp"] = round((hit1 - max(base1, 1 - base1)) * 100, 1)
             up = subj[subj["direction"] == "up"]["r0"]
             dn = subj[subj["direction"] == "down"]["r0"]
             if len(up) >= 10 and len(dn) >= 10:

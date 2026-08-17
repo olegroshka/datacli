@@ -19,14 +19,31 @@ def test_parse_configs_handles_ollama_tags_and_schema_suffix() -> None:
     cfgs = _parse_configs(
         "qwen2.5-coder:7b, ollama/qwen2.5:7b-instruct:event@2, phi4:14b, llama3.1:8b-instruct-q4_K_M:event"
     )
+    # ':7b' is a model tag, not a schema; a bare tag gains its 'ollama/' prefix
+    # so a local-only run does not refuse it as a paid model.
     assert [(c.model, c.schema_spec) for c in cfgs] == [
-        ("qwen2.5-coder:7b", "event"),  # ':7b' is a model tag, not a schema
+        ("ollama/qwen2.5-coder:7b", "event"),
         ("ollama/qwen2.5:7b-instruct", "event@2"),
-        ("phi4:14b", "event"),
-        ("llama3.1:8b-instruct-q4_K_M", "event"),
+        ("ollama/phi4:14b", "event"),
+        ("ollama/llama3.1:8b-instruct-q4_K_M", "event"),
     ]
+    # ids are unaffected by the prefix, so runs stay comparable across it
     assert cfgs[0].id == "qwen2.5-coder_7b__event"
     assert cfgs[1].id == "qwen2.5_7b-instruct__eventv2"
+
+
+def test_normalize_model_leaves_tiers_and_prefixed_ids_alone() -> None:
+    from llm import tiers
+
+    assert tiers.normalize_model("qwen2.5:14b-instruct-q4_K_M") == (
+        "ollama/qwen2.5:14b-instruct-q4_K_M"
+    )
+    assert tiers.normalize_model("local") == "local"  # tier key
+    assert tiers.normalize_model("gpt-4o-mini") == "gpt-4o-mini"  # no tag
+    assert tiers.normalize_model("openai/gpt-4o-mini") == "openai/gpt-4o-mini"
+    assert tiers.normalize_model("anthropic/claude-sonnet-5") == (
+        "anthropic/claude-sonnet-5"
+    )
 
 
 def _frame(config: str, sentiments, materialities, events, statuses=None, symbols=None):
@@ -115,6 +132,40 @@ def test_config_metrics_signal_detects_monotone_ordering() -> None:
     assert m["mat_absr1_monotone"] == 1.0
     assert m["mat_absr1_spread_bps"] == 30
     assert m["dir_r0_spread_bps"] == 400
+
+
+def test_config_metrics_scores_r0_and_r1_edges_independently() -> None:
+    """A config can be right about the session the news lands in and wrong about
+    the next one. r0 is contaminated by articles that report the move itself, so
+    the two edges are reported separately and must not be conflated."""
+    n = 40
+    sents = [0.6 if i % 2 == 0 else -0.6 for i in range(n)]
+    r0s = [0.02 if i % 2 == 0 else -0.02 for i in range(n)]  # matches sentiment
+    r1s = [-0.02 if i % 2 == 0 else 0.02 for i in range(n)]  # exactly inverted
+    m = bm.config_metrics(
+        _frame("c1", sents, [2] * n, ["earnings"] * n), _reactions(n, r0s, r1s), 40.0
+    )
+    assert m["neutral_share"] == 0.0 and m["sent_coverage"] == 1.0
+    assert m["r0_pos_base_rate"] == 0.5 and m["sent_hit_rate"] == 1.0
+    assert m["sent_edge_pp"] == 50.0
+    assert m["r1_pos_base_rate"] == 0.5 and m["sent_hit_rate_r1"] == 0.0
+    assert m["sent_edge_r1_pp"] == -50.0
+
+
+def test_config_metrics_treats_neutral_as_abstention_not_a_wrong_call() -> None:
+    """Half the calls are neutral; they must be excluded from the hit rate rather
+    than counted as losses, and coverage must show how much was actually called."""
+    n = 60
+    sents = [0.0 if i % 2 == 0 else 0.6 for i in range(n)]
+    r0s = [-0.02 if i % 2 == 0 else 0.02 for i in range(n)]
+    m = bm.config_metrics(
+        _frame("c1", sents, [2] * n, ["earnings"] * n),
+        _reactions(n, r0s, [0.0] * n),
+        60.0,
+    )
+    assert m["neutral_share"] == 0.5 and m["sent_coverage"] == 0.5
+    # every committed call is correct, despite the neutral half moving down
+    assert m["sent_hit_rate"] == 1.0
 
 
 def test_head_to_head_picks_the_config_whose_sign_matches_the_move() -> None:
