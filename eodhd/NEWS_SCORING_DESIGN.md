@@ -477,3 +477,66 @@ declines to name a `horizon` on **41.9 %** of articles against 1.9–3.9 % for t
 instruct models. Those gaps are ~15× and are not conditional on returns, so they
 carry a tiny standard error — unlike the edge numbers, they are solid. The fields
 the extraction exists to produce were the ones being lost.
+
+## 12. What the scored corpus already proves (n=27,490, no GPU needed)
+
+The screening samples are 259 articles, but the incumbent has **27,490 articles**
+already scored under `event@2` on disk. Measuring the schema-fill metrics there
+confirms the small-sample findings and settles what the bench cannot:
+
+| metric | `event@1` (28,516) | `event@2` (27,490) |
+|---|---|---|
+| `other_share` | 33.3 % | **6.9 %** |
+| `horizon` = n_a | 26.1 % | **39.4 %** |
+| `materiality` ≤ 1 | 16.7 % | 39.2 % |
+| distinct `sentiment` values | 23 | 45 |
+
+Two things fall out. The v2 recalibration **worked** on `event_type` (33 % → 7 %
+`other`) and on `materiality`. But it made `horizon` **worse** — 26 % → 39 % of
+articles get no horizon at all, so the "`n_a` only when nothing is price-relevant"
+instruction backfired. `horizon` is now the weakest field in the schema, and v3
+only renames its escape hatch (`n_a` → `unclear`), which will not fix a 39 %
+refusal rate. It needs redesign or removal, tracked as its own item.
+
+### Anchoring is universal, not a model quirk
+
+Sentiment values across all five screened models, same 259 articles:
+
+| config | pos % | neg % | pos:neg | on a named anchor | `other` % | `horizon`=n_a % |
+|---|---|---|---|---|---|---|
+| qwen2.5-coder:7b | 51.2 | 27.5 | 1.86 | 98.8 % | 6.2 | **41.9** |
+| qwen2.5:14b-instruct | 53.1 | 24.4 | 2.17 | 100 % | **0.4** | 3.9 |
+| phi4:14b | 61.8 | 27.0 | 2.29 | 100 % | 0.8 | **1.2** |
+| llama3.1:8b-instruct | 34.1 | 12.2 | 2.81 | 100 % | 4.7 | 5.5 |
+| qwen2.5:7b-instruct | 60.2 | 18.9 | 3.18 | 100 % | 1.2 | 1.9 |
+
+**98.8–100 % of every model's answers land exactly on the seven anchors the
+prompt names.** That is as clean a confirmation as this data can give that naming
+numbers determines the answers, and it is the strongest argument for v3's
+labels-mapped-in-code design: the anchoring is a *schema* defect, so it is
+fixable by the schema and cannot be fixed by swapping models.
+
+### Two things the model does and does not decide
+
+- **It decides schema fill, decisively.** `qwen2.5-coder:7b` emits 6–15× more
+  junk `other` classes and refuses `horizon` 10–35× more often than the instruct
+  models, confirmed at n=27,490. This is the real answer to "why are we using a
+  code model for financial text" — not that its direction is wrong, but that it
+  loses the fields the extraction exists to produce.
+- **It does not decide direction, measurably.** 95.6 % sign agreement, no edge
+  significant at p < 0.18.
+
+### The positive skew caps the achievable edge
+
+Every model skews positive, 1.86:1 to 3.18:1 — and the *incumbent code model is
+the least skewed of the five*, so this is a property of the corpus and prompt, not
+of the model. It also bounds what the sentiment field can deliver: a config that
+says "positive" on 55–62 % of articles, against a market up on 51–54 % of
+sessions, has very little room to beat the majority call. That is consistent with
+every edge measured so far being indistinguishable from the trivial strategy.
+
+The implication is a design one, not a model one: **absolute sentiment is close to
+structurally incapable of directional edge here.** What can carry signal is a
+*relative* framing — surprise against expectation rather than level — which is
+exactly what `expectation_vs_outcome` (beat / in_line / miss) adds in v3, and why
+that field, not the model swap, is the more promising lever.
