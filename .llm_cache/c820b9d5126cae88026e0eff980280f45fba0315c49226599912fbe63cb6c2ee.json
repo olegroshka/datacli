@@ -1,0 +1,1 @@
+{"text": "{\"Purchase\": 1036, \"Quantity\": 18, \"Price\": 139.44, \"Currency\": \"US74340W\"}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2050, "completion_tokens": 42}, "cost_usd": 0.0}

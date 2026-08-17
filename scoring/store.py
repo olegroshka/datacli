@@ -118,8 +118,14 @@ def score_arrow_schema(schema: Schema) -> pa.Schema:
         ("date", pa.date32()),
         ("symbol", pa.string()),
     ]
-    cols += [(f.name, _arrow_type(f)) for f in schema.fields]
-    cols += [(f.name, _arrow_type(f)) for f in schema.symbol_fields]
+    for f in schema.fields:
+        cols.append((f.name, _arrow_type(f)))
+        if f.derived_numeric:
+            cols.append((f.derived_numeric, pa.float64()))
+    for f in schema.symbol_fields:
+        cols.append((f.name, _arrow_type(f)))
+        if f.derived_numeric:
+            cols.append((f.derived_numeric, pa.float64()))
     cols += [
         ("status", pa.string()),
         ("problems", pa.string()),
@@ -181,12 +187,23 @@ def results_to_frame(
     for r in results:
         if r.status == "skipped":
             continue
+        article_cols: dict[str, Any] = {}
+        for f in schema.fields:
+            value = r.article.get(f.name)
+            article_cols[f.name] = value
+            if f.derived_numeric:
+                article_cols[f.derived_numeric] = f.to_number(value)
+        symbol_blanks: dict[str, Any] = {}
+        for f in schema.symbol_fields:
+            symbol_blanks[f.name] = None
+            if f.derived_numeric:
+                symbol_blanks[f.derived_numeric] = None
         base = {
             "article_id": r.article_id,
             "date": r.date,
             "symbol": None,
-            **{f.name: r.article.get(f.name) for f in schema.fields},
-            **{f.name: None for f in schema.symbol_fields},
+            **article_cols,
+            **symbol_blanks,
             "status": r.status,
             "problems": "; ".join(r.problems) if r.problems else (r.error or None),
             "schema": schema.name,
@@ -207,7 +224,10 @@ def results_to_frame(
             row = dict(base)
             row["symbol"] = sym
             for f in schema.symbol_fields:
-                row[f.name] = rec.get(f.name)
+                value = rec.get(f.name)
+                row[f.name] = value
+                if f.derived_numeric:
+                    row[f.derived_numeric] = f.to_number(value)
             rows.append(row)
     cols = [f.name for f in schema_arrow_fields(schema)]
     if not rows:

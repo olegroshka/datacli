@@ -25,6 +25,8 @@ for p in (str(_REPO_ROOT), str(_EODHD)):
         sys.path.insert(0, p)
 
 from scoring import config as cfg_mod  # noqa: E402
+import pandas as pd  # noqa: E402
+from scoring import bench as bench_mod  # noqa: E402
 from scoring import evaluate as ev  # noqa: E402
 from scoring import runner, store  # noqa: E402
 from scoring.backends import BACKENDS, get_backend  # noqa: E402
@@ -151,6 +153,33 @@ def build_parser() -> argparse.ArgumentParser:
         metavar=("BACKEND_A", "BACKEND_B"),
         default=None,
         help="Agreement between two backend ids on the articles both scored",
+    )
+    sp_bench = sub.add_parser(
+        "bench",
+        help="Compare (model x schema) configs on one fixed article sample (validity, calibration, return-signal, head-to-head)",
+    )
+    sp_bench.add_argument(
+        "--configs",
+        required=True,
+        help="Comma list of MODEL[:SCHEMA] (schema defaults to 'event'), e.g. "
+        "'qwen2.5-coder:7b,ollama/qwen2.5:7b-instruct:event@2'",
+    )
+    sp_bench.add_argument(
+        "--n", type=int, default=300, help="Articles in the sample (default 300)"
+    )
+    sp_bench.add_argument(
+        "--days", type=int, default=30, help="Sample from the last N days (default 30)"
+    )
+    sp_bench.add_argument("--seed", type=int, default=7)
+    sp_bench.add_argument("--chunk", type=int, default=25)
+    sp_bench.add_argument(
+        "--run-id", default=None, help="Name for this bench run (default: timestamp)"
+    )
+    sp_bench.add_argument(
+        "--budget-usd",
+        type=float,
+        default=None,
+        help="Allow paid models up to this much",
     )
     sub.add_parser("schemas", help="List available schemas")
     sub.add_parser("backends", help="List backends and the resolved default models")
@@ -370,6 +399,103 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_configs(spec: str) -> list[Any]:
+    """``model[:schema]`` items; a model id may itself contain ':' (ollama tags)."""
+    out = []
+    for raw in spec.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        schema = "event"
+        # a trailing ':event' / ':event@2' / ':event_v2' is the schema
+        if ":" in raw:
+            head, _, tail = raw.rpartition(":")
+            if tail.split("@")[0].split("_v")[0].isalpha() and head:
+                raw, schema = head, tail
+        out.append(bench_mod.Config(model=raw, schema_spec=schema))
+    return out
+
+
+def cmd_bench(args: argparse.Namespace, cfg: cfg_mod.ScoringConfig) -> int:
+    from datetime import datetime, timezone
+
+    import _render  # type: ignore[import-not-found]
+    from rich.text import Text
+
+    console = _console()
+    configs = _parse_configs(args.configs)
+    if len(configs) < 1:
+        console.print("[red]no configs[/red]")
+        return 2
+    if args.budget_usd is not None:
+        cfg = cfg_mod.ScoringConfig(**{**cfg.__dict__, "budget_usd": args.budget_usd})
+
+    con = _connect()
+    since, until = runner.default_window(args.days)
+    console.print(
+        f"[dim]building sample: {args.n} articles from {since}..{until} (seed {args.seed})[/dim]"
+    )
+    items = bench_mod.build_sample(
+        con, n=args.n, since=since, until=until, seed=args.seed
+    )
+    if not items:
+        console.print(
+            "[yellow]no sampleable articles (need universe symbols with prices)[/yellow]"
+        )
+        return 0
+    console.print(
+        f"sample: [bold]{len(items)}[/bold] articles, {sum(len(i.target_symbols) for i in items)} (article, symbol) rows"
+    )
+
+    run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = _data_root() / "news" / "bench" / run_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bench_mod.sample_frame(items).to_parquet(out_dir / "_sample.parquet", index=False)
+    reactions = bench_mod.price_reactions(con, items)
+    console.print(
+        f"[dim]price reactions available for {len(reactions)} (article, symbol) rows[/dim]"
+    )
+
+    results: list[Any] = []
+    for c in configs:
+        console.print(Text(f"\n=== {c.id} ===", style="bold cyan"))
+        try:
+            res = bench_mod.run_config(
+                items,
+                c,
+                cfg=cfg,
+                chunk=args.chunk,
+                on_progress=lambda m: console.print(f"[dim]{m}[/dim]"),
+            )
+        except Exception as exc:
+            console.print(f"[red]{type(exc).__name__}: {exc}[/red]")
+            continue
+        res.metrics = bench_mod.config_metrics(res.frame, reactions, res.seconds)
+        res.frame.to_parquet(out_dir / f"{c.id}.parquet", index=False)
+        results.append(res)
+
+    if not results:
+        console.print("[red]every config failed[/red]")
+        return 1
+
+    card = bench_mod.scorecard(results)
+    card.to_csv(out_dir / "scorecard.csv", index=False)
+    console.print(Text("\nscorecard", style="bold"))
+    console.print(_render.df_table(card, title=f"bench {run_id}"))
+
+    if len(results) > 1:
+        base = results[0]
+        rows = []
+        for other in results[1:]:
+            h = bench_mod.head_to_head(base.frame, other.frame, reactions)
+            rows.append({"a": base.config.id, "b": other.config.id, **h})
+        h2h = pd.DataFrame(rows)
+        h2h.to_csv(out_dir / "head_to_head.csv", index=False)
+        console.print(_render.df_table(h2h, title="head-to-head vs first config"))
+    console.print(f"[dim]written to {out_dir}[/dim]")
+    return 0
+
+
 def cmd_schemas() -> int:
     console = _console()
     for key, s in list_schemas().items():
@@ -410,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status()
     if args.command == "eval":
         return cmd_eval(args)
+    if args.command == "bench":
+        return cmd_bench(args, cfg)
     if args.command == "schemas":
         return cmd_schemas()
     if args.command == "backends":

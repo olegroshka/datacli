@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"US equity indexes mixed amid worsening Iran geopolitics\", \"sentiment\": -0.3, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": true, \"horizon\": \"weeks\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1309, "completion_tokens": 66}, "cost_usd": 0.0}

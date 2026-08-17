@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"supply_chain\", \"summary\": \"Iran says Hormuz deal close amid attack on UAE tanker\", \"sentiment\": -0.3, \"confidence\": 0.8, \"materiality\": 2, \"novelty\": true, \"horizon\": \"weeks\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2048, "completion_tokens": 84}, "cost_usd": 0.0}

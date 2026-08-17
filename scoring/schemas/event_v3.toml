@@ -1,0 +1,134 @@
+# event_v3 -- label-based scales + leakage/surprise fields.
+#
+# Evidence behind each change (measured on 27k event@2 records joined to prices):
+#
+# 1. ASKING FOR NUMBERS DOESN'T WORK. v1 quantised onto +-0.5 (63% of articles);
+#    v2 named seven anchors and 98% of answers landed exactly on them. An LLM
+#    does not produce a calibrated float -- it copies whatever numbers the prompt
+#    names. v3 therefore asks for an ORDINAL LABEL and the code maps it to a
+#    number (`numeric` below), so consumers still read `sentiment` as a float.
+#    Side effect: no more out-of-range or unparseable numerics, and cross-model
+#    comparison becomes label agreement, which is well defined.
+#
+# 2. THE SCORES WERE DESCRIPTIVE, NOT PREDICTIVE. Sentiment sorted the return of
+#    the session the article lands in (r0: -103 bps for negative vs +120 bps for
+#    positive) but barely the next day (r1: -4 vs +45). Much of that is the model
+#    reading a move the article already reports ("shares fell 8% after..."). Two
+#    new fields make that explicit and filterable:
+#      - `price_move_mentioned`: does the text state the price already moved?
+#      - `expectation_vs_outcome`: beat / in_line / miss -- the surprise axis,
+#        which is what should matter *after* the move.
+#
+# 3. WHAT WORKED IS KEPT UNCHANGED. `event_type` (7% `other`, sensible class
+#    means) and `materiality` (monotone in |r1|: 162 -> 286 bps) carry over; only
+#    their answer format changes to labels.
+
+[schema]
+name = "event"
+version = 3
+description = "Label-based event record: ordinal sentiment/materiality/confidence (mapped to numbers in code), plus price-move-already-reported and expectation-vs-outcome so descriptive and predictive rows can be told apart."
+scope = "article+symbol"
+max_symbols = 3
+text = "title+content"
+max_chars = 6000
+
+[prompt]
+system = """You are a meticulous financial news analyst. You read one article and fill a fixed JSON record about it. You never invent facts that are not in the text, you keep summaries short and factual, you only ever use the allowed values, and you answer strictly with one JSON object and nothing else."""
+
+instructions = """Fill the record for the article below.
+
+Rules:
+- Base every value only on the article text. If the text does not support a value, use the neutral option and lower `confidence`.
+- Every field is a LABEL from its allowed list. Never output a number where a label is asked for, and never invent a label.
+- `event_type`: choose the CLOSEST class. Use "index_etf_flow" for market wrap-ups, index moves and fund-flow pieces; "economic_data" for macro releases and central-bank actions; "supply_chain" for suppliers, shortages, tariffs, logistics; "competition" for market-share and rivalry stories; "partnership" for alliances, integrations, joint ventures; "technical_analysis" for chart/price-level commentary; "market_commentary" for opinion about a stock with no new event.
+- `sentiment`: the market-relevant tone for the MAIN SUBJECT. "very_negative" = fraud, bankruptcy, collapse. "negative" = miss, guidance cut, lawsuit lost, downgrade. "slightly_negative" = a soft spot in otherwise routine news. "neutral" = no clear direction or genuinely mixed. "slightly_positive" = a bright spot in routine news. "positive" = beat, raise, approval, upgrade. "very_positive" = transformational deal, blow-out quarter.
+- `materiality`: how much this could move the main subject's price. MOST ARTICLES ARE "none" OR "minor". "none" = no price relevance (listicle, evergreen explainer, incidental mention, wrap-up naming many companies). "minor" = routine PR, small contract, product update, analyst note with no rating change. "meaningful" = earnings roughly in line, guidance reiterated, mid-size deal, rating change. "major" = earnings surprise, guidance change, large M&A, regulatory action, CEO exit, balance-sheet-changing financing.
+- `price_move_mentioned`: true if the article ITSELF reports that the share price already moved (e.g. "shares fell 8%", "the stock jumped after"). This is about the text, not your opinion.
+- `expectation_vs_outcome`: only when the article compares an outcome with an expectation (results vs estimates, guidance vs consensus, a target vs delivery): "beat", "in_line" or "miss". Otherwise "not_applicable".
+- `novelty`: true only if the article reports something new (an event, a number, a decision), not commentary on known facts.
+- `horizon`: over what horizon the reported event matters for the price. Use "unclear" only when the article is not price-relevant at all.
+- `confidence`: how well the text supports the values you gave -- "low", "medium" or "high".
+- Per-symbol fields: judge each listed symbol separately. `role`: subject = the article is about it; peer = mentioned as a competitor/comparison; mentioned = incidental. `direction`: the implication for that symbol's price from this article alone. `relevance`: "primary" = the article is mainly about it, "secondary" = a real but smaller part, "incidental" = a passing mention.
+- Output exactly one JSON object with keys "article" and "symbols" as specified. No prose, no code fences."""
+
+# ---- article-level fields ---------------------------------------------------
+
+[[fields]]
+name = "event_type"
+type = "enum"
+values = ["earnings", "guidance", "m_and_a", "capital_return", "financing", "product", "management", "legal_regulatory", "supply_chain", "competition", "partnership", "economic_data", "macro", "index_etf_flow", "analyst_rating", "technical_analysis", "market_commentary", "other"]
+description = "Primary event class -- the CLOSEST allowed class, never a new one."
+
+[[fields]]
+name = "summary"
+type = "string"
+max_length = 240
+description = "One factual sentence: who did what, with the key number if any."
+
+[[fields]]
+name = "sentiment_label"
+type = "enum"
+values = ["very_negative", "negative", "slightly_negative", "neutral", "slightly_positive", "positive", "very_positive"]
+numeric = { very_negative = -1.0, negative = -0.6, slightly_negative = -0.25, neutral = 0.0, slightly_positive = 0.25, positive = 0.6, very_positive = 1.0 }
+numeric_as = "sentiment"
+description = "Market-relevant tone for the main subject (ordinal label; mapped to a number in `sentiment`)."
+
+[[fields]]
+name = "materiality_label"
+type = "enum"
+values = ["none", "minor", "meaningful", "major"]
+numeric = { none = 0.0, minor = 1.0, meaningful = 2.0, major = 3.0 }
+numeric_as = "materiality"
+description = "Potential price impact for the main subject; most articles are none/minor."
+
+[[fields]]
+name = "price_move_mentioned"
+type = "bool"
+description = "True if the article itself reports that the share price already moved."
+
+[[fields]]
+name = "expectation_vs_outcome"
+type = "enum"
+values = ["beat", "in_line", "miss", "not_applicable"]
+description = "Outcome versus a stated expectation, when the article makes that comparison."
+
+[[fields]]
+name = "novelty"
+type = "bool"
+description = "True if the article reports something new rather than commenting on known facts."
+
+[[fields]]
+name = "horizon"
+type = "enum"
+values = ["intraday", "weeks", "quarters", "years", "unclear"]
+description = "Horizon over which the event matters for the price."
+
+[[fields]]
+name = "confidence_label"
+type = "enum"
+values = ["low", "medium", "high"]
+numeric = { low = 0.3, medium = 0.6, high = 0.9 }
+numeric_as = "confidence"
+description = "How well the text supports the values given."
+
+# ---- per-symbol fields (only for target symbols, <= max_symbols) --------------
+
+[[symbol_fields]]
+name = "role"
+type = "enum"
+values = ["subject", "peer", "mentioned"]
+description = "subject = article is about it; peer = competitor/comparison; mentioned = incidental."
+
+[[symbol_fields]]
+name = "direction"
+type = "enum"
+values = ["up", "down", "neutral", "n_a"]
+description = "Price implication for this symbol from this article alone."
+
+[[symbol_fields]]
+name = "relevance_label"
+type = "enum"
+values = ["primary", "secondary", "incidental"]
+numeric = { primary = 0.9, secondary = 0.5, incidental = 0.15 }
+numeric_as = "relevance"
+description = "How much of the article is about this symbol."

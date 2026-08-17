@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"Tech stocks gained sharply Tuesday afternoon.\", \"sentiment\": 0.6, \"confidence\": 1.0, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1291, "completion_tokens": 83}, "cost_usd": 0.0}

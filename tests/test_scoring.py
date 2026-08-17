@@ -43,11 +43,21 @@ def test_event_schema_loads_and_identifies() -> None:
     assert sch.load_schema("event_v1").key == "event@1"
     latest = sch.load_schema("event")
     assert latest.version >= 2 and latest.name == "event"
-    assert set(EVENT.field_names()) == set(latest.field_names())  # v2 keeps v1's shape
-    assert (
-        "supply_chain"
-        in next(f for f in latest.fields if f.name == "event_type").values
-    )
+    # v2 keeps v1's field names (directly comparable); v3 deliberately moves the
+    # scales to labels and derives the numbers, so it does not.
+    v2 = sch.load_schema("event@2")
+    assert set(EVENT.field_names()) == set(v2.field_names())
+    assert "supply_chain" in next(f for f in v2.fields if f.name == "event_type").values
+    v3 = sch.load_schema("event@3")
+    sent = next(f for f in v3.fields if f.name == "sentiment_label")
+    assert sent.type == "enum" and sent.derived_numeric == "sentiment"
+    assert sent.to_number("very_negative") == -1.0 and sent.to_number("neutral") == 0.0
+    assert {"price_move_mentioned", "expectation_vs_outcome"} <= set(v3.field_names())
+    assert [f.name for f in v3.numeric_fields()] == [
+        "sentiment_label",
+        "materiality_label",
+        "confidence_label",
+    ]
     from scoring.cli import score_view_name
 
     assert score_view_name("event") == "news_scores_event"

@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"Market wrap-up with earnings reports, economic data, and tech events\", \"sentiment\": 0.0, \"confidence\": 0.8, \"materiality\": 0, \"novelty\": false, \"horizon\": \"n_a\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2885, "completion_tokens": 89}, "cost_usd": 0.0}

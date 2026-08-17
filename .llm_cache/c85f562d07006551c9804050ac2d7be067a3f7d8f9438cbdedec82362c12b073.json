@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"The NYSE Energy Sector Index rose 1.6% late Thursday afternoon.\", \"sentiment\": 0.3, \"confidence\": 1.0, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1297, "completion_tokens": 74}, "cost_usd": 0.0}

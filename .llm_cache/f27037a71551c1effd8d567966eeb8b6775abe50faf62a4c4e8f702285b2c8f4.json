@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"earnings\", \"summary\": \"Amazon's earnings lift AI trade sentiment, US stocks rise pre-bell\", \"sentiment\": 0.6, \"confidence\": 0.9, \"materiality\": 2, \"novelty\": true, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1300, "completion_tokens": 71}, "cost_usd": 0.0}

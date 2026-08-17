@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"Pre-market futures up on Iran hopes and Q2 earnings season.\", \"sentiment\": 0.6, \"confidence\": 0.9, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2409, "completion_tokens": 89}, "cost_usd": 0.0}

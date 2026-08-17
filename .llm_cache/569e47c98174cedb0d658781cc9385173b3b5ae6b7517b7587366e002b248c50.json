@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"economic_data\", \"summary\": \"US stock futures rise ahead of key inflation report\", \"sentiment\": 0.3, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"weeks\"}, \"symbols\": {}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1297, "completion_tokens": 82}, "cost_usd": 0.0}

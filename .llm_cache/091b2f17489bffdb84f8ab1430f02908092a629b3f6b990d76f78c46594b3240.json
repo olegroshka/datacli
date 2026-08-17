@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"Energy stocks rose 0.8% as the NYSE Energy Sector Index gained.\", \"sentiment\": 0.3, \"confidence\": 0.8, \"materiality\": 1, \"novelty\": false, \"horizon\": \"intraday\"}}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 1296, "completion_tokens": 75}, "cost_usd": 0.0}

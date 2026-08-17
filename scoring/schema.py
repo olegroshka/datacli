@@ -37,6 +37,26 @@ class Field:
     min: float | None = None
     max: float | None = None
     max_length: int | None = None
+    #: For an enum: ``{member: number}`` plus the derived float column name.
+    #: Lets a schema ask the model for a *label* (which models pick reliably)
+    #: while consumers still get a number -- see event_v3 and the anchor
+    #: quantisation it fixes.
+    numeric: dict[str, float] | None = None
+    numeric_as: str | None = None
+
+    @property
+    def derived_numeric(self) -> str | None:
+        """Name of the float column derived from this enum, if any."""
+        if not self.numeric:
+            return None
+        return self.numeric_as or f"{self.name}_score"
+
+    def to_number(self, value: Any) -> float | None:
+        """Map a coerced enum value to its number (``None`` when unmapped)."""
+        if not self.numeric or value is None:
+            return None
+        v = self.numeric.get(str(value))
+        return None if v is None else float(v)
 
     def spec_line(self) -> str:
         """Human-readable one-liner for the prompt."""
@@ -165,6 +185,13 @@ class Schema:
     def field_names(self) -> list[str]:
         return [f.name for f in self.fields]
 
+    def numeric_fields(self) -> list[Field]:
+        """Article-level enum fields that carry a numeric mapping."""
+        return [f for f in self.fields if f.derived_numeric]
+
+    def numeric_symbol_fields(self) -> list[Field]:
+        return [f for f in self.symbol_fields if f.derived_numeric]
+
     def symbol_field_names(self) -> list[str]:
         return [f.name for f in self.symbol_fields]
 
@@ -283,6 +310,23 @@ def _field(raw: dict[str, Any], where: str) -> Field:
     values = tuple(str(v) for v in raw.get("values", []) or [])
     if ftype == "enum" and not values:
         raise SchemaError(f"{where}: enum field {name!r} needs `values`")
+    numeric = raw.get("numeric")
+    if numeric is not None:
+        if ftype != "enum":
+            raise SchemaError(
+                f"{where}: field {name!r} has `numeric` but is not an enum"
+            )
+        numeric = {str(k): float(v) for k, v in dict(numeric).items()}
+        unknown = set(numeric) - set(values)
+        if unknown:
+            raise SchemaError(
+                f"{where}: field {name!r} `numeric` has non-members {sorted(unknown)}"
+            )
+        missing = set(values) - set(numeric)
+        if missing:
+            raise SchemaError(
+                f"{where}: field {name!r} `numeric` is missing {sorted(missing)}"
+            )
     return Field(
         name=name,
         type=ftype,
@@ -291,6 +335,8 @@ def _field(raw: dict[str, Any], where: str) -> Field:
         min=raw.get("min"),
         max=raw.get("max"),
         max_length=raw.get("max_length"),
+        numeric=numeric,
+        numeric_as=(str(raw["numeric_as"]) if raw.get("numeric_as") else None),
     )
 
 

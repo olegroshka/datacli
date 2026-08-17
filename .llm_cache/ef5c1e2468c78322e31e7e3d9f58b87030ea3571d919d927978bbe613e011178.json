@@ -1,0 +1,1 @@
+{"text": "{\"name\": \"Akre 5,282.55\", \"change\": 0.0, \"percentage_change\": 0.0, \"value\": -3, \"symbol\": \"$\"}", "model": "ollama/qwen2.5-coder:7b", "usage": {"prompt_tokens": 2050, "completion_tokens": 50}, "cost_usd": 0.0}
