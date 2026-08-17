@@ -540,3 +540,56 @@ structurally incapable of directional edge here.** What can carry signal is a
 *relative* framing — surprise against expectation rather than level — which is
 exactly what `expectation_vs_outcome` (beat / in_line / miss) adds in v3, and why
 that field, not the model swap, is the more promising lever.
+
+
+## 13. Decisive run, first config: the edge is contemporaneous only
+
+`qwen2.5:14b-instruct` on `event@2`, **1267 articles / 803 committed rows**
+(SE 1.76 pp). Before reading it, two more corrections to the instrument were
+needed — see the commits — and both moved the answer:
+
+* **The null was measured on the wrong rows.** The hit rate came from the rows the
+  config committed to, but the base rate came from *all* signal rows, including
+  the ones it declined. Selective abstention was therefore rewarded. Fixed, and
+  pinned by a test: a config that only commits on rows that rose used to look
+  like a +50 pp edge and now correctly scores 0 — it has a filter, not skill.
+* **Returns are now also market-adjusted** (`r0_ex`, `r1_ex`), subtracting the
+  exchange's median move over the same interval, because company news is
+  stock-specific and market beta is noise in this test.
+
+| horizon | n | hit | edge | z | p |
+|---|---|---|---|---|---|
+| `r0` publication session | 803 | 0.544 | **+3.7 pp** | 2.12 | 0.034 |
+| `r0_ex` same session, market-adjusted | 803 | 0.538 | **+3.6 pp** | 2.05 | 0.041 |
+| `r1` next session, forward | 803 | 0.560 | **−0.5 pp** | −0.28 | 0.776 |
+| `r1_ex` next session, market-adjusted | 803 | 0.531 | **+0.7 pp** | 0.42 | 0.672 |
+
+**The model reads the session it is in and does not predict the next one.** The
+same-session edge survives market adjustment almost unchanged (+3.7 → +3.6 pp),
+so it is genuinely idiosyncratic — the model really is reading the news, not
+picking up beta. But it does not carry forward at all, on either the raw or the
+adjusted horizon.
+
+Two guards against over-reading this:
+
+* The +5.6 pp forward edge this model showed while screening at n=259 has
+  collapsed to −0.5 pp at n=1267 — exactly what its 3.7 pp screening SE implied.
+  The screening numbers were sampling noise, which is the whole reason the SE
+  machinery was built before the decisive run rather than after.
+* **No subset survives multiple-comparison correction.** Searching by confidence,
+  materiality and event class gives 11 tests per horizon (Bonferroni α ≈ 0.0023);
+  the best nominal hit is `event=earnings` at p = 0.157 on the forward horizon
+  once the null is corrected. An earlier read of "earnings +5.6 pp, p = 0.04" was
+  an artefact of the mis-specified null, not a finding. Confidence does not help
+  either: restricting to `|sentiment| ≥ 0.55` leaves the forward edge at +0.5 pp.
+
+### What this implies for the design
+
+If it holds across the remaining configs, absolute sentiment is not a forward
+signal on this corpus, and no model swap will make it one — consistent with §12's
+positive-skew argument that the field is close to structurally incapable of
+directional edge. The value of the scoring is then **descriptive and as
+features** — `event_type`, `materiality`, issuer attribution, the daily panels —
+rather than as a standalone direction call, and the open question worth testing is
+whether the *relative* fields (`expectation_vs_outcome`, `price_move_mentioned`)
+in `event@3` behave differently. That is the next config in the run.

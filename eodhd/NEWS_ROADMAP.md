@@ -160,8 +160,28 @@ default kind; the manifests now carry a "Live counts" pointer to `status` /
 
 ---
 
+## 6. Price data hygiene (found 2026-08-17, blocks return-based work)
+
+Surfaced while building the market adjustment for `score bench`: the price store
+carries daily returns of **+24,500 %** (US), **+29,900 %** (INDX) and
+**+19,294 %** (LSE), with minima near −99.6 %. These are almost certainly
+unadjusted splits, delisted stubs and bad ticks rather than real moves.
+
+Impact is not confined to the bench. Any equal-weight aggregate over `prices` is
+unusable — the per-exchange daily mean return has sd 0.9–3.9 % and worst-day
+values of 3–16 %, against 0.19–0.40 % for the median. `score bench` works around
+it by using the median as its market proxy, but that is a workaround, not a fix,
+and every future return-based metric will hit the same wall.
+
+- [ ] `qc prices`: flag `|return| > 50 %` bars, per-exchange counts and worst
+      offenders, in the shape of the existing `qc news`
+- [ ] decide the policy — drop, winsorise, or re-fetch the affected symbols — and
+      apply it where returns are computed rather than at each call site
+- [ ] check whether `adjusted_close` is actually split-adjusted for the offenders,
+      since that is the most likely root cause
+
 ## Order and dependencies
 
 1 → 2 (panel first, issuer variant on top) · 3 independent of 1–2 but consumes
 their tables for evaluation · 4 anytime (the post-step piece before 1 lands is
-nicer) · 5 last.
+nicer) · 5 last · 6 before any further return-based evaluation is trusted.
