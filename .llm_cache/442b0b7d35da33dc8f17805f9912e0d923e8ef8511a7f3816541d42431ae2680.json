@@ -1,0 +1,1 @@
+{"text": "{\"article\": {\"event_type\": \"index_etf_flow\", \"summary\": \"Israel \"}}", "model": "ollama/llama3.1:8b-instruct-q4_K_M", "usage": {"prompt_tokens": 2238, "completion_tokens": 25}, "cost_usd": 0.0}

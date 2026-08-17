@@ -1,0 +1,1 @@
+{"text": "{\"time\": \"2026-07-27 11:47:42.716\", \"id\": \"1719\", \"value\": 5}", "model": "ollama/qwen2.5:7b-instruct", "usage": {"prompt_tokens": 2050, "completion_tokens": 49}, "cost_usd": 0.0}

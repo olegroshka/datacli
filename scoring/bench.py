@@ -17,10 +17,18 @@ four axes that need no hand-labelled ground truth:
    descriptive) and ``r1 = close(T+1)/close(T)-1`` (strictly forward). A good
    sentiment orders r0 monotonically; a good materiality orders ``|r1|``.
 4. **head-to-head** -- because every config sees identical articles, we can pair
-   them: how often do two configs agree, and *on the articles where they
-   disagree*, whose sentiment sign matches the realised move? That is a direct
-   accuracy proxy with no gold set and it needs far fewer articles than
-   comparing distributions.
+   them: how often do two configs agree, and *on the articles where both commit
+   to opposite directions*, whose sentiment sign matches the realised move? A
+   direct accuracy proxy with no gold set.
+
+Two traps this module exists to avoid, both found the hard way. **Abstention**: a
+config answering "neutral" on half the corpus looks excellent on return spread
+because it only commits on obvious news, and a naive head-to-head scores its
+silence as defeat (llama3.1-8b: 54% neutral, "lost" 2-47). So ``neutral_share``
+and ``sent_coverage`` sit next to every signal number and abstentions never
+count as losses. **Base rate**: most articles precede a positive move, so
+"always positive" scores well by accident -- hence ``sent_hit_rate`` is reported
+against ``r0_pos_base_rate`` as ``sent_edge_pp``.
 
 Sample and outputs live under ``<data-root>/news/bench/<run>/`` so the real
 score sidecars are never touched.
@@ -48,6 +56,8 @@ log = logging.getLogger("scoring.bench")
 #: Sentiment buckets used for the ordering metric.
 SENT_BUCKETS = [-1.01, -0.45, -0.15, 0.15, 0.45, 1.01]
 SENT_LABELS = ["strong_neg", "mild_neg", "neutral", "mild_pos", "strong_pos"]
+#: |sentiment| at or below this counts as an abstention, not a direction call.
+NEUTRAL_BAND = 0.05
 
 
 @dataclass
@@ -245,6 +255,10 @@ def config_metrics(
     m["sent_distinct"] = int(sent.nunique())
     m["sent_modal_share"] = round(float(sent.value_counts(normalize=True).iloc[0]), 3)
     m["sent_sd"] = round(float(sent.std()), 3)
+    # Abstention rate. A config answering "neutral" on half the corpus is not
+    # comparable to one that commits: its return spread is measured on an easier
+    # subset. Read every signal number next to this and `sent_coverage`.
+    m["neutral_share"] = round(float((sent.abs() <= NEUTRAL_BAND).mean()), 3)
     mat = ok["materiality"].astype(float)
     m["mat_modal_share"] = round(float(mat.value_counts(normalize=True).iloc[0]), 3)
     m["mat_low_share"] = round(float((mat <= 1).mean()), 3)
@@ -271,6 +285,22 @@ def config_metrics(
                 vals = g.reset_index(drop=True)
                 m["sent_r0_monotone"] = _spearman(pd.Series(range(len(vals))), vals)
                 m["sent_r0_spread_bps"] = round(float(g.iloc[-1] - g.iloc[0]))
+            # Directional hit rate among the rows where it commits, against the
+            # base rate of a positive move: a config that always says "positive"
+            # scores the base rate, which is not skill. sent_edge_pp is the gap.
+            committed = subj[subj["sentiment"].astype(float).abs() > NEUTRAL_BAND]
+            m["sent_coverage"] = round(float(len(committed) / max(len(subj), 1)), 3)
+            base = float((subj["r0"] > 0).mean())
+            m["r0_pos_base_rate"] = round(base, 3)
+            if len(committed) >= 30:
+                hit = float(
+                    (
+                        (committed["sentiment"].astype(float) > 0)
+                        == (committed["r0"] > 0)
+                    ).mean()
+                )
+                m["sent_hit_rate"] = round(hit, 3)
+                m["sent_edge_pp"] = round((hit - max(base, 1 - base)) * 100, 1)
             up = subj[subj["direction"] == "up"]["r0"]
             dn = subj[subj["direction"] == "down"]["r0"]
             if len(up) >= 10 and len(dn) >= 10:
@@ -314,25 +344,28 @@ def head_to_head(
     if not reactions.empty:
         r = reactions.groupby("article_id")["r0"].mean()
         cmp_ = both.join(r, how="inner")
-        sign_a = (
-            cmp_["sentiment_a"]
-            .astype(float)
-            .apply(lambda x: 1 if x > 0.05 else (-1 if x < -0.05 else 0))
-        )
-        sign_b = (
-            cmp_["sentiment_b"]
-            .astype(float)
-            .apply(lambda x: 1 if x > 0.05 else (-1 if x < -0.05 else 0))
-        )
+
+        def _sign(x: float) -> int:
+            return 1 if x > NEUTRAL_BAND else (-1 if x < -NEUTRAL_BAND else 0)
+
+        sign_a = cmp_["sentiment_a"].astype(float).apply(_sign)
+        sign_b = cmp_["sentiment_b"].astype(float).apply(_sign)
         real = cmp_["r0"].apply(lambda x: 1 if x > 0 else -1)
-        disagree = sign_a != sign_b
-        out["n_disagree"] = int(disagree.sum())
-        if disagree.sum() >= 20:
-            a_right = ((sign_a == real) & disagree).sum()
-            b_right = ((sign_b == real) & disagree).sum()
+        out["neutral_a"] = round(float((sign_a == 0).mean()), 3)
+        out["neutral_b"] = round(float((sign_b == 0).mean()), 3)
+        out["n_disagree"] = int((sign_a != sign_b).sum())
+        # Only *committed* disagreements decide the head-to-head: if one side
+        # abstains it is not wrong, it is silent, and counting that as a loss
+        # merely measures which config abstains more (llama3.1-8b answered
+        # "neutral" on 54% of a 259-article sample and "lost" 2-47 that way).
+        committed = (sign_a != sign_b) & (sign_a != 0) & (sign_b != 0)
+        out["n_committed_disagree"] = int(committed.sum())
+        if committed.sum() >= 20:
+            a_right = int(((sign_a == real) & committed).sum())
+            b_right = int(((sign_b == real) & committed).sum())
             total = a_right + b_right
-            out["a_wins"] = int(a_right)
-            out["b_wins"] = int(b_right)
+            out["a_wins"] = a_right
+            out["b_wins"] = b_right
             out["a_win_rate"] = round(float(a_right / total), 3) if total else None
     return out
 
