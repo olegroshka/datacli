@@ -147,8 +147,8 @@ def test_config_metrics_scores_r0_and_r1_edges_independently() -> None:
     )
     assert m["neutral_share"] == 0.0 and m["sent_coverage"] == 1.0
     assert m["r0_pos_base_rate"] == 0.5 and m["sent_hit_rate"] == 1.0
-    assert m["sent_edge_pp"] == 50.0
-    assert m["r1_pos_base_rate"] == 0.5 and m["sent_hit_rate_r1"] == 0.0
+    assert m["r0_base_committed"] == 0.5 and m["sent_edge_pp"] == 50.0
+    assert m["r1_base_committed"] == 0.5 and m["sent_hit_rate_r1"] == 0.0
     assert m["sent_edge_r1_pp"] == -50.0
 
 
@@ -166,6 +166,54 @@ def test_config_metrics_treats_neutral_as_abstention_not_a_wrong_call() -> None:
     assert m["neutral_share"] == 0.5 and m["sent_coverage"] == 0.5
     # every committed call is correct, despite the neutral half moving down
     assert m["sent_hit_rate"] == 1.0
+
+
+def test_market_adjusted_horizons_are_scored_when_present_and_skipped_when_not() -> None:
+    """The ``_ex`` columns are optional: older saved reaction frames lack them and
+    must still produce the raw-horizon metrics rather than raising."""
+    n = 100
+    sents = [0.6 if i % 2 == 0 else -0.6 for i in range(n)]
+    r0s = [0.02 if i % 2 == 0 else -0.02 for i in range(n)]
+    frame = _frame("c1", sents, [2] * n, ["earnings"] * n)
+
+    plain = bm.config_metrics(frame, _reactions(n, r0s, r0s), 100.0)
+    assert plain["sent_edge_pp"] == 50.0
+    assert "sent_edge_r1ex_pp" not in plain  # nothing to compute, nothing emitted
+
+    # market-adjusted columns invert the call, so the raw and adjusted edges must
+    # disagree -- proving the _ex horizon is scored on its own column
+    rx = _reactions(n, r0s, r0s)
+    rx["r0_ex"] = [-v for v in r0s]
+    rx["r1_ex"] = [-v for v in r0s]
+    adj = bm.config_metrics(frame, rx, 100.0)
+    assert adj["sent_edge_pp"] == 50.0 and adj["sent_edge_r0ex_pp"] == -50.0
+    assert adj["sent_edge_r1ex_pp"] == -50.0
+    assert adj["sent_edge_r0ex_n"] == n
+
+
+def test_edge_null_is_measured_on_the_rows_the_config_committed_to() -> None:
+    """A config that abstains selectively must not be scored against a base rate
+    drawn from the rows it declined.
+
+    Here the config always calls "positive" and only commits on rows that rose,
+    abstaining on every row that fell. Against the whole sample the up-rate is
+    50%, which would flatter it into a +50pp 'edge'; against the rows it actually
+    committed to the up-rate is 100%, so its true edge is zero -- it has no skill,
+    only a filter.
+    """
+    n = 80
+    sents = [0.6 if i % 2 == 0 else 0.0 for i in range(n)]  # commits only on evens
+    r0s = [0.02 if i % 2 == 0 else -0.02 for i in range(n)]  # evens rose
+    m = bm.config_metrics(
+        _frame("c1", sents, [2] * n, ["earnings"] * n),
+        _reactions(n, r0s, r0s),
+        80.0,
+    )
+    assert m["sent_hit_rate"] == 1.0  # right on every row it called
+    assert m["r0_pos_base_rate"] == 0.5  # ...but the sample-wide rate is 50%
+    assert m["r0_base_committed"] == 1.0  # and its own rows all rose
+    assert m["sent_edge_pp"] == 0.0  # so the edge is zero, not +50pp
+    assert m["sent_coverage"] == 0.5
 
 
 def test_head_to_head_picks_the_config_whose_sign_matches_the_move() -> None:
@@ -220,7 +268,7 @@ def test_config_metrics_carries_the_edge_standard_error() -> None:
         _reactions(n, r0s, [0.01] * n),
         200.0,
     )
-    assert flat["r1_pos_base_rate"] == 1.0
+    assert flat["r1_base_committed"] == 1.0
     assert flat["sent_edge_r1_z"] is None and flat["sent_edge_r1_p"] is None
 
 

@@ -14,7 +14,9 @@ four axes that need no hand-labelled ground truth:
 3. **signal** -- do the labels sort *realised returns*? For each scored symbol
    we take the first trading day ``T >=`` publication and measure
    ``r0 = close(T)/close(T-1)-1`` (the session the news lands in, largely
-   descriptive) and ``r1 = close(T+1)/close(T)-1`` (strictly forward). A good
+   descriptive) and ``r1 = close(T+1)/close(T)-1`` (strictly forward), each also
+   with the exchange's median move subtracted (``r0_ex``, ``r1_ex``) so a stock
+   that merely drifted with the tape does not score as a correct call. A good
    sentiment orders r0 monotonically; a good materiality orders ``|r1|``.
 4. **head-to-head** -- because every config sees identical articles, we can pair
    them: how often do two configs agree, and *on the articles where both commit
@@ -28,7 +30,10 @@ silence as defeat (llama3.1-8b: 54% neutral, "lost" 2-47). So ``neutral_share``
 and ``sent_coverage`` sit next to every signal number and abstentions never
 count as losses. **Base rate**: most articles precede a positive move, so
 "always positive" scores well by accident -- hence ``sent_hit_rate`` is reported
-against ``r0_pos_base_rate`` as ``sent_edge_pp``.
+against the majority-direction rate *on the rows the config committed to*
+(``r0_base_committed``) as ``sent_edge_pp``. ``r0_pos_base_rate`` describes the
+whole sample and is not the null: scoring a config's chosen rows against a base
+rate drawn from rows it declined would reward selective abstention.
 
 Sample and outputs live under ``<data-root>/news/bench/<run>/`` so the real
 score sidecars are never touched.
@@ -188,33 +193,75 @@ def run_config(
 # --------------------------------------------------------------------------- #
 # returns
 # --------------------------------------------------------------------------- #
+#: Minimum stocks behind an exchange's daily mean before it is used as a market
+#: proxy. A "market" of three names is noise, and subtracting it would add more
+#: variance than the beta it removes.
+MIN_MARKET_MEMBERS = 20
+
+
 def price_reactions(con: Any, items: list[Item]) -> pd.DataFrame:
-    """``(symbol, pub_date) -> r0, r1`` for every sampled (article, symbol)."""
+    """``(symbol, pub_date) -> r0, r1, r0_ex, r1_ex`` per sampled (article, symbol).
+
+    ``r0`` spans the session the article lands in, ``r1`` the one after. The
+    ``_ex`` columns subtract the median move of every stock on the same
+    exchange over the same interval, leaving the stock-specific part. Company news
+    is by nature stock-specific, so the market component is noise here: without
+    the adjustment a stock that merely drifted up with the tape counts as a
+    correct call. Left NULL when fewer than ``MIN_MARKET_MEMBERS`` stocks stand
+    behind the mean.
+    """
     rows = [
         {"article_id": it.article_id, "symbol": s, "pub_date": str(it.date)}
         for it in items
         for s in it.target_symbols
     ]
+    cols = ["article_id", "symbol", "r0", "r1", "r0_ex", "r1_ex"]
     if not rows:
-        return pd.DataFrame(columns=["article_id", "symbol", "r0", "r1"])
+        return pd.DataFrame(columns=cols)
     pairs = pd.DataFrame(rows)
     pairs["ticker"] = pairs["symbol"].str.rsplit(".", n=1).str[0].str.upper()
     pairs["exchange"] = pairs["symbol"].str.rsplit(".", n=1).str[-1].str.upper()
     con.register("_bench_pairs", pairs)
-    out = con.execute("""
-        WITH px AS (
+    out = con.execute(f"""
+        WITH bounds AS (
+          SELECT cast(min(pub_date) AS DATE) - 10 AS lo,
+                 cast(max(pub_date) AS DATE) + 10 AS hi FROM _bench_pairs
+        ), px AS (
           SELECT upper(ticker) AS ticker, upper(exchange) AS exchange,
                  cast(date AS DATE) AS d, adjusted_close AS c,
                  lag(adjusted_close) OVER w AS c_prev,
                  lead(adjusted_close) OVER w AS c_next
-          FROM prices WHERE adjusted_close IS NOT NULL
+          FROM prices
+          WHERE adjusted_close IS NOT NULL
+            AND cast(date AS DATE) BETWEEN (SELECT lo FROM bounds)
+                                       AND (SELECT hi FROM bounds)
+            AND upper(exchange) IN (SELECT DISTINCT exchange FROM _bench_pairs)
           WINDOW w AS (PARTITION BY upper(ticker), upper(exchange) ORDER BY cast(date AS DATE))
+        ), mkt AS (
+          -- Market proxy per exchange-session, over the same intervals as r0
+          -- and r1 so the subtraction is like for like. The *median*, not the
+          -- mean: the price store carries extreme bad ticks (daily returns up to
+          -- +24,500% on US and +29,900% on INDX -- unadjusted splits and
+          -- delisted stubs), which wreck an equal-weight mean. Measured over the
+          -- sample window the per-day mean has sd 0.9-3.9% with worst-day values
+          -- of 3-16%, while the median has sd 0.19-0.40%. Subtracting the mean
+          -- *added* variance; the median removes it.
+          SELECT exchange, d, count(*) AS n_mkt,
+                 median(c / c_prev - 1) AS m0, median(c_next / c - 1) AS m1
+          FROM px
+          WHERE c_prev IS NOT NULL AND c_next IS NOT NULL AND c_prev > 0 AND c > 0
+          GROUP BY exchange, d
         )
         SELECT p.article_id, p.symbol,
                px.c / px.c_prev - 1 AS r0,
-               px.c_next / px.c - 1 AS r1
+               px.c_next / px.c - 1 AS r1,
+               CASE WHEN mkt.n_mkt >= {MIN_MARKET_MEMBERS}
+                    THEN (px.c / px.c_prev - 1) - mkt.m0 END AS r0_ex,
+               CASE WHEN mkt.n_mkt >= {MIN_MARKET_MEMBERS}
+                    THEN (px.c_next / px.c - 1) - mkt.m1 END AS r1_ex
         FROM _bench_pairs p
         JOIN px ON px.ticker = p.ticker AND px.exchange = p.exchange
+        LEFT JOIN mkt ON mkt.exchange = px.exchange AND mkt.d = px.d
         WHERE px.d = (SELECT min(x.d) FROM px x
                       WHERE x.ticker = p.ticker AND x.exchange = p.exchange
                         AND x.d >= cast(p.pub_date AS DATE))
@@ -291,37 +338,53 @@ def config_metrics(
             # scores the base rate, which is not skill. sent_edge_pp is the gap.
             committed = subj[subj["sentiment"].astype(float).abs() > NEUTRAL_BAND]
             m["sent_coverage"] = round(float(len(committed) / max(len(subj), 1)), 3)
-            base = float((subj["r0"] > 0).mean())
-            m["r0_pos_base_rate"] = round(base, 3)
+            m["r0_pos_base_rate"] = round(float((subj["r0"] > 0).mean()), 3)
+            m["r1_pos_base_rate_all"] = round(float((subj["r1"] > 0).mean()), 3)
             if len(committed) >= 30:
-                hit = float(
-                    (
-                        (committed["sentiment"].astype(float) > 0)
-                        == (committed["r0"] > 0)
-                    ).mean()
-                )
-                m["sent_hit_rate"] = round(hit, 3)
-                m["sent_edge_pp"] = round((hit - max(base, 1 - base)) * 100, 1)
-                m.update(_edge_stats(hit, max(base, 1 - base), len(committed)))
-                # The same edge measured on r1 -- strictly *after* the session the
-                # article lands in. r0 is contaminated: an article that reports
+                # Four horizons, measured identically. r0 is the session the
+                # article lands in and is contaminated -- an article reporting
                 # "shares fell 8%" makes the direction trivially inferable, so a
-                # high r0 edge can be pure hindsight. r1 is the number that would
-                # matter for prediction, and it is the one event@3's
-                # `price_move_mentioned` exists to let us condition on.
-                base1 = float((subj["r1"] > 0).mean())
-                hit1 = float(
-                    (
-                        (committed["sentiment"].astype(float) > 0)
-                        == (committed["r1"] > 0)
-                    ).mean()
-                )
-                m["r1_pos_base_rate"] = round(base1, 3)
-                m["sent_hit_rate_r1"] = round(hit1, 3)
-                m["sent_edge_r1_pp"] = round((hit1 - max(base1, 1 - base1)) * 100, 1)
-                r1s = _edge_stats(hit1, max(base1, 1 - base1), len(committed))
-                m["sent_edge_r1_z"] = r1s.get("edge_z")
-                m["sent_edge_r1_p"] = r1s.get("edge_p")
+                # high r0 edge can be hindsight. r1 is strictly after publication,
+                # the horizon that would matter for prediction. The *_ex variants
+                # subtract the same-session mean move of the stock's exchange:
+                # news is stock-specific, so market beta is noise in this test,
+                # and a stock that merely rose with the tape should not score as a
+                # hit. `_ex` is therefore the sharpest read available here.
+                for horizon, prefix in (
+                    ("r0", "sent_edge"),
+                    ("r1", "sent_edge_r1"),
+                    ("r0_ex", "sent_edge_r0ex"),
+                    ("r1_ex", "sent_edge_r1ex"),
+                ):
+                    if horizon not in committed.columns:
+                        continue
+                    cm = committed.dropna(subset=[horizon])
+                    if len(cm) < 30:
+                        continue
+                    # The null is evaluated on the *same rows the config committed
+                    # to*: a config that abstains selectively (say, on days the
+                    # market fell) would otherwise be scored against a base rate
+                    # drawn from a population it declined. On 803 rows this moved
+                    # the answer ~1.5pp in opposite directions per horizon.
+                    base = float((cm[horizon] > 0).mean())
+                    null = max(base, 1.0 - base)
+                    hit = float(
+                        (
+                            (cm["sentiment"].astype(float) > 0) == (cm[horizon] > 0)
+                        ).mean()
+                    )
+                    st = _edge_stats(hit, null, len(cm))
+                    m[f"{horizon}_base_committed"] = round(base, 3)
+                    m[f"{prefix}_hit"] = round(hit, 3)
+                    m[f"{prefix}_pp"] = round((hit - null) * 100, 1)
+                    m[f"{prefix}_n"] = int(len(cm))
+                    m[f"{prefix}_z"] = st.get("edge_z")
+                    m[f"{prefix}_p"] = st.get("edge_p")
+                    if horizon == "r0":  # preserve the original metric names
+                        m["sent_hit_rate"] = round(hit, 3)
+                        m.update(_edge_stats(hit, null, len(cm)))
+                    elif horizon == "r1":
+                        m["sent_hit_rate_r1"] = round(hit, 3)
             up = subj[subj["direction"] == "up"]["r0"]
             dn = subj[subj["direction"] == "down"]["r0"]
             if len(up) >= 10 and len(dn) >= 10:
