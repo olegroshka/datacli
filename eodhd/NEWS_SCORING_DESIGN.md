@@ -593,3 +593,93 @@ features** — `event_type`, `materiality`, issuer attribution, the daily panels
 rather than as a standalone direction call, and the open question worth testing is
 whether the *relative* fields (`expectation_vs_outcome`, `price_move_mentioned`)
 in `event@3` behave differently. That is the next config in the run.
+
+## 14. The panel test: direction is dead, magnitude is alive (2026-08-17)
+
+`score bench` asks whether one article's call predicts one stock — the noisiest
+possible framing. `score panel-eval` (new, `scoring/panel_eval.py`) asks the
+question the way the signal would actually be used: aggregate to
+`(date, symbol)`, rank the cross-section within each day, and take a **t over
+days**. Two more measurement defects had to be fixed first, and both had already
+produced a false positive:
+
+* **Ties manufactured a spread.** Ranking with `method="first"` breaks ties by row
+  order — alphabetical by symbol here — and `qcut` then splits one saturated score
+  across several buckets. On the vendor polarity that alone produced **t = 4.87 on
+  a field with no dispersion**. Ties now share a bucket, and a day with fewer than
+  five distinct scores is not ranked at all.
+* **Overlapping windows inflated every multi-day t.** A 20-day forward return
+  computed each day shares 19 days with the next observation, so daily values are
+  strongly autocorrelated. The naive t on the 20-day reversal was 4.01; with
+  Newey–West (Bartlett, lag = horizon − 1) it is **2.12**, which does not survive
+  correction for the eight horizon tests run.
+
+### The vendor's sentiment field is unusable
+
+**49.9 % of rows have `polarity_mean` ≥ 0.99**; the median is 0.9897 and only
+4.6 % are negative. It has no dispersion across the top 70 % of its range, so it
+cannot order a cross-section at all. That retroactively justifies building our own
+scoring, and it means the full-history direction test can only be run on a
+degenerate signal — the flat results below should be read with that caveat.
+
+### Direction: nothing, confirmed three independent ways
+
+| test | sample | forward result |
+|---|---|---|
+| per-article edge (`bench`) | 803 committed rows | −0.5 pp, p = 0.78 |
+| vendor quintile long-short | 2,564 days | +2.0 bps, t = 1.27 |
+| our quintile long-short | 11 days | +67 bps, t = 1.54 |
+
+The only significant direction numbers are **contemporaneous** (`f0_ex`: vendor
+t = 4.46 but monotone 0.0, i.e. one odd bucket rather than an ordering; ours
+t = 2.92, monotone 1.0). Nothing carries to the next session.
+
+### Magnitude: a real forward signal, and it needs the model
+
+`materiality` against the next session's absolute market-adjusted move, on the
+same 15 days, against the free baseline of simply counting articles:
+
+| `materiality` | rows | mean \|f1_ex\| |
+|---|---|---|
+| 0 | 579 | 155.5 bps |
+| 1 | 2,695 | 161.6 bps |
+| 2 | 5,256 | 219.8 bps |
+| 3 | 1,096 | **285.7 bps** |
+
+| signal | spread | t | monotone |
+|---|---|---|---|
+| **LLM `materiality`** | **+130 bps** | **6.14** | **1.0** |
+| article count (free) | +21 bps | −0.29 | 0.7 |
+
+**This is where the scoring earns its cost.** Article counting wins on the
+*same* session (t = 15.25, perfectly monotone over 2,215 days — attention tracks
+today's move) but has nothing forward. The model's materiality judgement does:
+it separates which news is followed by a large move tomorrow, monotonically,
+where counting articles cannot.
+
+Caveat stated plainly: this rests on **15 trading days** in one window. t = 6.14
+survives Bonferroni across the six tests run here, but the sample of *days* is
+small and could be regime-specific. Confirming it is now the concrete reason to
+spend GPU on a wider pass — not "score everything and hope", but "extend a
+t = 6.14 result from 15 days to 90".
+
+### What this changes
+
+The objective moves from **direction to magnitude**. Concretely:
+
+- The target metric for schema iteration is `materiality` → forward `|return|`,
+  not sentiment calibration. `event_v4` should spend its complexity budget on
+  making materiality sharper (it currently uses only 4 levels, with 3 on 10 % of
+  rows) and can afford to simplify sentiment, which is not carrying signal.
+- The deliverable is an **event-driven volatility / materiality feature**, which
+  is a real use (risk, position sizing, options) — not a standalone alpha signal.
+- `sentiment` stays as description and for the contemporaneous read, where it does
+  work.
+
+### Also fixed: the `news_scores_event` alias could shadow the real data
+
+`news_scores_event` resolves to the highest schema *version* present, not the one
+with data. Fourteen stray rows from a one-off `event@3` test were enough to hide
+the 62,006-row v2 dataset, and every downstream verb then reported on the strays —
+which reads as "nothing has been scored" rather than "you are pointed at the wrong
+view". `score eval` and `score panel-eval` now warn and name the larger sibling.

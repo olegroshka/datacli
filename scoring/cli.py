@@ -183,6 +183,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Allow paid models up to this much",
     )
+    sp_panel = sub.add_parser(
+        "panel-eval",
+        help="Cross-sectional and magnitude tests over the whole scored panel "
+        "(direction by quintile, materiality/intensity vs |return|)",
+    )
+    sp_panel.add_argument(
+        "--schema",
+        default="event",
+        help="Schema whose score view to read, or 'vendor' for the free "
+        "polarity baseline over the entire corpus",
+    )
+    sp_panel.add_argument("--backend", default=None)
+    sp_panel.add_argument(
+        "--buckets", type=int, default=5, help="Cross-section buckets (default 5)"
+    )
+    sp_panel.add_argument(
+        "--since", default=None, help="Restrict the panel to dates >= this"
+    )
     sub.add_parser("schemas", help="List available schemas")
     sub.add_parser("backends", help="List backends and the resolved default models")
     return p
@@ -315,6 +333,50 @@ def cmd_status() -> int:
     return 0
 
 
+def warn_if_shadowed(console: Any, con: Any, view: str) -> None:
+    """Warn when a sibling schema version holds far more rows than ``view``.
+
+    ``news_scores_event`` means "the latest version", which is resolved by version
+    number rather than by how much data each holds. A handful of stray rows from a
+    one-off ``event@3`` test is therefore enough to shadow a 62,000-row v2
+    dataset, and every downstream verb then reports on the strays -- which reads
+    as "nothing has been scored" rather than "you are pointed at the wrong view".
+    """
+    import re
+
+    m = re.fullmatch(r"(news_scores_[a-z0-9_]+?)(?:_v(\d+))?", view)
+    if not m:
+        return
+    base = m.group(1)
+    try:
+        here = con.execute(f"SELECT count(*) FROM {view}").fetchone()[0]
+    except Exception:
+        return
+    rows = con.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_name LIKE ?",
+        [f"{base}_v%"],
+    ).fetchall()
+    bigger = []
+    for (name,) in rows:
+        if name == view:
+            continue
+        try:
+            n = con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
+        except Exception:
+            continue
+        if n > max(here * 10, here + 1000):
+            bigger.append((name, n))
+    if not bigger:
+        return
+    best = max(bigger, key=lambda t: t[1])
+    console.print(
+        f"[yellow]{view} has {here:,} rows, but {best[0]} has {best[1]:,}[/yellow]\n"
+        f"[dim]'{view}' resolves to the highest schema version present, not the "
+        f"largest. Pass --schema {best[0].replace('news_scores_', '').replace('_v', '@')} "
+        f"to use it.[/dim]"
+    )
+
+
 def score_view_name(schema_spec: str) -> str:
     """``event`` -> ``news_scores_event`` (latest); ``event@2`` / ``event_v2`` ->
     ``news_scores_event_v2``."""
@@ -349,6 +411,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
             f"{args.schema!r}? try: {PROG} run --run"
         )
         return 0
+    warn_if_shadowed(console, con, view)
     df = ev.load_scores(con, view, backend=args.backend)
     syms = ev.load_symbol_scores(con, view, backend=args.backend)
     if df.empty:
@@ -518,6 +581,86 @@ def cmd_bench(args: argparse.Namespace, cfg: cfg_mod.ScoringConfig) -> int:
     return 0
 
 
+def cmd_panel_eval(args: argparse.Namespace) -> int:
+    """Ask whether the scored panel carries signal the way it would be used.
+
+    ``score bench`` judges one article's call against one stock, which is the
+    noisiest possible framing. This aggregates to ``(date, symbol)`` first, ranks
+    the cross-section, and reports a t over *days* with a Newey-West correction
+    for overlapping horizons.
+    """
+    import _render  # type: ignore[import-not-found]
+
+    from scoring import panel_eval as pev
+
+    console = _console()
+    con = _connect()
+    from scoring.select import has_view
+
+    if args.schema == "vendor":
+        panel = pev.vendor_panel(con, since=args.since)
+        label, score_col, mat_field = "vendor polarity", "score", None
+    else:
+        view = score_view_name(args.schema)
+        if not has_view(con, view):
+            console.print(f"[yellow]no view {view}[/yellow] -- nothing scored yet")
+            return 0
+        warn_if_shadowed(console, con, view)
+        panel = pev.signal_panel(con, view, backend=args.backend)
+        if args.since:
+            panel = panel[panel["date"] >= args.since]
+        label, score_col, mat_field = view, "score_w", "mat_max"
+    if panel.empty:
+        console.print("[yellow]empty panel[/yellow]")
+        return 0
+    console.print(f"[dim]panel: {len(panel):,} (date, symbol) rows from {label}[/dim]")
+
+    joined, report = pev.attach_returns(con, panel)
+    if joined.empty:
+        console.print("[yellow]no panel rows joined to prices[/yellow]")
+        return 0
+    console.print(
+        f"[dim]joined {report['joined_rows']:,} rows "
+        f"({report['match_share']:.0%} of the panel) over "
+        f"{report['n_days']:,} trading days[/dim]"
+    )
+
+    horizons = [f"f{h}_ex" for h in pev.HORIZONS]
+    keys = ("n_days", "nw_lags", "mean_bps", "t", "p", "monotone")
+
+    def _rows(fn: Any, **kw: Any) -> pd.DataFrame:
+        out = []
+        for h in horizons:
+            _, st = fn(joined, horizon=h, **kw)
+            if st:
+                out.append({"horizon": h, **{k: st.get(k) for k in keys}})
+        return pd.DataFrame(out)
+
+    direction = _rows(pev.cross_section, score_col=score_col, n_buckets=args.buckets)
+    if not direction.empty:
+        console.print(
+            _render.df_table(direction, title=f"direction: {score_col} long-short")
+        )
+    if mat_field:
+        mag = _rows(pev.magnitude, field=mat_field)
+        if not mag.empty:
+            console.print(
+                _render.df_table(mag, title=f"magnitude: {mat_field} vs |return|")
+            )
+    inten = _rows(pev.intensity)
+    if not inten.empty:
+        console.print(
+            _render.df_table(inten, title="magnitude: article count vs |return| (free)")
+        )
+    console.print(
+        "[dim]t is over days with a Newey-West correction for overlapping "
+        "horizons; `monotone` is the Spearman of bucket order against outcome. "
+        "Read both -- a significant t with a flat monotone is a single odd bucket, "
+        "not an ordering.[/dim]"
+    )
+    return 0
+
+
 def cmd_schemas() -> int:
     console = _console()
     for key, s in list_schemas().items():
@@ -560,6 +703,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_eval(args)
     if args.command == "bench":
         return cmd_bench(args, cfg)
+    if args.command == "panel-eval":
+        return cmd_panel_eval(args)
     if args.command == "schemas":
         return cmd_schemas()
     if args.command == "backends":
