@@ -430,6 +430,63 @@ def magnitude(
     return table, stats
 
 
+def calibration(
+    df: pd.DataFrame, *, horizon: str = "f1_ex", field: str = "expected_move_max"
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Is a predicted move *size* right, not merely correctly ordered?
+
+    ``expected_move`` is stated in the same units as the thing we measure -- a
+    decimal return -- so unlike ``materiality`` it can be checked against reality
+    directly rather than only ranked. That distinction matters for what the field
+    can be used for:
+
+    * **ordered but miscalibrated** is still useful as a ranking (bucket names are
+      arbitrary, sort by it and pick the top);
+    * **calibrated** is usable as a forecast -- feed it straight into position
+      sizing or an options screen.
+
+    The realised comparison is ``mean |return|``, and the ratio column is what to
+    read. Note the expected floor: even news implying nothing sits on top of a
+    stock's ordinary volatility (~1%/day here), so the ``none`` bucket cannot
+    realise zero. A well-calibrated *upper* bucket is the informative part.
+    """
+    if df.empty or horizon not in df.columns or field not in df.columns:
+        return pd.DataFrame(), {}
+    d = df.dropna(subset=[horizon, field]).copy()
+    if d.empty:
+        return pd.DataFrame(), {}
+    d["abs_ret"] = d[horizon].abs()
+    table = (
+        d.groupby(field, observed=True)
+        .agg(
+            n_rows=("abs_ret", "size"),
+            predicted_bps=(field, lambda s: round(float(s.iloc[0]) * 10000, 1)),
+            realised_bps=("abs_ret", lambda s: round(float(s.mean()) * 10000, 1)),
+            realised_median_bps=("abs_ret", lambda s: round(float(s.median()) * 10000, 1)),
+        )
+        .reset_index(drop=True)
+    )
+    table["ratio"] = [
+        None if not p else round(r / p, 2)
+        for p, r in zip(table["predicted_bps"], table["realised_bps"])
+    ]
+    stats: dict[str, Any] = {"horizon": horizon, "field": field, "n_rows": int(len(d))}
+    if len(table) >= 3:
+        stats["monotone"] = _spearman_int(table["predicted_bps"], table["realised_bps"])
+        # calibration slope over the buckets that predict a non-zero move
+        nz = table[table["predicted_bps"] > 0]
+        if len(nz) >= 2:
+            stats["slope"] = round(
+                float(
+                    (nz["realised_bps"].iloc[-1] - nz["realised_bps"].iloc[0])
+                    / (nz["predicted_bps"].iloc[-1] - nz["predicted_bps"].iloc[0])
+                ),
+                3,
+            )
+            stats["top_bucket_ratio"] = table["ratio"].iloc[-1]
+    return table, stats
+
+
 def intensity(
     df: pd.DataFrame, *, horizon: str = "f1_ex", buckets: tuple[int, ...] = (1, 2, 3, 5)
 ) -> tuple[pd.DataFrame, dict[str, Any]]:

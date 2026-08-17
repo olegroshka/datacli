@@ -652,6 +652,21 @@ def cmd_panel_eval(args: argparse.Namespace) -> int:
             console.print(
                 _render.df_table(mag, title=f"magnitude: {field} vs |return|")
             )
+    # expected_move is in return units, so it can be checked for calibration and
+    # not merely for ordering -- the difference between "usable as a ranking" and
+    # "usable as a forecast".
+    if "expected_move_max" in joined.columns:
+        for h in ("f1_ex", "f5_ex"):
+            cal, cst = pev.calibration(joined, horizon=h, field="expected_move_max")
+            if not cal.empty:
+                console.print(
+                    _render.df_table(
+                        cal,
+                        title=f"calibration: expected_move vs realised |{h}| "
+                        f"(slope {cst.get('slope')}, top-bucket ratio "
+                        f"{cst.get('top_bucket_ratio')})",
+                    )
+                )
     inten = _rows(pev.intensity)
     if not inten.empty:
         console.print(

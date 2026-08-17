@@ -170,3 +170,57 @@ def test_magnitude_accepts_either_materiality_column(field: str) -> None:
     df["mat_mean"] = df["mat_max"]
     table, stats = pe.magnitude(df, horizon="f1_ex", field=field)
     assert not table.empty and stats["monotone"] == 1.0
+
+
+def test_calibration_reads_predicted_against_realised() -> None:
+    """expected_move is stated in return units, so it can be checked against
+    reality rather than only ranked. A field that realises exactly what it
+    predicts must show ratio 1.0 in every bucket."""
+    rows = []
+    buckets = [0.0, 0.005, 0.02, 0.05, 0.10]
+    for d in range(40):
+        for i, b in enumerate(buckets):
+            for k in range(10):
+                rows.append(
+                    {
+                        "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=d),
+                        "symbol": f"S{i}{k}.US",
+                        "expected_move_max": b,
+                        # realises exactly the predicted size, sign alternating
+                        "f1_ex": (1 if k % 2 else -1) * b,
+                    }
+                )
+    df = pd.DataFrame(rows)
+    table, stats = pe.calibration(df, horizon="f1_ex", field="expected_move_max")
+    assert list(table["predicted_bps"]) == [0.0, 50.0, 200.0, 500.0, 1000.0]
+    assert list(table["realised_bps"]) == [0.0, 50.0, 200.0, 500.0, 1000.0]
+    assert [r for r in table["ratio"][1:]] == [1.0, 1.0, 1.0, 1.0]
+    assert stats["monotone"] == 1.0 and stats["slope"] == pytest.approx(1.0)
+    assert stats["top_bucket_ratio"] == 1.0
+
+
+def test_calibration_flags_a_field_that_is_ordered_but_overstated() -> None:
+    """The realistic case: the ordering is right but the sizes are too big. That
+    is still usable as a ranking, and the ratio is what says so."""
+    rows = []
+    for d in range(40):
+        for i, b in enumerate([0.005, 0.02, 0.05]):
+            for k in range(10):
+                rows.append(
+                    {
+                        "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=d),
+                        "symbol": f"S{i}{k}.US",
+                        "expected_move_max": b,
+                        "f1_ex": (1 if k % 2 else -1) * b * 0.4,  # realises 40%
+                    }
+                )
+    _, stats = pe.calibration(pd.DataFrame(rows), field="expected_move_max")
+    assert stats["monotone"] == 1.0  # ordering intact
+    assert stats["slope"] == pytest.approx(0.4, abs=0.01)  # sizes overstated
+    assert stats["top_bucket_ratio"] == pytest.approx(0.4, abs=0.01)
+
+
+def test_calibration_needs_the_field_and_horizon_present() -> None:
+    df = _panel(5, 5, lambda d, s: 0.0, lambda d, s: 0.01)
+    t, s = pe.calibration(df, field="expected_move_max")  # field absent
+    assert t.empty and s == {}
