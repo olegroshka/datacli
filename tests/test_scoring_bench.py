@@ -183,6 +183,70 @@ def test_head_to_head_picks_the_config_whose_sign_matches_the_move() -> None:
     assert h["sent_corr"] == pytest.approx(-1.0)
 
 
+def test_edge_stats_report_se_and_p_against_the_trivial_strategy() -> None:
+    # a 60% hit rate against a 50% base: real at n=1000, noise at n=40
+    strong = bm._edge_stats(0.60, 0.50, 1000)
+    weak = bm._edge_stats(0.60, 0.50, 40)
+    assert strong["edge_se_pp"] == pytest.approx(1.58, abs=0.02)
+    assert strong["edge_z"] > 6 and strong["edge_p"] < 0.001
+    assert weak["edge_se_pp"] == pytest.approx(7.91, abs=0.02)
+    assert weak["edge_z"] < 1.5 and weak["edge_p"] > 0.20
+    # a hit rate equal to the trivial strategy is exactly zero edge
+    flat = bm._edge_stats(0.55, 0.55, 500)
+    assert flat["edge_z"] == 0.0 and flat["edge_p"] == pytest.approx(1.0)
+    assert bm._edge_stats(0.6, 0.5, 0) == {}
+
+
+def test_config_metrics_carries_the_edge_standard_error() -> None:
+    n = 200
+    sents = [0.6 if i % 2 == 0 else -0.6 for i in range(n)]
+    r0s = [0.02 if i % 2 == 0 else -0.02 for i in range(n)]
+    # r1 mixed but orthogonal to sentiment -- each consecutive (+sent, -sent) pair
+    # shares an r1 sign, so the hit rate is exactly 0.5. An edge test is possible
+    # here yet finds nothing, which is the distinction the two horizons exist to
+    # draw: skill on the publication session is not skill on the next one.
+    r1s = [0.01 if (i // 2) % 2 == 0 else -0.01 for i in range(n)]
+    m = bm.config_metrics(
+        _frame("c1", sents, [2] * n, ["earnings"] * n), _reactions(n, r0s, r1s), 200.0
+    )
+    assert m["n_committed"] == n and m["edge_se_pp"] == pytest.approx(3.54, abs=0.02)
+    assert m["sent_hit_rate_r1"] == 0.5
+    assert m["sent_edge_r1_z"] == 0.0 and m["sent_edge_r1_p"] == pytest.approx(1.0)
+
+    # a degenerate base rate (every move the same direction) supports no test at
+    # all, and must yield no number rather than a divide-by-zero or a fake one
+    flat = bm.config_metrics(
+        _frame("c2", sents, [2] * n, ["earnings"] * n),
+        _reactions(n, r0s, [0.01] * n),
+        200.0,
+    )
+    assert flat["r1_pos_base_rate"] == 1.0
+    assert flat["sent_edge_r1_z"] is None and flat["sent_edge_r1_p"] is None
+
+
+def test_paired_sign_test_needs_disagreement_to_have_power() -> None:
+    n = 120
+    r0s = [0.02 if i % 2 == 0 else -0.02 for i in range(n)]
+    reactions = _reactions(n, r0s, r0s)
+    right = [0.6 if i % 2 == 0 else -0.6 for i in range(n)]  # always correct
+    wrong = [-0.6 if i % 2 == 0 else 0.6 for i in range(n)]  # always incorrect
+    a = _frame("a", right, [2] * n, ["earnings"] * n)
+
+    # total disagreement: a sweeps the discordant set, decisively
+    h = bm.paired_sign_test(a, _frame("b", wrong, [2] * n, ["earnings"] * n), reactions)
+    assert h["n_both_committed"] == n and h["sign_agree"] == 0.0
+    assert h["a_only_right"] == n and h["b_only_right"] == 0
+    assert h["n_discordant"] == n and h["mcnemar_p"] < 0.001
+
+    # near-total agreement: the discordant set is too small to conclude anything,
+    # which is the realistic case and must not be reported as a win
+    almost = list(right)
+    almost[0] = -almost[0]
+    h2 = bm.paired_sign_test(a, _frame("b", almost, [2] * n, ["earnings"] * n), reactions)
+    assert h2["sign_agree"] > 0.99 and h2["n_discordant"] == 1
+    assert "mcnemar_p" not in h2  # refuses to test on 1 discordant pair
+
+
 def test_scorecard_one_row_per_config() -> None:
     r1 = bm.BenchResult(
         bm.Config("m1", "event"), pd.DataFrame(), 1.0, {"ok_share": 1.0}

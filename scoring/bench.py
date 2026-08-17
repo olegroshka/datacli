@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -301,6 +302,7 @@ def config_metrics(
                 )
                 m["sent_hit_rate"] = round(hit, 3)
                 m["sent_edge_pp"] = round((hit - max(base, 1 - base)) * 100, 1)
+                m.update(_edge_stats(hit, max(base, 1 - base), len(committed)))
                 # The same edge measured on r1 -- strictly *after* the session the
                 # article lands in. r0 is contaminated: an article that reports
                 # "shares fell 8%" makes the direction trivially inferable, so a
@@ -317,6 +319,9 @@ def config_metrics(
                 m["r1_pos_base_rate"] = round(base1, 3)
                 m["sent_hit_rate_r1"] = round(hit1, 3)
                 m["sent_edge_r1_pp"] = round((hit1 - max(base1, 1 - base1)) * 100, 1)
+                r1s = _edge_stats(hit1, max(base1, 1 - base1), len(committed))
+                m["sent_edge_r1_z"] = r1s.get("edge_z")
+                m["sent_edge_r1_p"] = r1s.get("edge_p")
             up = subj[subj["direction"] == "up"]["r0"]
             dn = subj[subj["direction"] == "down"]["r0"]
             if len(up) >= 10 and len(dn) >= 10:
@@ -330,6 +335,82 @@ def config_metrics(
                 )
                 m["mat_absr1_spread_bps"] = round(float(mg.iloc[-1] - mg.iloc[0]))
     return m
+
+
+def _two_sided_p(z: float) -> float:
+    """Two-sided p-value for a standard-normal z. ``erfc`` makes this exact for
+    the normal, so no scipy dependency is needed for the sample sizes here."""
+    return float(math.erfc(abs(z) / math.sqrt(2.0)))
+
+
+def _edge_stats(hit: float, null: float, n: int) -> dict[str, Any]:
+    """Is a directional hit rate distinguishable from the trivial strategy?
+
+    ``null`` is the rate a config gets for free by always calling the majority
+    direction, so the question is not "is hit > 0.5" but "is hit > null". Returns
+    the standard error in percentage points alongside z and p, because an edge
+    quoted without its SE invites reading noise as a result -- at n=220 the SE is
+    ~3.4pp, which is most of the spread we saw while screening.
+    """
+    if n <= 0 or not 0.0 < null < 1.0:
+        return {}
+    se = math.sqrt(null * (1.0 - null) / n)
+    z = (hit - null) / se if se > 0 else 0.0
+    return {
+        "n_committed": int(n),
+        "edge_se_pp": round(se * 100, 2),
+        "edge_z": round(z, 2),
+        "edge_p": round(_two_sided_p(z), 4),
+    }
+
+
+def paired_sign_test(
+    a: pd.DataFrame, b: pd.DataFrame, reactions: pd.DataFrame, horizon: str = "r1"
+) -> dict[str, Any]:
+    """McNemar test of two configs' directional calls on the same articles.
+
+    Both configs saw the same articles, so the comparison should be paired. Rows
+    where they agree on the sign are concordant -- both right or both wrong -- and
+    carry no information about which is better; only the rows where exactly one is
+    right do, which is precisely McNemar's discordant set.
+
+    The practical catch, and the reason this is worth reporting explicitly: if two
+    configs agree on sign on ~97% of articles, the discordant set is tiny and *no*
+    sample size available here can separate their directional skill. That is a
+    finding about model choice rather than a defect of the test -- when
+    ``sign_agree`` is high, pick on coverage, validity and cost instead.
+    """
+    aa = a[(a["symbol"].isna()) & (a["status"] == "ok")].set_index("article_id")
+    bb = b[(b["symbol"].isna()) & (b["status"] == "ok")].set_index("article_id")
+    both = aa.join(bb, how="inner", lsuffix="_a", rsuffix="_b")
+    out: dict[str, Any] = {"horizon": horizon, "n_both": int(len(both))}
+    if both.empty or reactions.empty or horizon not in reactions.columns:
+        return out
+    r = reactions.groupby("article_id")[horizon].mean()
+    cmp_ = both.join(r, how="inner").dropna(subset=[horizon])
+
+    def _sign(x: float) -> int:
+        return 1 if x > NEUTRAL_BAND else (-1 if x < -NEUTRAL_BAND else 0)
+
+    sign_a = cmp_["sentiment_a"].astype(float).apply(_sign)
+    sign_b = cmp_["sentiment_b"].astype(float).apply(_sign)
+    real = cmp_[horizon].apply(lambda x: 1 if x > 0 else -1)
+    # both must commit for the pair to be informative
+    paired = (sign_a != 0) & (sign_b != 0)
+    out["n_both_committed"] = int(paired.sum())
+    if paired.sum() < 20:
+        return out
+    out["sign_agree"] = round(float((sign_a == sign_b)[paired].mean()), 3)
+    b_only = int(((sign_a == real) & (sign_b != real) & paired).sum())
+    c_only = int(((sign_b == real) & (sign_a != real) & paired).sum())
+    out["a_only_right"] = b_only
+    out["b_only_right"] = c_only
+    out["n_discordant"] = b_only + c_only
+    if b_only + c_only >= 10:
+        z = (b_only - c_only) / math.sqrt(b_only + c_only)
+        out["mcnemar_z"] = round(z, 2)
+        out["mcnemar_p"] = round(_two_sided_p(z), 4)
+    return out
 
 
 def head_to_head(
