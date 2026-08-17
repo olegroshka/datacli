@@ -609,7 +609,7 @@ def cmd_panel_eval(args: argparse.Namespace) -> int:
         panel = pev.signal_panel(con, view, backend=args.backend)
         if args.since:
             panel = panel[panel["date"] >= args.since]
-        label, score_col, mat_field = view, "score_w", "mat_max"
+        label, score_col, mat_field = view, "score_w", None
     if panel.empty:
         console.print("[yellow]empty panel[/yellow]")
         return 0
@@ -641,11 +641,16 @@ def cmd_panel_eval(args: argparse.Namespace) -> int:
         console.print(
             _render.df_table(direction, title=f"direction: {score_col} long-short")
         )
-    if mat_field:
-        mag = _rows(pev.magnitude, field=mat_field)
+    # Every impact field the schema carries, so v4's `expected_move` and the
+    # `materiality` it is meant to beat are shown side by side on identical rows.
+    impact_cols = [
+        f"{f}_max" for f in pev.IMPACT_FIELDS if f"{f}_max" in joined.columns
+    ] or ([mat_field] if mat_field and mat_field in joined.columns else [])
+    for field in impact_cols:
+        mag = _rows(pev.magnitude, field=field)
         if not mag.empty:
             console.print(
-                _render.df_table(mag, title=f"magnitude: {mat_field} vs |return|")
+                _render.df_table(mag, title=f"magnitude: {field} vs |return|")
             )
     inten = _rows(pev.intensity)
     if not inten.empty:

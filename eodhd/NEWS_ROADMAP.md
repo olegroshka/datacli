@@ -88,11 +88,36 @@ classifier, embeddings), categories defined declaratively and changeable
 without touching code, outputs stored as `article_id`-keyed sidecars that never
 mutate the raw corpus.
 
-**Status.** SUBSTRATE BUILT — `llm/` + `scoring/` (see `NEWS_SCORING_DESIGN.md` §8–9);
-next: the 90-day local pass, `score eval`, gold set, embeddings, refresh top-up.
+**Status.** SUBSTRATE BUILT and the objective has **changed on evidence** — see
+`NEWS_SCORING_DESIGN.md` §8–14. The short version:
 
-**Size.** Design ½ day; substrate 2–3 days; first full scoring pass depends on the
-backend/tier chosen (see cost model in the design doc).
+- **Direction does not predict.** Confirmed three independent ways (803 committed
+  article rows, p = 0.78; 2,564 days of the vendor signal, t = 1.27; 11 of our
+  days, t = 1.54). Every significant direction number is *contemporaneous*, and
+  five models agreed on direction 95.6 % of the time, so no model choice fixes it.
+- **Magnitude does predict, and it needs the model.** `materiality` orders the next
+  session's absolute market-adjusted move monotonically across all four levels
+  (155 → 286 bps, spread +130 bps, t = 6.14), while counting a name's articles —
+  free, no model — gets +21 bps and t = −0.29 on the same days. The free baseline
+  wins the *same* session (t = 15.25 over 2,215 days) and nothing forward.
+- **The vendor's sentiment field is unusable**: ≥ 0.99 on 49.9 % of rows, only
+  4.6 % negative. It cannot order a cross-section at all.
+
+So the deliverable is an **event-driven magnitude/volatility feature**, not a
+directional signal. `event_v4` spends its complexity there (`expected_move` in
+buckets of realised move, `materiality` kept alongside for a paired comparison,
+`horizon` with its escape hatch removed, `sentiment` demoted to 5 descriptive
+levels). Model settled on `qwen2.5:14b-instruct` — chosen on schema fill, where
+the differences are large and precisely measured (0.4 % junk classes vs the
+inherited code model's 6.9 %; 3.9 % vs 39.4 % `horizon` refusals), not on edge
+numbers that cannot separate models.
+
+**Next.** The v4 pass over 13,200 articles × 88 days, to (a) test `expected_move`
+against `materiality` paired in the same call and (b) extend the t = 6.14 result
+from 15 days to 88 — the finding the whole redirection rests on. Then embeddings,
+a gold set, and the refresh top-up.
+
+**Size.** Design ½ day; substrate 2–3 days; the v4 pass ~15 h of local GPU.
 
 ## 4. Refresh improvements
 

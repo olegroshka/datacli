@@ -52,6 +52,10 @@ MAX_ABS_MULTIDAY = 2.00
 MIN_MARKET_MEMBERS = 20
 #: Minimum names in a day's cross-section before it can be ranked.
 MIN_CROSS_SECTION = 20
+#: Impact fields a schema may carry, most-preferred first. v2/v3 have
+#: `materiality`; v4 adds `expected_move`, which asks for the realised quantity
+#: directly. Whichever are present get aggregated, so the two can be compared.
+IMPACT_FIELDS = ("expected_move", "materiality")
 #: Minimum distinct score values in a day before ranking means anything. A
 #: saturated field (the vendor polarity is >=0.99 on half its rows) cannot order a
 #: cross-section, and forcing it into buckets invents a spread.
@@ -84,14 +88,24 @@ def signal_panel(
     if role:
         where.append("s.role = ?")
         params.append(role)
+    # Impact fields vary by schema version: v2/v3 have `materiality`, v4 adds
+    # `expected_move`. Pull whichever the view actually has so one panel supports
+    # comparing them, rather than hard-coding the fields of one schema.
+    have = {
+        r[0]
+        for r in con.execute(f"DESCRIBE {view}").fetchall()
+    }
+    impact = [f for f in IMPACT_FIELDS if f in have]
+    extra_sel = "".join(f", any_value({f}) AS {f}" for f in impact)
     df = con.execute(
         f"""
         SELECT cast(s.date AS DATE) AS date, upper(s.symbol) AS symbol,
-               s.article_id, s.sentiment, a.materiality, a.event_type
+               s.article_id, s.sentiment, a.event_type{
+            "".join(f", a.{f}" for f in impact)
+        }
         FROM {view} s
         JOIN (
-            SELECT article_id, any_value(materiality) AS materiality,
-                   any_value(event_type) AS event_type
+            SELECT article_id, any_value(event_type) AS event_type{extra_sel}
             FROM {view} WHERE symbol IS NULL AND status = 'ok'
             GROUP BY article_id
         ) a USING (article_id)
@@ -102,20 +116,29 @@ def signal_panel(
     if df.empty:
         return df
     df["sentiment"] = pd.to_numeric(df["sentiment"], errors="coerce")
-    df["materiality"] = pd.to_numeric(df["materiality"], errors="coerce").fillna(0.0)
+    for f in impact:
+        df[f] = pd.to_numeric(df[f], errors="coerce").fillna(0.0)
     df = df.dropna(subset=["sentiment"])
-    df["w"] = df["materiality"] + 1.0
+    # Weight sentiment by whichever impact field is the schema's primary one, so
+    # `score_w` means the same thing across versions.
+    weight_on = impact[0] if impact else None
+    df["w"] = (df[weight_on] + 1.0) if weight_on else 1.0
     df["sw"] = df["sentiment"] * df["w"]
     g = df.groupby(["date", "symbol"], observed=True)
-    out = pd.DataFrame(
-        {
-            "n_articles": g["article_id"].nunique(),
-            "score": g["sentiment"].mean(),
-            "score_w": g["sw"].sum() / g["w"].sum(),
-            "mat_mean": g["materiality"].mean(),
-            "mat_max": g["materiality"].max(),
-        }
-    ).reset_index()
+    cols = {
+        "n_articles": g["article_id"].nunique(),
+        "score": g["sentiment"].mean(),
+        "score_w": g["sw"].sum() / g["w"].sum(),
+    }
+    for f in impact:
+        # `_max` is the one that matters: a name's day is characterised by its
+        # most impactful article, not by the average of it with routine filings.
+        cols[f"{f}_max"] = g[f].max()
+        cols[f"{f}_mean"] = g[f].mean()
+    out = pd.DataFrame(cols).reset_index()
+    if "materiality_max" in out.columns:  # names the earlier tests and CLI use
+        out["mat_max"] = out["materiality_max"]
+        out["mat_mean"] = out["materiality_mean"]
     out["date"] = pd.to_datetime(out["date"])
     return out
 
