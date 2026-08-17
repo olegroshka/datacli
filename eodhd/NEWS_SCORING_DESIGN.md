@@ -683,3 +683,43 @@ with data. Fourteen stray rows from a one-off `event@3` test were enough to hide
 the 62,006-row v2 dataset, and every downstream verb then reported on the strays —
 which reads as "nothing has been scored" rather than "you are pointed at the wrong
 view". `score eval` and `score panel-eval` now warn and name the larger sibling.
+
+## 15. `event@2` vs `event@3`, paired (1,267 articles, `qwen2.5:14b-instruct`)
+
+The bench was stopped after this config, because the model question was already
+settled on schema fill and its edge numbers cannot separate models. This
+comparison was the one thing still worth the GPU, and it pays off on the axis the
+project now cares about.
+
+| metric | `event@2` (numeric anchors) | `event@3` (ordinal labels) |
+|---|---|---|
+| invalid | 0.1 % | 0.2 % |
+| `other` | 1.0 % | 1.3 % |
+| `horizon` refused | 4.2 % | **8.0 %** |
+| neutral share | 22.1 % | **43.5 %** |
+| sentiment coverage | 0.79 | 0.59 |
+| **materiality → \|r1_ex\| monotone** | 0.4 | **1.0** |
+| **materiality → \|r1_ex\| spread** | 23 bps | **118 bps** |
+| materiality rank corr | 0.058 | 0.084 |
+| sentiment edge, r1_ex | +0.7 pp (p = 0.67) | +2.2 pp (p = 0.28) |
+
+**Labels turn materiality from a noisy field into a perfectly ordered one with 5×
+the spread.** That is the axis that predicts, so it settles the design question:
+v4 keeps v3's label mechanism. The cost is abstention — v3 answers "neutral" on
+43.5 % of articles against v2's 22.1 %, cutting sentiment coverage from 0.79 to
+0.59 — and that trade is acceptable precisely because sentiment is no longer the
+point.
+
+### A correction: the 39 % `horizon` failure was mostly the model, not the schema
+
+Earlier notes (§12, and the first draft of `event_v4`'s header) attributed a 39 %
+`horizon` refusal rate to v2's optional `n_a`. That figure came from the 27k
+corpus, which was scored by the inherited **code** model. On the same schema,
+`qwen2.5:14b` refuses only **4.2 %**. Most of the 39 % belonged to the model.
+
+What the schema does own is smaller and in the opposite direction from v3's
+intent: renaming the hatch to `unclear` **doubled** refusals, 4.2 % → 8.0 %, on
+identical articles with the same model. Renaming an opt-out does not remove the
+incentive to take it — which is why v4 removes it outright rather than renaming it
+again. The conclusion (drop the hatch) survives; the stated reason was overstated
+and is now corrected in both places.

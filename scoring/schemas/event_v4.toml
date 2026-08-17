@@ -36,13 +36,27 @@
 #    Consumers still read `sentiment`, `materiality` and `expected_move` as
 #    floats, and every existing view and metric keeps working.
 #
-# 4. `horizon` WAS THE WORST FIELD AND v2 MADE IT WORSE: 26% -> 39% of articles
-#    got no horizon at all (v1 -> v2), because "use n_a when nothing is price
-#    relevant" is an escape hatch and models take it. v3 only renamed it to
-#    "unclear".
-#    => v4 REMOVES the escape hatch. Three values, always one of them. The
+# 4. `horizon`'s ESCAPE HATCH IS A MODEL AMPLIFIER, NOT A SCHEMA DISASTER. The
+#    27k-article corpus refused a horizon on 39% of articles, but that corpus was
+#    scored by the inherited *code* model: on the same schema, qwen2.5:14b refuses
+#    only 4.2% (1,267 articles). So most of the 39% belonged to the model, not the
+#    field -- an earlier note in this file claimed otherwise and was wrong.
+#    What the schema does own: v3 renamed the hatch "unclear" and refusals
+#    *doubled*, 4.2% -> 8.0%, on identical articles and the same model. Renaming an
+#    opt-out does not remove the incentive to take it.
+#    => v4 REMOVES the hatch. Three values, always one of them. The
 #    not-price-relevant case is already carried by `expected_move = none`, so the
-#    hatch was redundant as well as harmful.
+#    hatch was redundant as well as mildly harmful.
+#
+# 6. v3's LABEL DESIGN IS WHY v4 KEEPS IT, and the evidence is on the axis that
+#    matters. Same model, same 1,267 articles, materiality against the next
+#    session's market-adjusted |move|:
+#        v2 (numeric anchors): monotone 0.4, spread 23 bps, rank corr 0.058
+#        v3 (ordinal labels):  monotone 1.0, spread 118 bps, rank corr 0.084
+#    Labels turned a noisy field into a perfectly ordered one with 5x the spread.
+#    The cost is abstention: v3 answers "neutral" on 43.5% of articles against
+#    v2's 22.1%, so sentiment coverage falls 0.79 -> 0.59. That trade is worth
+#    taking here precisely because sentiment is no longer the point.
 #
 # 5. `summary` is trimmed 240 -> 160 chars. Output tokens set the per-article
 #    latency, and the pass this schema is built for is ~13,500 articles.
