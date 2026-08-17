@@ -634,6 +634,13 @@ The same commands work inside the interactive shell without the
 `stop`, `edit`, `delete`, `reconcile`, and `doctor`; `schedule commands` shows
 the allowlist.
 
+Use `schedule --help` for the lifecycle overview and
+`schedule <operation> --help` for behavior, safety notes, defaults, and complete
+examples. In the interactive shell, tab completion covers every management
+operation and option, known job/draft/profile IDs, draft step actions/indexes,
+filesystem paths, and every allowlisted command family, verb, and supported
+argument.
+
 For an atomic multi-step edit, run `schedule edit <job> --draft`, use
 `schedule step add|remove|replace <draft-id> ...`, inspect it, then
 `schedule enable <draft-id>`. A stale edit draft cannot overwrite a newer job

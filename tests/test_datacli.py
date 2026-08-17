@@ -135,6 +135,53 @@ def test_complete_status_rows_config_source() -> None:
     assert "eodhd" in _completions(app.complete_source("e", "source e", 7, 8))
 
 
+def test_complete_schedule_covers_operations_options_and_allowlist() -> None:
+    from scheduler.cli import SCHEDULE_OPERATIONS
+
+    app = datacli.DataCli()
+    line = "schedule "
+    top = _completions(app.complete_schedule("", line, len(line), len(line)))
+    assert set(SCHEDULE_OPERATIONS) <= top
+    assert {"--repo-root", "--config", "--profile-id", "--json"} <= top
+
+    line = "schedule r"
+    assert _completions(app.complete_schedule("r", line, 9, 10)) == {
+        "reconcile",
+        "resume",
+        "run",
+    }
+    line = "schedule add demo -- eodhd r"
+    start = line.rfind(" ") + 1
+    assert _completions(app.complete_schedule("r", line, start, len(line))) == {
+        "refresh",
+        "reindex",
+    }
+    line = "schedule step a"
+    start = line.rfind(" ") + 1
+    assert _completions(app.complete_schedule("a", line, start, len(line))) == {"add"}
+
+    line = "schedule add demo --w"
+    start = line.rfind(" ") + 1
+    assert _completions(app.complete_schedule("--w", line, start, len(line))) == {
+        "--wake",
+        "--weekly",
+    }
+
+    line = "/schedule r"
+    start = line.rfind(" ") + 1
+    assert _completions(app.complete("r", line, start, len(line))) == {
+        "reconcile",
+        "resume",
+        "run",
+    }
+
+
+def test_interactive_schedule_help_points_to_full_contextual_help() -> None:
+    help_text = datacli.DataCli.do_schedule.__doc__ or ""
+    assert "schedule OPERATION --help" in help_text
+    assert "Tab completion covers every" in help_text
+
+
 def test_argv_parses_string_and_arg_list() -> None:
     assert datacli.DataCli._argv("--fast --run") == ["--fast", "--run"]
 

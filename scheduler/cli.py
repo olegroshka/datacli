@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .backends.windows import WindowsTaskSchedulerBackend
-from .commands import CommandValidationError, ValidationContext, default_registry
+from .commands import (
+    EODHD_KINDS,
+    CommandValidationError,
+    ValidationContext,
+    default_registry,
+)
 from .journal import RunJournal
 from .model import ExecutionPolicy, JobDraft, TriggerSpec
 from .service import ManagementError, ScheduleService
@@ -26,128 +31,799 @@ from .store import (
     _atomic_json,
 )
 
+SCHEDULE_OPERATIONS = (
+    "commands",
+    "profile",
+    "list",
+    "drafts",
+    "add",
+    "create",
+    "step",
+    "enable",
+    "show",
+    "history",
+    "logs",
+    "test",
+    "pause",
+    "resume",
+    "stop",
+    "delete",
+    "reconcile",
+    "discard",
+    "export",
+    "status",
+    "run",
+    "edit",
+    "purge",
+    "doctor",
+)
+SCHEDULE_STEP_OPERATIONS = ("add", "remove", "replace")
+SCHEDULE_GLOBAL_OPTIONS = ("--repo-root", "--config", "--profile-id", "--json")
+SCHEDULE_WEEKDAYS = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+SCHEDULE_OPERATION_OPTIONS: dict[str, tuple[str, ...]] = {
+    "add": (
+        "--display-name",
+        "--timeout",
+        "--daily",
+        "--weekly",
+        "--manual",
+        "--days",
+        "--wake",
+        "--battery",
+        "--",
+    ),
+    "create": (
+        "--display-name",
+        "--timeout",
+        "--daily",
+        "--weekly",
+        "--manual",
+        "--days",
+        "--wake",
+        "--battery",
+    ),
+    "logs": ("--run-id",),
+    "export": ("--output",),
+    "run": ("--wait",),
+    "edit": (
+        "--draft",
+        "--display-name",
+        "--timeout",
+        "--daily",
+        "--weekly",
+        "--manual",
+        "--days",
+        "--wake",
+        "--battery",
+    ),
+    "purge": ("--yes",),
+}
+SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("eodhd", "refresh"): (
+        "us_common",
+        "uk_eu",
+        "us_etf",
+        "index_ref",
+        "uk_eu_etf",
+        "uk_eu_index_ref",
+        "news",
+        "--run",
+        "--fast",
+        "--with-fundamentals",
+        "--no-universe",
+        "--keep-going",
+        "--full-refresh",
+        "--days",
+        "--datasets",
+        "--to",
+        "--limit",
+        "--tickers",
+    ),
+    ("eodhd", "reindex"): (),
+    ("eodhd", "status"): (
+        "us_common",
+        "uk_eu",
+        "us_etf",
+        "index_ref",
+        "uk_eu_etf",
+        "uk_eu_index_ref",
+        "news",
+        "all",
+        "--deep",
+        "--json",
+        "--no-discovery",
+        "--as-of",
+        "--stale-days",
+        "--min-history-days-for-density",
+        "--min-recent-252-rows",
+        "--min-history-density",
+        "--min-recent-volume-window",
+        "--max-zero-volume-ratio",
+        "--max-flags-per-lane",
+        "--no-color",
+        "--color",
+    ),
+    ("eodhd", "qc"): (
+        "us_common",
+        "uk_eu",
+        "us_etf",
+        "index_ref",
+        "uk_eu_etf",
+        "uk_eu_index_ref",
+        "news",
+        "all",
+        "prices",
+        "dividends",
+        "splits",
+        "--all",
+        "--json",
+        "--deep",
+        "--since",
+        "--as-of",
+        "--stale-days",
+        "--no-color",
+        "--color",
+    ),
+    ("macro", "fetch"): ("--run", "--full", "--provider"),
+    ("macro", "status"): (),
+    ("sync", "push"): ("--run", "--keep-going", "--with-caches"),
+    ("sync", "status"): ("--with-caches",),
+}
+SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
+    ("eodhd", "refresh"): (
+        "eodhd refresh [LANE ...] [OPTIONS] --run",
+        "incremental EODHD acquisition; may use paid API quota",
+    ),
+    ("eodhd", "reindex"): (
+        "eodhd reindex",
+        "rebuild local derived indexes without network access",
+    ),
+    ("eodhd", "status"): (
+        "eodhd status [LANE] [OPTIONS]",
+        "read-only EODHD coverage and freshness status",
+    ),
+    ("eodhd", "qc"): (
+        "eodhd qc [LANE] [DATASET] [OPTIONS]",
+        "read-only quality checks over local EODHD data",
+    ),
+    ("macro", "fetch"): (
+        "macro fetch [--provider fred|eodhd|all] [--full] --run",
+        "incremental macro acquisition; requires provider credentials",
+    ),
+    ("macro", "status"): (
+        "macro status",
+        "read-only local macro dataset status",
+    ),
+    ("sync", "push"): (
+        "sync push [--with-caches] [--keep-going] --run",
+        "push-only backup using the configured backend and cached authentication",
+    ),
+    ("sync", "status"): (
+        "sync status [--with-caches]",
+        "read-only backup configuration and manifest status",
+    ),
+}
+
+
+def _help_formatter(prog: str) -> argparse.HelpFormatter:
+    return argparse.RawDescriptionHelpFormatter(prog, max_help_position=32, width=100)
+
+
+def _operation_parser(
+    subparsers: Any,
+    name: str,
+    *,
+    summary: str,
+    description: str,
+    examples: Sequence[str] = (),
+) -> argparse.ArgumentParser:
+    epilog = None
+    if examples:
+        epilog = "examples:\n" + "\n".join(f"  {example}" for example in examples)
+    return subparsers.add_parser(
+        name,
+        help=summary,
+        description=description,
+        epilog=epilog,
+        formatter_class=_help_formatter,
+    )
+
 
 def _trigger_options(parser: argparse.ArgumentParser, *, required: bool) -> None:
     group = parser.add_mutually_exclusive_group(required=required)
-    group.add_argument("--daily", metavar="HH:MM")
-    group.add_argument("--weekly", metavar="HH:MM")
-    group.add_argument("--manual", action="store_true")
-    parser.add_argument("--days", help="comma-separated days for --weekly")
-    parser.add_argument("--wake", action="store_true")
+    group.add_argument(
+        "--daily",
+        metavar="HH:MM",
+        help="run daily at this Windows system-local wall-clock time",
+    )
+    group.add_argument(
+        "--weekly",
+        metavar="HH:MM",
+        help="run weekly at this Windows system-local wall-clock time",
+    )
+    group.add_argument(
+        "--manual",
+        action="store_true",
+        help="install no calendar trigger; dispatch only with `schedule run`",
+    )
     parser.add_argument(
-        "--battery", action="store_true", help="allow starting while on battery"
+        "--days",
+        metavar="DAY[,DAY...]",
+        help="full weekday names for --weekly, for example monday,wednesday",
+    )
+    parser.add_argument(
+        "--wake",
+        action="store_true",
+        help="allow a calendar trigger to wake the computer (default: disabled)",
+    )
+    parser.add_argument(
+        "--battery",
+        action="store_true",
+        help="allow starting on battery (active work is never stopped on transition)",
     )
 
 
 def _management_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="datacli schedule")
-    parser.add_argument("--state-root", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--config", type=Path)
-    parser.add_argument("--profile-id")
-    parser.add_argument("--json", action="store_true")
-    sub = parser.add_subparsers(dest="operation", required=True)
-
-    sub.add_parser("commands", help="List the schedulable command allowlist")
-    sub.add_parser("profile", help="Show the active generated profile identity")
-    sub.add_parser("list", help="List desired jobs and tombstones")
-    sub.add_parser("drafts", help="List non-executable workflow drafts")
-
-    add = sub.add_parser(
-        "add",
-        help="Validate, commit and install a one-step job",
-        epilog="command step: -- <family> <verb> [arguments...]",
+    parser = argparse.ArgumentParser(
+        prog="datacli schedule",
+        description=(
+            "Create and operate recurring datacli workflows backed by Windows Task Scheduler.\n\n"
+            "Datacli keeps desired definitions, Windows observations, and run history as three\n"
+            "independent state planes. Management never performs paid command work. Scheduled\n"
+            "tasks run as the current user with InteractiveToken, so that user must remain logged on."
+        ),
+        epilog=(
+            "common workflows:\n"
+            "  datacli schedule commands\n"
+            "  datacli schedule add morning --daily 06:00 -- eodhd status --no-discovery\n"
+            "  datacli schedule create morning --daily 06:00\n"
+            "  datacli schedule step add morning -- eodhd refresh --fast --run\n"
+            "  datacli schedule enable morning\n"
+            "  datacli schedule status morning\n\n"
+            "Global options must appear before the operation. Use `<operation> --help` for\n"
+            "behavior, safety notes, and examples."
+        ),
+        formatter_class=_help_formatter,
     )
-    add.add_argument("job_id")
-    add.add_argument("--display-name")
-    add.add_argument("--timeout", type=int, default=12 * 60 * 60)
+    parser.add_argument("--state-root", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=Path.cwd(),
+        help="repository bound to the scheduler profile (default: current directory)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="explicit datacli.toml identity (default: REPO_ROOT/datacli.toml)",
+    )
+    parser.add_argument(
+        "--profile-id",
+        help="use an existing generated profile UUID instead of path discovery",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="emit stable structured JSON output"
+    )
+    sub = parser.add_subparsers(
+        dest="operation", required=True, title="operations", metavar="OPERATION"
+    )
+
+    _operation_parser(
+        sub,
+        "commands",
+        summary="List commands admitted for scheduling",
+        description=(
+            "List the allowlisted canonical commands and whether each can mutate data or use\n"
+            "the network. Arbitrary executables and shell strings cannot be scheduled."
+        ),
+        examples=("datacli schedule commands", "datacli schedule --json commands"),
+    )
+    _operation_parser(
+        sub,
+        "profile",
+        summary="Show the active generated profile identity",
+        description=(
+            "Show the profile UUID and its bound repository, interpreter, and config path.\n"
+            "Profile identity is generated and is not inferred from a mutable path."
+        ),
+        examples=("datacli schedule profile",),
+    )
+    _operation_parser(
+        sub,
+        "list",
+        summary="List desired jobs and retained tombstones",
+        description=(
+            "List authoritative desired state for the active profile. Tombstones are retained\n"
+            "after deletion so stale Windows actions cannot become valid again."
+        ),
+        examples=("datacli schedule list",),
+    )
+    _operation_parser(
+        sub,
+        "drafts",
+        summary="List non-executable workflow drafts",
+        description=(
+            "List incomplete or generation-based edit drafts. Drafts cannot run and are not\n"
+            "installed until `schedule enable DRAFT_ID` succeeds."
+        ),
+        examples=("datacli schedule drafts",),
+    )
+
+    add = _operation_parser(
+        sub,
+        "add",
+        summary="Validate and install a one-step job",
+        description=(
+            "Create a one-step job, run static/readiness validation, commit generation 1, and\n"
+            "reconcile it to Windows. Installation performs no paid command work. The command\n"
+            "must follow a literal `--` and must be present in `schedule commands`."
+        ),
+        examples=(
+            "datacli schedule add morning-status --daily 06:00 -- eodhd status --no-discovery",
+            "datacli schedule add manual-qc --manual -- eodhd qc us_common",
+        ),
+    )
+    add.add_argument("job_id", help="lowercase job slug, beginning with a letter")
+    add.add_argument("--display-name", help="human-readable label (default: JOB_ID)")
+    add.add_argument(
+        "--timeout",
+        type=int,
+        default=12 * 60 * 60,
+        metavar="SECONDS",
+        help="runner soft timeout, 60..604800 seconds (default: %(default)s)",
+    )
     _trigger_options(add, required=True)
 
-    create = sub.add_parser("create", help="Create a non-executable workflow draft")
-    create.add_argument("job_id")
-    create.add_argument("--display-name")
-    create.add_argument("--timeout", type=int, default=12 * 60 * 60)
+    create = _operation_parser(
+        sub,
+        "create",
+        summary="Start a non-executable multi-step draft",
+        description=(
+            "Create an empty workflow draft. Add or replace steps with `schedule step`, inspect\n"
+            "it with `schedule show`, then atomically validate/commit/install with `schedule enable`."
+        ),
+        examples=(
+            "datacli schedule create morning --daily 06:00",
+            "datacli schedule step add morning -- eodhd refresh --fast --run",
+            "datacli schedule enable morning",
+        ),
+    )
+    create.add_argument("job_id", help="lowercase job slug, beginning with a letter")
+    create.add_argument("--display-name", help="human-readable label (default: JOB_ID)")
+    create.add_argument(
+        "--timeout",
+        type=int,
+        default=12 * 60 * 60,
+        metavar="SECONDS",
+        help="runner soft timeout, 60..604800 seconds (default: %(default)s)",
+    )
     _trigger_options(create, required=True)
 
-    step = sub.add_parser("step", help="Edit draft workflow steps")
-    step_sub = step.add_subparsers(dest="step_operation", required=True)
-    step_add = step_sub.add_parser(
-        "add", epilog="command step: -- <family> <verb> [arguments...]"
+    step = _operation_parser(
+        sub,
+        "step",
+        summary="Add, remove, or replace draft steps",
+        description=(
+            "Edit only a non-executable draft. Step indexes are one-based. Command arguments\n"
+            "after the literal `--` are validated as an allowlisted canonical command."
+        ),
+        examples=(
+            "datacli schedule step add morning -- eodhd reindex",
+            "datacli schedule step replace morning 1 -- eodhd status --no-discovery",
+            "datacli schedule step remove morning 2",
+        ),
     )
-    step_add.add_argument("draft_id")
-    step_remove = step_sub.add_parser("remove")
-    step_remove.add_argument("draft_id")
-    step_remove.add_argument("index", type=int)
-    step_replace = step_sub.add_parser(
-        "replace", epilog="replacement step: -- <family> <verb> [arguments...]"
+    step_sub = step.add_subparsers(
+        dest="step_operation", required=True, title="step operations", metavar="ACTION"
     )
-    step_replace.add_argument("draft_id")
-    step_replace.add_argument("index", type=int)
+    step_add = _operation_parser(
+        step_sub,
+        "add",
+        summary="Append one allowlisted command",
+        description="Append a validated command to the end of a non-executable draft.",
+        examples=("datacli schedule step add morning -- eodhd refresh --fast --run",),
+    )
+    step_add.add_argument(
+        "draft_id", help="draft identifier shown by `schedule drafts`"
+    )
+    step_remove = _operation_parser(
+        step_sub,
+        "remove",
+        summary="Remove one indexed step",
+        description="Remove a one-based step index from a non-executable draft.",
+        examples=("datacli schedule step remove morning 2",),
+    )
+    step_remove.add_argument(
+        "draft_id", help="draft identifier shown by `schedule drafts`"
+    )
+    step_remove.add_argument("index", type=int, help="one-based step index")
+    step_replace = _operation_parser(
+        step_sub,
+        "replace",
+        summary="Replace one indexed step",
+        description="Replace a one-based draft step with one validated allowlisted command.",
+        examples=(
+            "datacli schedule step replace morning 1 -- eodhd status --no-discovery",
+        ),
+    )
+    step_replace.add_argument(
+        "draft_id", help="draft identifier shown by `schedule drafts`"
+    )
+    step_replace.add_argument("index", type=int, help="one-based step index")
 
-    operation_help = {
-        "enable": "Finalise a draft and reconcile it to Windows",
-        "show": "Show one exact desired definition or draft",
-        "history": "Show datacli run records",
-        "logs": "Show a redacted run log",
-        "test": "Run now in the foreground through the shared runner",
-        "pause": "Disable future dispatches without stopping an active run",
-        "resume": "Enable future dispatches",
-        "stop": "Request cancellation; descendant confirmation may be unknown",
-        "delete": "Tombstone desired state and remove the Windows task",
-        "reconcile": "Explicitly repair desired/backend drift",
-        "discard": "Discard a non-executable draft",
-        "export": "Export a non-secret desired definition",
+    operation_docs = {
+        "enable": (
+            "Validate, commit, and install a draft",
+            "Finalise a non-empty draft in one desired-state commit, then install the exact generation in Windows. If backend installation fails, committed desired state remains visible for explicit reconciliation.",
+            ("datacli schedule enable morning",),
+        ),
+        "show": (
+            "Show one exact desired definition or draft",
+            "Show the active immutable JobSpec for JOB_OR_DRAFT, falling back to a draft with that identifier. Definitions contain no credentials or opaque shell strings.",
+            ("datacli schedule show morning",),
+        ),
+        "history": (
+            "Show durable datacli run records",
+            "List reconstructed runner records for JOB_ID. This is datacli execution history, not Windows trigger history.",
+            ("datacli schedule history morning",),
+        ),
+        "logs": (
+            "Show one redacted runner log",
+            "Print the selected run log. Without --run-id, print the newest retained run. Logs are presentation; typed RunRecord outcomes remain authoritative.",
+            (
+                "datacli schedule logs morning",
+                "datacli schedule logs morning --run-id RUN_ID",
+            ),
+        ),
+        "test": (
+            "Execute immediately in the foreground",
+            "Run the stored exact generation through the shared runner in the current terminal. Unlike `schedule run`, this returns the actual RunRecord and does not ask Windows to dispatch.",
+            ("datacli schedule test morning",),
+        ),
+        "pause": (
+            "Disable future Windows dispatches",
+            "Commit a disabled generation and reconcile it to Windows. Pausing does not cancel an already active run; use `schedule stop` separately.",
+            ("datacli schedule pause morning",),
+        ),
+        "resume": (
+            "Enable future Windows dispatches",
+            "Revalidate readiness, commit an enabled generation, and reconcile it to Windows. This does not run the job immediately.",
+            ("datacli schedule resume morning",),
+        ),
+        "stop": (
+            "Request cancellation of the Windows task",
+            "Ask Task Scheduler to end the active task. Acceptance is not proof that every descendant stopped; confirmation remains unknown unless independently established.",
+            ("datacli schedule stop morning",),
+        ),
+        "delete": (
+            "Tombstone desired state and remove the task",
+            "Refuse deletion while datacli has a non-terminal run, then write a new tombstone generation and remove the Windows task. Run history and referenced snapshots are retained; use `purge --yes` separately to remove terminal history.",
+            ("datacli schedule delete morning",),
+        ),
+        "reconcile": (
+            "Explicitly repair desired/backend drift",
+            "Install the current desired generation, or remove the Windows task for a tombstone. Status and doctor never perform this repair implicitly.",
+            ("datacli schedule reconcile morning",),
+        ),
+        "discard": (
+            "Discard a non-executable draft",
+            "Remove only DRAFT_ID. Desired jobs, installed tasks, snapshots, and run history are unchanged.",
+            ("datacli schedule discard morning",),
+        ),
+        "export": (
+            "Export a non-secret desired definition",
+            "Write or print the current immutable JobSpec in export format. Exports contain command arguments and paths but never credentials by contract.",
+            ("datacli schedule export morning --output morning.json",),
+        ),
     }
-    for name in (
-        "enable",
-        "show",
-        "history",
-        "logs",
-        "test",
-        "pause",
-        "resume",
-        "stop",
-        "delete",
-        "reconcile",
-        "discard",
-        "export",
-    ):
-        item = sub.add_parser(name, help=operation_help[name])
-        item.add_argument("job_id")
+    for name, (summary, description, examples) in operation_docs.items():
+        item = _operation_parser(
+            sub,
+            name,
+            summary=summary,
+            description=description,
+            examples=examples,
+        )
+        noun = "draft identifier" if name in {"enable", "discard"} else "job identifier"
+        item.add_argument("job_id", help=noun)
         if name == "logs":
-            item.add_argument("--run-id")
+            item.add_argument(
+                "--run-id", help="exact retained run identifier (default: newest run)"
+            )
         if name == "export":
-            item.add_argument("--output", type=Path)
+            item.add_argument(
+                "--output",
+                type=Path,
+                metavar="PATH",
+                help="write atomically to PATH instead of standard output",
+            )
 
-    status = sub.add_parser("status", help="Read all three state planes without repair")
-    status.add_argument("job_id", nargs="?")
-
-    run = sub.add_parser(
-        "run", help="Ask Windows to dispatch; acceptance is not completion"
+    status = _operation_parser(
+        sub,
+        "status",
+        summary="Read all three state planes without repair",
+        description=(
+            "Report desired state, locale-neutral Windows observation, and latest datacli run\n"
+            "independently. Missing evidence stays unknown. This command never installs, edits,\n"
+            "runs, or repairs a task. With no JOB_ID, report every desired job/tombstone."
+        ),
+        examples=("datacli schedule status", "datacli schedule status morning"),
     )
-    run.add_argument("job_id")
-    run.add_argument("--wait", nargs="?", const=30.0, type=float)
+    status.add_argument("job_id", nargs="?", help="job identifier (default: all jobs)")
 
-    edit = sub.add_parser("edit", help="Commit and reconcile one new generation")
-    edit.add_argument("job_id")
+    run = _operation_parser(
+        sub,
+        "run",
+        summary="Ask Windows to dispatch an installed job",
+        description=(
+            "Request an immediate Task Scheduler dispatch. A successful receipt proves only that\n"
+            "Windows accepted the request. --wait polls for one unambiguous new datacli RunRecord;\n"
+            "a correlation timeout is not reported as job failure."
+        ),
+        examples=(
+            "datacli schedule run morning",
+            "datacli schedule run morning --wait",
+            "datacli schedule run morning --wait 60",
+        ),
+    )
+    run.add_argument("job_id", help="installed active job identifier")
+    run.add_argument(
+        "--wait",
+        nargs="?",
+        const=30.0,
+        type=float,
+        metavar="SECONDS",
+        help="wait for a correlated new run (implicit value: 30 seconds)",
+    )
+
+    edit = _operation_parser(
+        sub,
+        "edit",
+        summary="Create and reconcile one new job generation",
+        description=(
+            "Change display, timeout, trigger, or power settings immediately, or use --draft to\n"
+            "start an atomic multi-step edit. A draft records its base generation and cannot\n"
+            "overwrite a newer concurrent generation."
+        ),
+        examples=(
+            "datacli schedule edit morning --daily 07:00",
+            "datacli schedule edit morning --timeout 7200",
+            "datacli schedule edit morning --draft",
+        ),
+    )
+    edit.add_argument("job_id", help="active job identifier")
     edit.add_argument(
         "--draft",
         action="store_true",
         help="Create a generation-based edit draft for step changes",
     )
-    edit.add_argument("--display-name")
-    edit.add_argument("--timeout", type=int)
+    edit.add_argument("--display-name", help="new human-readable label")
+    edit.add_argument(
+        "--timeout",
+        type=int,
+        metavar="SECONDS",
+        help="new runner soft timeout, 60..604800 seconds",
+    )
     _trigger_options(edit, required=False)
 
-    purge = sub.add_parser(
-        "purge", help="Irreversibly remove retained terminal history"
+    purge = _operation_parser(
+        sub,
+        "purge",
+        summary="Irreversibly remove retained terminal history",
+        description=(
+            "Delete retained terminal run directories for a tombstoned job and then remove only\n"
+            "unreferenced snapshots. This is irreversible, requires prior `schedule delete`, and\n"
+            "requires --yes. It never removes an active job or Windows task."
+        ),
+        examples=("datacli schedule purge retired-job --yes",),
     )
-    purge.add_argument("job_id")
-    purge.add_argument("--yes", action="store_true")
+    purge.add_argument("job_id", help="tombstoned job identifier")
+    purge.add_argument(
+        "--yes", action="store_true", help="confirm irreversible history removal"
+    )
 
-    doctor = sub.add_parser("doctor", help="Read-only runtime and drift diagnostics")
-    doctor.add_argument("job_id", nargs="?")
+    doctor = _operation_parser(
+        sub,
+        "doctor",
+        summary="Run read-only runtime and drift diagnostics",
+        description=(
+            "Check profile paths, interpreter/config availability, backend observations, and\n"
+            "reconciliation findings without repairing anything. With no JOB_ID, inspect all jobs."
+        ),
+        examples=("datacli schedule doctor", "datacli schedule doctor morning"),
+    )
+    doctor.add_argument("job_id", nargs="?", help="job identifier (default: all jobs)")
     return parser
+
+
+def _profile_completion_ids(state_root: Path | None) -> tuple[str, ...]:
+    try:
+        return tuple(
+            profile.profile_id for profile in ProfileRegistry(state_root).list()
+        )
+    except (OSError, StoreError, ValueError):
+        return ()
+
+
+def _completion_inventory(
+    *,
+    repo_root: Path,
+    config_path: Path | None,
+    state_root: Path | None,
+    profile_id: str | None,
+) -> dict[str, Any]:
+    empty: dict[str, Any] = {
+        "active": (),
+        "all_jobs": (),
+        "tombstones": (),
+        "drafts": (),
+        "step_counts": {},
+    }
+    try:
+        profiles = ProfileRegistry(state_root)
+        profile = (
+            profiles.get(profile_id)
+            if profile_id
+            else profiles.find(
+                repo_root.resolve(), config_path.resolve() if config_path else None
+            )
+        )
+        if profile is None:
+            return empty
+        store = JobStore(profile, profiles.state_root)
+        active: list[str] = []
+        all_jobs: list[str] = []
+        tombstones: list[str] = []
+        for item in store.list(include_tombstones=True):
+            all_jobs.append(item.job_id)
+            if getattr(item, "state", None) == "tombstone":
+                tombstones.append(item.job_id)
+            else:
+                active.append(item.job_id)
+        drafts = store.list_drafts()
+        return {
+            "active": tuple(active),
+            "all_jobs": tuple(all_jobs),
+            "tombstones": tuple(tombstones),
+            "drafts": tuple(draft.draft_id for draft in drafts),
+            "step_counts": {draft.draft_id: len(draft.steps) for draft in drafts},
+        }
+    except (OSError, StoreError, ValueError):
+        return empty
+
+
+def _argument_after(words: Sequence[str], option: str) -> str | None:
+    try:
+        index = len(words) - 1 - list(reversed(words)).index(option)
+    except ValueError:
+        return None
+    if index + 1 >= len(words):
+        return None
+    value = words[index + 1]
+    return value if value and not value.startswith("-") else None
+
+
+def _command_completion_candidates(words: Sequence[str]) -> tuple[str, ...]:
+    capabilities = default_registry().list_capabilities()
+    families = tuple(sorted({capability.family for capability in capabilities}))
+    if not words or not words[0] or words[0] not in families:
+        return families
+    family = words[0]
+    verbs = tuple(
+        capability.verb for capability in capabilities if capability.family == family
+    )
+    if len(words) == 1 or not words[1] or words[1] not in verbs:
+        return verbs
+    verb = words[1]
+    previous = words[-2] if len(words) >= 2 else None
+    if previous == "--provider":
+        return ("fred", "eodhd", "all")
+    if previous == "--datasets":
+        return tuple(sorted({*EODHD_KINDS}))
+    return SCHEDULE_COMMAND_COMPLETIONS.get((family, verb), ())
+
+
+def schedule_completion_candidates(
+    words: Sequence[str],
+    *,
+    repo_root: Path | None = None,
+    config_path: Path | None = None,
+    state_root: Path | None = None,
+) -> tuple[str, ...]:
+    """Return context-aware cmd2 candidates for arguments after ``schedule``.
+
+    ``words`` includes the token currently being completed. Completion is
+    deliberately read-only and returns an empty dynamic inventory when profile
+    state is unavailable or corrupt.
+    """
+
+    tokens = list(words) or [""]
+    previous = tokens[-2] if len(tokens) >= 2 else None
+    if previous == "--profile-id":
+        return _profile_completion_ids(state_root)
+
+    operation_index = next(
+        (index for index, token in enumerate(tokens) if token in SCHEDULE_OPERATIONS),
+        None,
+    )
+    if operation_index is None:
+        return ("--help", *SCHEDULE_GLOBAL_OPTIONS, *SCHEDULE_OPERATIONS)
+
+    operation = tokens[operation_index]
+    operation_words = tokens[operation_index + 1 :]
+    previous = operation_words[-2] if len(operation_words) >= 2 else None
+
+    if previous == "--days":
+        return SCHEDULE_WEEKDAYS
+    if previous in {"--daily", "--weekly"}:
+        return ("06:00", "09:00", "18:00")
+    if previous == "--timeout":
+        return ("3600", "7200", "43200")
+    if previous == "--wait":
+        return ("30", "60", "120")
+
+    profile_id = _argument_after(tokens[: operation_index + 1], "--profile-id")
+    completed_globals = tokens[: operation_index + 1]
+    selected_repo = _argument_after(completed_globals, "--repo-root")
+    selected_config = _argument_after(completed_globals, "--config")
+    repo = (
+        Path(selected_repo).expanduser() if selected_repo else repo_root or Path.cwd()
+    )
+    config = (
+        Path(selected_config).expanduser()
+        if selected_config
+        else config_path or repo / "datacli.toml"
+    )
+    inventory = _completion_inventory(
+        repo_root=repo,
+        config_path=config,
+        state_root=state_root,
+        profile_id=profile_id,
+    )
+    options = ("--help", *SCHEDULE_OPERATION_OPTIONS.get(operation, ()))
+
+    if operation == "step":
+        if not operation_words or operation_words[0] not in SCHEDULE_STEP_OPERATIONS:
+            return ("--help", *SCHEDULE_STEP_OPERATIONS)
+        action = operation_words[0]
+        action_words = operation_words[1:]
+        if "--" in action_words:
+            separator = action_words.index("--")
+            return _command_completion_candidates(action_words[separator + 1 :])
+        if not action_words or len(action_words) == 1:
+            return ("--help", *inventory["drafts"])
+        if action in {"remove", "replace"} and len(action_words) == 2:
+            count = inventory["step_counts"].get(action_words[0], 0)
+            return tuple(str(index) for index in range(1, count + 1))
+        if action in {"add", "replace"}:
+            return ("--help", "--")
+        return ("--help",)
+
+    if operation == "add" and "--" in operation_words:
+        separator = operation_words.index("--")
+        return _command_completion_candidates(operation_words[separator + 1 :])
+
+    if operation in {"add", "create"}:
+        return options
+    if operation in {"enable", "discard"}:
+        return (*options, *inventory["drafts"])
+    if operation == "show":
+        return (*options, *inventory["all_jobs"], *inventory["drafts"])
+    if operation == "purge":
+        return (*options, *inventory["tombstones"])
+    if operation in {"status", "history", "logs", "delete", "doctor"}:
+        return (*options, *inventory["all_jobs"])
+    if operation in {"commands", "profile", "list", "drafts"}:
+        return options
+    return (*options, *inventory["active"])
 
 
 def _trigger(
@@ -266,6 +942,12 @@ def main(
             [
                 {
                     "command": capability.identity,
+                    "usage": SCHEDULE_COMMAND_HELP[
+                        (capability.family, capability.verb)
+                    ][0],
+                    "summary": SCHEDULE_COMMAND_HELP[
+                        (capability.family, capability.verb)
+                    ][1],
                     "class": capability.classification,
                     "mutation": capability.mutation,
                     "network": capability.network,

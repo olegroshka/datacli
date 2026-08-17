@@ -4,7 +4,7 @@ title: Scheduler implementation work packages
 status: STABLE
 owner: Oleg Roshka
 last_reviewed: 2026-08-17
-version: 1.2
+version: 1.3
 sources:
   - KB-001
   - KB-002
@@ -161,8 +161,12 @@ with the latter part of WP-03. WP-05 depends on both.
 - Candidate modules: `scheduler/cli.py`, a thin `do_schedule` delegate in
   `datacli.py`.
 - Status: implemented and verified through the documented draft lifecycle with
-  a fake backend.
-- Oracle: parser tests, completion tests and management lifecycle integration.
+  a fake backend. Every operation has contextual behavior/safety/default/example
+  help. Completion covers parser operations/options, dynamic state identifiers,
+  step actions/indexes, paths and all registry families/verbs/arguments from
+  shared metadata.
+- Oracle: rendered-help tests, parser/completion/registry parity tests,
+  contextual cmd2 completion tests and management lifecycle integration.
 
 ### WP-06 - end-to-end verification and operation
 
@@ -175,8 +179,8 @@ with the latter part of WP-03. WP-05 depends on both.
 - Verify reboot/kill recovery marks abandoned work without automatically
   repeating paid operations.
 - Add user documentation and upgrade/remove guidance.
-- Status: automated verification is complete: the scheduler suite passes 29
-  tests and the full repository suite passes 419 tests on Windows using
+- Status: automated verification is complete: the scheduler suite passes 33
+  tests and the full repository suite passes 425 tests on Windows using
   repository-local temporary roots. The authorised real-task lifecycle passed
   with one read-only, no-network command and secret-free single-action XML. No
   paid/network/credential/Drive effect was used. Disruptive environment matrices

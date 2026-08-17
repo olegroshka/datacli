@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -18,7 +19,17 @@ from scheduler.backends.windows import (
     WindowsTaskSchedulerBackend,
     build_task_xml,
 )
+from scheduler.cli import (
+    SCHEDULE_COMMAND_COMPLETIONS,
+    SCHEDULE_COMMAND_HELP,
+    SCHEDULE_OPERATION_OPTIONS,
+    SCHEDULE_OPERATIONS,
+    _management_parser,
+)
 from scheduler.cli import main as schedule_main
+from scheduler.cli import (
+    schedule_completion_candidates,
+)
 from scheduler.commands import (
     CommandValidationError,
     ExecutionContext,
@@ -849,3 +860,154 @@ def test_documented_cli_draft_grammar_with_fake_backend(tmp_path: Path, capsys) 
     )
     output = capsys.readouterr().out
     assert '"state": "in_sync"' in output
+
+
+def test_scheduler_help_explains_workflows_safety_and_defaults(capsys) -> None:
+    with pytest.raises(SystemExit) as top_exit:
+        schedule_main(["--help"])
+    assert top_exit.value.code == 0
+    top = capsys.readouterr().out
+    assert "three\nindependent state planes" in top
+    assert "Global options must appear before the operation" in top
+    assert "datacli schedule step add morning -- eodhd refresh --fast --run" in top
+
+    with pytest.raises(SystemExit) as add_exit:
+        schedule_main(["add", "--help"])
+    assert add_exit.value.code == 0
+    add = capsys.readouterr().out
+    assert "literal `--`" in add
+    assert "60..604800 seconds" in add
+    assert "Windows system-local wall-clock time" in add
+    assert "Installation performs no paid command work" in add
+
+    with pytest.raises(SystemExit) as run_exit:
+        schedule_main(["run", "--help"])
+    assert run_exit.value.code == 0
+    run = capsys.readouterr().out
+    assert "accepted the request" in run
+    assert "implicit value: 30 seconds" in run
+
+    with pytest.raises(SystemExit) as purge_exit:
+        schedule_main(["purge", "--help"])
+    assert purge_exit.value.code == 0
+    purge = capsys.readouterr().out
+    assert "irreversible" in purge
+    assert "requires --yes" in purge
+
+    assert schedule_main(["commands"]) == 0
+    commands = capsys.readouterr().out
+    assert "eodhd refresh [LANE ...] [OPTIONS] --run" in commands
+    assert "may use paid API quota" in commands
+    assert "push-only backup" in commands
+
+
+def test_every_scheduler_parser_surface_has_descriptive_help() -> None:
+    parser = _management_parser()
+
+    def inspect(current: argparse.ArgumentParser) -> None:
+        for action in current._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for child in action.choices.values():
+                    assert child.description
+                    inspect(child)
+                continue
+            if action.dest == "help" or action.help is argparse.SUPPRESS:
+                continue
+            assert action.help, f"missing help for {current.prog}: {action.dest}"
+
+    inspect(parser)
+    operations = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    assert tuple(operations.choices) == SCHEDULE_OPERATIONS
+    for name, child in operations.choices.items():
+        parser_options = {
+            option
+            for action in child._actions
+            for option in action.option_strings
+            if option not in {"-h", "--help"}
+        }
+        completed_options = set(SCHEDULE_OPERATION_OPTIONS.get(name, ())) - {"--"}
+        assert parser_options == completed_options
+
+
+def test_scheduler_completion_covers_registry_and_command_values() -> None:
+    registry_keys = {
+        (capability.family, capability.verb)
+        for capability in default_registry().list_capabilities()
+    }
+    assert set(SCHEDULE_COMMAND_COMPLETIONS) == registry_keys
+    assert set(SCHEDULE_COMMAND_HELP) == registry_keys
+    assert set(SCHEDULE_OPERATIONS) <= set(schedule_completion_candidates([""]))
+    assert schedule_completion_candidates(["step", ""]) == (
+        "--help",
+        "add",
+        "remove",
+        "replace",
+    )
+    assert set(schedule_completion_candidates(["add", "demo", "--", ""])) == {
+        "eodhd",
+        "macro",
+        "sync",
+    }
+    assert set(schedule_completion_candidates(["add", "demo", "--", "eodhd", "r"])) == {
+        "refresh",
+        "reindex",
+        "status",
+        "qc",
+    }
+    assert schedule_completion_candidates(
+        ["add", "demo", "--", "macro", "fetch", "--provider", ""]
+    ) == ("fred", "eodhd", "all")
+    assert schedule_completion_candidates(["create", "demo", "--days", ""]) == (
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    )
+
+
+def test_scheduler_completion_reads_job_draft_and_step_ids(tmp_path: Path) -> None:
+    profiles, profile, store, context, _, _ = _store(tmp_path, job_id="active-job")
+    command = default_registry().validate("eodhd", "reindex", [], context).spec
+    store.put_draft(
+        JobDraft(
+            draft_id="draft-job",
+            profile_id=profile.profile_id,
+            job_id="draft-job",
+            display_name="Draft",
+            trigger=TriggerSpec.manual(),
+            steps=(command, command),
+        )
+    )
+    common = {
+        "repo_root": REPO,
+        "config_path": Path(profile.config_path),
+        "state_root": profiles.state_root,
+    }
+    assert "active-job" in schedule_completion_candidates(["run", ""], **common)
+    assert "active-job" in schedule_completion_candidates(
+        [
+            "--repo-root",
+            str(REPO),
+            "--config",
+            str(profile.config_path),
+            "run",
+            "",
+        ],
+        repo_root=tmp_path / "wrong-repo",
+        config_path=tmp_path / "wrong.toml",
+        state_root=profiles.state_root,
+    )
+    assert "draft-job" in schedule_completion_candidates(["enable", ""], **common)
+    assert profile.profile_id in schedule_completion_candidates(
+        ["--profile-id", ""], state_root=profiles.state_root
+    )
+    assert schedule_completion_candidates(
+        ["step", "remove", "draft-job", ""], **common
+    ) == ("1", "2")

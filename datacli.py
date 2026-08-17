@@ -356,7 +356,17 @@ class DataCli(cmd2.Cmd):
         macro_cli.main(self._argv(statement))
 
     def do_schedule(self, statement: object) -> None:
-        """Manage recurring jobs: schedule commands | add | create | list | status"""
+        """Manage recurring Windows jobs through one safe datacli runner.
+
+        Start with `schedule commands` to see the allowlist. Use `schedule add`
+        for one step, or `schedule create` -> `schedule step add` ->
+        `schedule enable` for a workflow. `schedule status` keeps desired state,
+        Windows observation, and datacli run history separate.
+
+        Run `schedule --help` or `schedule OPERATION --help` for complete syntax,
+        safety behavior, defaults, and examples. Tab completion covers every
+        operation, option, known job/draft, and allowlisted family/verb.
+        """
         from scheduler import cli as scheduler_cli
 
         scheduler_cli.main(self._argv(statement))
@@ -565,40 +575,19 @@ class DataCli(cmd2.Cmd):
         )
 
     def complete_schedule(self, text: str, line: str, begidx: int, endidx: int) -> Any:
-        return self._by_position(
-            text,
-            line,
-            begidx,
-            endidx,
-            {
-                1: (
-                    "commands",
-                    "profile",
-                    "list",
-                    "drafts",
-                    "show",
-                    "status",
-                    "add",
-                    "create",
-                    "step",
-                    "enable",
-                    "history",
-                    "logs",
-                    "test",
-                    "run",
-                    "pause",
-                    "resume",
-                    "stop",
-                    "edit",
-                    "delete",
-                    "reconcile",
-                    "discard",
-                    "purge",
-                    "doctor",
-                    "export",
-                )
-            },
+        from scheduler import cli as scheduler_cli
+
+        tokens, _ = self.tokens_for_completion(line, begidx, endidx)
+        words = list(tokens[1:])
+        previous = words[-2] if len(words) >= 2 else None
+        if previous in {"--repo-root", "--config", "--output"}:
+            return self.path_complete(text, line, begidx, endidx)
+        candidates = scheduler_cli.schedule_completion_candidates(
+            words,
+            repo_root=_HERE,
+            config_path=_HERE / "datacli.toml",
         )
+        return self.basic_complete(text, line, begidx, endidx, candidates)
 
     def complete_lab(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         pos = self._arg_pos(line, begidx, endidx)

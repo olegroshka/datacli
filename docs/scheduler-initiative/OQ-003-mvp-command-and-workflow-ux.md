@@ -6,7 +6,7 @@ question_state: RESOLVED
 owner: Oleg Roshka
 last_reviewed: 2026-08-17
 target_resolution: 2026-08-24
-version: 1.0
+version: 1.1
 sources:
   - KB-001
   - INV-002
@@ -160,3 +160,13 @@ The verbs have deliberately distinct semantics:
 Resolved by owner authorization on 2026-08-17: adopt the recommended core and
 optional command set, explicit `create -> step add -> enable` workflow, and the
 listed management surface. This is accepted through ADR-003.
+
+## Implementation evidence
+
+Every operation now renders contextual `--help` with behavior, safety
+boundaries, defaults and examples. `schedule commands` includes canonical usage
+and effect summaries for every admitted family/verb. The cmd2 completer shares
+the parser operation/option and registry capability metadata, and adds
+read-only completion for profiles, jobs, tombstones, drafts, step indexes,
+paths, trigger values and allowlisted command arguments. Parity tests fail if a
+parser operation/option or registry capability is omitted from completion.
