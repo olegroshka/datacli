@@ -334,3 +334,114 @@ news_scores_event_v1 JOIN news_scores_event_v2 USING (article_id)`).
 
 Next: eval at scale when the pass lands (`score eval`, v1-vs-v2 join); embedding
 pass; gold set; the daily top-up as a `refresh` post-step.
+
+## 11. Choosing model and schema by measurement (`score bench`, 2026-08-17)
+
+The v2 pass above was stopped mid-flight on a fair challenge: the incumbent model
+was `ollama/qwen2.5-coder:7b` — a **code** model, inherited by accident. The
+`local` tier in `llm/tiers.py` was picked for the lab's SQL generation, and
+scoring resolved the same tier without anyone choosing it for financial text.
+Rather than swap on intuition, `scoring/bench.py` + `score bench` compare
+`(model × schema)` configs on **one fixed article sample**, so every difference
+is the config and not the draw.
+
+### What the bench measures
+
+Four axes, because the cheap ones do not predict the one that matters:
+
+1. **Validity** — `invalid_share`, `other_share`, `s_per_item`. Can it fill the
+   schema at all, and how fast.
+2. **Calibration** — `sent_distinct`, `sent_sd`, `mat_low_share`,
+   `horizon_na_share`. Does it use the range, or park on one value.
+3. **Return signal** — does `sentiment` order the realised move, does
+   `materiality` order its magnitude. No ground truth needed.
+4. **Head-to-head** — on articles where two configs point *opposite ways*,
+   whose sign matches the move.
+
+### Two metric traps, both of which produced a wrong answer first
+
+These are worth recording because each one inverted a conclusion I had already
+drawn, and neither was visible in the model outputs themselves.
+
+**Trap 1 — scoring an abstention as a loss.** `llama3.1:8b` showed the best raw
+return spread (388 bps) yet "lost" its head-to-head 2–47. It answers *neutral*
+on 53.7 % of articles; those were being counted as wrong calls, and there was no
+base-rate comparison to beat. Fixed with a `NEUTRAL_BAND` (|sentiment| ≤ 0.05 is
+an abstention, not a call), `sent_coverage`, head-to-head restricted to
+*committed* disagreements, and a hit rate stated against `r0_pos_base_rate` as
+`sent_edge_pp`. Recomputing from the saved parquets reversed the round-1 verdict.
+
+**Trap 2 — measuring the contaminated horizon.** The edge was computed only on
+`r0`, the session the article lands in. But an article that says "shares fell
+8 %" makes the direction trivially inferable — a high `r0` edge can be hindsight
+rather than skill. Adding the same edge on `r1` (strictly *after* publication)
+reordered the candidates rather than confirming them, so reporting one horizon
+alone was again enough to pick the wrong model.
+
+A corollary worth keeping: **calibration quality and directional skill are
+largely independent.** `phi4:14b` is the best-behaved config on every cheap axis
+— 0 % invalid, 0.8 % `other`, 1.2 % `horizon=n_a`, abstains least (86 %
+coverage) — and still lands mid-pack on the contemporaneous edge. A model can
+follow the schema beautifully and have no view worth anything. This is precisely
+why the bench carries the return axis at all.
+
+### Screening rounds (259 articles, all on `event@2`, same draw)
+
+| config | s/item | invalid | other | neutral | coverage | edge r0 (pp) | edge r1 (pp) |
+|---|---|---|---|---|---|---|---|
+| qwen2.5-coder:7b *(incumbent)* | 0.91 | 0.4 % | 6.2 % | 21 % | 0.77 | **−1.0** | **+3.3** |
+| qwen2.5:7b-instruct | 2.23 | 0 % | 1.2 % | 21 % | 0.75 | **+5.1** | **+1.5** |
+| llama3.1:8b-instruct | 2.15 | 1.5 % | 4.7 % | 54 % | 0.41 | **−2.4** | **+1.7** |
+| qwen2.5:14b-instruct | 3.71 | 0.4 % | 0.4 % | 23 % | 0.76 | **+5.9** | **+5.6** |
+| phi4:14b | 4.24 | 0 % | 0.8 % | 11 % | 0.86 | **+0.9** | **+7.1** |
+
+Reading this honestly: at n≈220 committed rows the standard error on an edge is
+~3.4 pp, so **none of these separations is significant on its own**. The
+screening earns two things only — the incumbent code model is the *only* config
+negative on the contemporaneous edge (the user's instinct was right), and
+`llama3.1`'s 41 % coverage disqualifies it regardless of edge, since it throws
+away half the corpus. Head-to-head is uninformative at this size: with
+abstentions correctly excluded there are just 1–7 committed sign disagreements
+per pair, i.e. the models differ mainly in *when they abstain*, not in direction.
+Materiality→|r1| is likewise noise here (monotone −0.8…+0.4) despite being clean
+on 27k rows — a reminder that these screens cannot resolve the finer fields.
+
+### The decisive run
+
+One paired run over **1267 articles** (a 1500 request, capped by the
+price-availability filter; ~1260 committed rows → SE ≈ 1.4 pp, so a 5 pp edge is
+~3.5 SE) covering the model and schema questions together:
+
+```
+score bench --n 1500 --days 30 --seed 7 --run-id decisive --configs \
+  'qwen2.5:14b-instruct-q4_K_M:event@2,qwen2.5:14b-instruct-q4_K_M:event@3,\
+   phi4:14b:event@2,phi4:14b:event@3,\
+   qwen2.5:7b-instruct:event@2,qwen2.5-coder:7b:event@2'
+```
+
+Both 14b finalists are run against **both** schemas so the model effect and the
+schema effect are separable, with the incumbent kept as a control — if it is
+genuinely worse, the ~30k rows already scored under it need redoing, and that is
+a decision the control has to earn. Each config's parquet is written as it
+completes, so a late failure costs only the tail.
+
+**Decision rule, fixed before reading the results:** pick on `edge_r1` (the
+predictive horizon) subject to `sent_coverage ≥ 0.6`, break ties by `s/item`,
+and treat a schema as winning only if it improves *both* 14b models — a gain on
+one is a model×schema interaction, not a schema improvement.
+
+### `event_v3` — the schema under test
+
+v2's own recalibration exposed the general failure: **an LLM copies whatever
+numbers the prompt names.** v1 quantised at ±0.5; v2 named seven anchors and
+98 % of answers landed exactly on them. Naming better numbers cannot fix this, so
+v3 stops naming numbers at all — the model emits **ordinal labels** and code maps
+them to floats via `numeric` / `numeric_as` in the TOML. Because `numeric_as`
+reuses the old names, `sentiment` and `materiality` remain floats downstream and
+every existing view, metric and query keeps working unchanged; the labels arrive
+alongside as `sentiment_label` / `materiality_label`.
+
+v3 also adds the two fields the r0/r1 split argued for:
+`price_move_mentioned` (bool) to flag exactly the articles that make `r0`
+hindsight, and `expectation_vs_outcome` (beat / in_line / miss / not_applicable)
+to separate surprise from level — the thing that should carry *forward*.
