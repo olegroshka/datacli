@@ -494,6 +494,26 @@ def cmd_bench(args: argparse.Namespace, cfg: cfg_mod.ScoringConfig) -> int:
         h2h = pd.DataFrame(rows)
         h2h.to_csv(out_dir / "head_to_head.csv", index=False)
         console.print(_render.df_table(h2h, title="head-to-head vs first config"))
+
+        # Every pair, paired McNemar on both horizons. Read `sign_agree` first:
+        # when it is high the configs make the same directional calls and the
+        # test cannot separate them, whatever the win counts look like.
+        prows = []
+        for i, ra in enumerate(results):
+            for rb in results[i + 1 :]:
+                for horizon in ("r0", "r1"):
+                    prows.append(
+                        {
+                            "a": ra.config.id,
+                            "b": rb.config.id,
+                            **bench_mod.paired_sign_test(
+                                ra.frame, rb.frame, reactions, horizon=horizon
+                            ),
+                        }
+                    )
+        paired = pd.DataFrame(prows)
+        paired.to_csv(out_dir / "paired_sign_test.csv", index=False)
+        console.print(_render.df_table(paired, title="paired sign test (McNemar)"))
     console.print(f"[dim]written to {out_dir}[/dim]")
     return 0
 

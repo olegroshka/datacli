@@ -445,3 +445,35 @@ v3 also adds the two fields the r0/r1 split argued for:
 `price_move_mentioned` (bool) to flag exactly the articles that make `r0`
 hindsight, and `expectation_vs_outcome` (beat / in_line / miss / not_applicable)
 to separate surprise from level — the thing that should carry *forward*.
+
+### Amendment to the decision rule (recorded before the decisive results landed)
+
+Re-running the screening parquets through the new `paired_sign_test` surfaced the
+number that governs this whole comparison: on the articles where both configs
+commit, `qwen2.5-coder:7b` and `qwen2.5:7b-instruct` **agree on the direction
+95.6 % of the time** (7 discordant pairs out of 159). And every edge p-value in
+the screening table is > 0.18 — *none* of those edges was distinguishable from
+always calling the majority direction.
+
+Two consequences, stated now so the decisive run cannot be read opportunistically:
+
+1. **Directional skill may simply not be separable between these models.** If
+   sign agreement stays ~95 % at n=1267, the discordant set is ~35 pairs and no
+   sample available on this hardware resolves it. That is a real answer, not a
+   failed measurement: it says model choice is close to irrelevant *for
+   direction*.
+2. **So the decision rule needs its tie-break made explicit.** If no config's
+   `edge_r1` is significant at p < 0.05, fall through to the axes that *are*
+   measured precisely, in order: `invalid_share` + `other_share` (does it fill
+   the schema), `horizon_na_share` (does it answer the fields at all),
+   `sent_coverage`, then `s/item`.
+
+That fallback already points somewhere on the screening data, and it is the
+sharper answer to "why are we using a code model for financial text". The
+indictment is not that `qwen2.5-coder:7b` picks the wrong direction — that is
+unmeasurable here. It is that the code model **fills the schema far worse**:
+6.2 % invented/`other` event classes against 0.4 % for `qwen2.5:14b`, and it
+declines to name a `horizon` on **41.9 %** of articles against 1.9–3.9 % for the
+instruct models. Those gaps are ~15× and are not conditional on returns, so they
+carry a tiny standard error — unlike the edge numbers, they are solid. The fields
+the extraction exists to produce were the ones being lost.
