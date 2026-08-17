@@ -275,9 +275,19 @@ def price_reactions(con: Any, items: list[Item]) -> pd.DataFrame:
 # metrics
 # --------------------------------------------------------------------------- #
 def _spearman(a: pd.Series, b: pd.Series) -> float:
+    """Rank correlation, or ``nan`` when one side cannot be ranked.
+
+    A constant series has no ranking, so its correlation is undefined rather than
+    zero -- returning 0.0 there would read as "measured, no relationship" when the
+    truth is "the field never varied", which is a different and more interesting
+    fact about a config.
+    """
     if len(a) < 3:
-        return 0.0
-    return round(float(a.rank().corr(b.rank())), 3)
+        return float("nan")
+    ra, rb = pd.Series(a).rank(), pd.Series(b).rank()
+    if ra.nunique() < 2 or rb.nunique() < 2:
+        return float("nan")
+    return round(float(ra.corr(rb)), 3)
 
 
 def config_metrics(
@@ -389,14 +399,43 @@ def config_metrics(
             dn = subj[subj["direction"] == "down"]["r0"]
             if len(up) >= 10 and len(dn) >= 10:
                 m["dir_r0_spread_bps"] = round(float((up.mean() - dn.mean()) * 10000))
-            mg = subj.groupby(subj["materiality"].astype(int), observed=True)[
-                "r1"
-            ].apply(lambda s: s.abs().mean() * 10000)
-            if len(mg) >= 3:
-                m["mat_absr1_monotone"] = _spearman(
-                    pd.Series(mg.index, index=mg.index), mg
-                )
-                m["mat_absr1_spread_bps"] = round(float(mg.iloc[-1] - mg.iloc[0]))
+            # Magnitude is the axis that actually predicts: materiality orders the
+            # next session's |move| monotonically (155 -> 286 bps, t=6.14 on the
+            # panel) where direction orders nothing. So every field that claims to
+            # rank impact is scored against |return|, on the market-adjusted
+            # horizon where available -- and `expected_move` (v4) is scored the
+            # same way as `materiality` so the direct question and the abstract one
+            # can be compared on identical articles.
+            for field, prefix in (
+                ("materiality", "mat"),
+                ("expected_move", "emove"),
+            ):
+                if field not in subj.columns:
+                    continue
+                vals = pd.to_numeric(subj[field], errors="coerce")
+                for horizon, tag in (("r1", "absr1"), ("r1_ex", "absr1ex")):
+                    if horizon not in subj.columns:
+                        continue
+                    ok_rows = subj[vals.notna() & subj[horizon].notna()]
+                    v = vals[vals.notna() & subj[horizon].notna()]
+                    if len(ok_rows) < 30:
+                        continue
+                    g = ok_rows.groupby(v, observed=True)[horizon].apply(
+                        lambda s: s.abs().mean() * 10000
+                    )
+                    if len(g) >= 3:
+                        m[f"{prefix}_{tag}_monotone"] = _spearman(
+                            pd.Series(g.index, index=g.index), g
+                        )
+                        m[f"{prefix}_{tag}_spread_bps"] = round(
+                            float(g.iloc[-1] - g.iloc[0])
+                        )
+                        m[f"{prefix}_{tag}_levels"] = int(len(g))
+                    # rank correlation over rows, which does not depend on how the
+                    # levels happen to be spaced
+                    m[f"{prefix}_{tag}_rank_corr"] = _spearman(
+                        v, ok_rows[horizon].abs()
+                    )
     return m
 
 
