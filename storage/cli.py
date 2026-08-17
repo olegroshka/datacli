@@ -19,6 +19,7 @@ for the [sync] keys) and is editable via ``config set sync-*``.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -65,9 +66,7 @@ def _context() -> tuple[Path, dict, Path]:
     return root, settings, manifest_path
 
 
-def _plan(
-    root: Path, manifest: dict, *, with_caches: bool
-) -> list[engine.PlanItem]:
+def _plan(root: Path, manifest: dict, *, with_caches: bool) -> list[engine.PlanItem]:
     local = engine.scan_local(root, **_scan_kwargs(with_caches))
     return engine.build_plan(
         local, manifest, hasher=lambda rel: engine.md5_file(root / rel)
@@ -94,7 +93,9 @@ def _print_plan(
     table.add_column("size", justify="right", no_wrap=True)
     table.add_column("reason", style="dim", no_wrap=True)
 
-    actionable = [p for p in plan if p.action in (engine.ACTION_UPLOAD, engine.ACTION_TOUCH)]
+    actionable = [
+        p for p in plan if p.action in (engine.ACTION_UPLOAD, engine.ACTION_TOUCH)
+    ]
     for i, item in enumerate(actionable[:PLAN_ROWS_SHOWN], 1):
         style = "green" if item.action == engine.ACTION_UPLOAD else "cyan"
         table.add_row(
@@ -124,8 +125,14 @@ def _print_plan(
 # --------------------------------------------------------------------------- #
 def cmd_status(argv: list[str]) -> int:
     """Offline view: what a push would do right now."""
-    parser = argparse.ArgumentParser(prog=f"{PROG} status", description=cmd_status.__doc__)
-    parser.add_argument("--with-caches", action="store_true", help="Include the payload cache dirs (many small files).")
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} status", description=cmd_status.__doc__
+    )
+    parser.add_argument(
+        "--with-caches",
+        action="store_true",
+        help="Include the payload cache dirs (many small files).",
+    )
     args = parser.parse_args(argv)
 
     root, settings, manifest_path = _context()
@@ -171,26 +178,32 @@ def execute_push(
     if not run:
         from rich.text import Text
 
-        console.print(
-            Text("dry-run only — re-run with --run to upload.", style="dim")
-        )
+        console.print(Text("dry-run only — re-run with --run to upload.", style="dim"))
         return 0
 
-    label = backend.ensure_auth(interactive=True)
+    interactive = os.environ.get("DATACLI_NONINTERACTIVE") != "1"
+    label = backend.ensure_auth(interactive=interactive)
     echo(f"signed in: {label}")
 
     uploads = [p for p in todo if p.action == engine.ACTION_UPLOAD]
     failures: list[tuple[engine.PlanItem, Exception]] = []
+    completed_uploads = 0
     done_bytes = 0
     for i, item in enumerate(uploads, 1):
         local = root / item.relpath
-        stat = engine.FileStat(item.relpath, local.stat().st_size, local.stat().st_mtime_ns)
+        stat = engine.FileStat(
+            item.relpath, local.stat().st_size, local.stat().st_mtime_ns
+        )
         md5 = item.md5 or engine.md5_file(local)
         prev_id = manifest.get("files", {}).get(item.relpath, {}).get("remote_id")
-        echo(f"[{i}/{len(uploads)}] {item.relpath} ({engine.human_size(item.size)}) ...")
+        echo(
+            f"[{i}/{len(uploads)}] {item.relpath} ({engine.human_size(item.size)}) ..."
+        )
         try:
             remote_id = backend.upload(local, item.relpath, remote_id=prev_id)
-        except Exception as exc:  # noqa: BLE001 - report per-file, don't crash the batch
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - report per-file, don't crash the batch
             failures.append((item, exc))
             echo(f"    -> FAILED: {exc}")
             if not keep_going:
@@ -200,21 +213,27 @@ def execute_push(
         engine.record_push(manifest, stat, md5=md5, remote_id=remote_id)
         engine.save_manifest(manifest_path, manifest)
         done_bytes += item.size
+        completed_uploads += 1
 
     # metadata-only refreshes (content identical, mtime moved) — no upload needed
     for item in (p for p in todo if p.action == engine.ACTION_TOUCH):
         local = root / item.relpath
-        stat = engine.FileStat(item.relpath, local.stat().st_size, local.stat().st_mtime_ns)
+        stat = engine.FileStat(
+            item.relpath, local.stat().st_size, local.stat().st_mtime_ns
+        )
         prev = manifest.get("files", {}).get(item.relpath, {})
         engine.record_push(
-            manifest, stat, md5=item.md5 or prev.get("md5", ""), remote_id=prev.get("remote_id", "")
+            manifest,
+            stat,
+            md5=item.md5 or prev.get("md5", ""),
+            remote_id=prev.get("remote_id", ""),
         )
     engine.save_manifest(manifest_path, manifest)
 
-    ok = len(uploads) - len(failures)
     echo(
-        f"\nPush finished: {ok} uploaded ({engine.human_size(done_bytes)}), "
-        f"{len(failures)} failed."
+        f"\nPush finished: {completed_uploads} uploaded "
+        f"({engine.human_size(done_bytes)}), {len(failures)} failed, "
+        f"{len(uploads) - completed_uploads - len(failures)} not run."
     )
     for item, exc in failures:
         echo(f"  FAILED: {item.relpath}: {exc}")
@@ -224,9 +243,19 @@ def execute_push(
 def cmd_push(argv: list[str]) -> int:
     """Upload new/changed files to the configured backend (dry-run unless --run)."""
     parser = argparse.ArgumentParser(prog=f"{PROG} push", description=cmd_push.__doc__)
-    parser.add_argument("--run", action="store_true", help="Actually upload (default: dry-run).")
-    parser.add_argument("--with-caches", action="store_true", help="Include the payload cache dirs (many small files; slow on Drive).")
-    parser.add_argument("--keep-going", action="store_true", help="Continue past per-file upload failures.")
+    parser.add_argument(
+        "--run", action="store_true", help="Actually upload (default: dry-run)."
+    )
+    parser.add_argument(
+        "--with-caches",
+        action="store_true",
+        help="Include the payload cache dirs (many small files; slow on Drive).",
+    )
+    parser.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="Continue past per-file upload failures.",
+    )
     args = parser.parse_args(argv)
 
     root, settings, manifest_path = _context()
@@ -243,7 +272,9 @@ def cmd_push(argv: list[str]) -> int:
 
 def cmd_login(argv: list[str]) -> int:
     """Sign in to the configured backend (browser flow if needed); show the account."""
-    parser = argparse.ArgumentParser(prog=f"{PROG} login", description=cmd_login.__doc__)
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} login", description=cmd_login.__doc__
+    )
     parser.parse_args(argv)
     _root, settings, _manifest = _context()
     backend = make_backend(settings)
@@ -281,6 +312,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"unknown sync command: {command!r}\n\n{top_help()}", file=sys.stderr)
         return 2
     try:
+        if command == "push":
+            from scheduler.commands import direct_mutation_lock
+
+            with direct_mutation_lock("sync", "push", rest):
+                return handlers[command](rest)
         return handlers[command](rest)
     except (SyncConfigError, SyncAuthError) as exc:
         from rich.text import Text

@@ -18,9 +18,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-# eodhd/config.py -> parents[1] == the datacli repo root
+# eodhd/config.py -> parents[1] == the datacli repo root.  A scheduler runner
+# supplies an explicit, validated config identity through the environment.
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = REPO_ROOT / "datacli.toml"
+CONFIG_PATH = (
+    Path(os.environ.get("DATACLI_CONFIG_PATH", str(REPO_ROOT / "datacli.toml")))
+    .expanduser()
+    .resolve()
+)
 
 
 def _load() -> dict[str, dict[str, Any]]:
@@ -52,7 +57,10 @@ def _write(data: dict[str, dict[str, Any]]) -> None:
             escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
             lines.append(f'{key} = "{escaped}"')
         lines.append("")
-    CONFIG_PATH.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+    from scheduler.commands import config_write_lock
+
+    with config_write_lock(CONFIG_PATH):
+        CONFIG_PATH.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
 
 
 def set_value(section: str, key: str, value: str) -> Path:

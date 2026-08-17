@@ -7,12 +7,17 @@ with ``[macro].data_root`` in ``datacli.toml``.
 
 from __future__ import annotations
 
+import os
 import sys
 import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_PATH = REPO_ROOT / "datacli.toml"
+CONFIG_PATH = (
+    Path(os.environ.get("DATACLI_CONFIG_PATH", str(REPO_ROOT / "datacli.toml")))
+    .expanduser()
+    .resolve()
+)
 
 FRED_PARQUET = "fred_observations.parquet"
 EODHD_PARQUET = "eodhd_indicators.parquet"
@@ -42,6 +47,9 @@ def _eodhd_root() -> Path:
 
 
 def macro_root() -> Path:
+    explicit = os.environ.get("DATACLI_MACRO_ROOT")
+    if explicit:
+        return Path(explicit)
     override = _read_section().get("data_root")
     return Path(override) if override else (_eodhd_root().parent / "macro")
 

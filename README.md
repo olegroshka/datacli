@@ -603,6 +603,58 @@ that predate this repo). It is never written to `datacli.toml`. `config` shows
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab. See `datacli.example.toml` for
 the full config template.
 
+## Scheduled jobs (Windows)
+
+Datacli can install daily or weekly workflows in Windows Task Scheduler. Windows
+owns trigger timing; datacli keeps the exact workflow, immutable definition
+snapshots, resource locks, and append-only run history under
+`%LOCALAPPDATA%\datacli\profiles\<profile-id>\`.
+
+Create a one-step job from PowerShell (the command after `--` keeps its own
+arguments unchanged):
+
+```powershell
+.venv\Scripts\python.exe datacli.py schedule add morning-refresh --daily 06:00 -- eodhd refresh --fast --run
+```
+
+Create and inspect a multi-step draft before it becomes executable:
+
+```powershell
+.venv\Scripts\python.exe datacli.py schedule create morning --daily 06:00
+.venv\Scripts\python.exe datacli.py schedule step add morning -- eodhd refresh --fast --run
+.venv\Scripts\python.exe datacli.py schedule step add morning -- eodhd reindex
+.venv\Scripts\python.exe datacli.py schedule step add morning -- sync push --run
+.venv\Scripts\python.exe datacli.py schedule show morning
+.venv\Scripts\python.exe datacli.py schedule enable morning
+```
+
+The same commands work inside the interactive shell without the
+`.venv\Scripts\python.exe datacli.py` prefix. Useful management operations are
+`schedule list`, `status`, `history`, `logs`, `test`, `run`, `pause`, `resume`,
+`stop`, `edit`, `delete`, `reconcile`, and `doctor`; `schedule commands` shows
+the allowlist.
+
+For an atomic multi-step edit, run `schedule edit <job> --draft`, use
+`schedule step add|remove|replace <draft-id> ...`, inspect it, then
+`schedule enable <draft-id>`. A stale edit draft cannot overwrite a newer job
+generation.
+
+- `test` runs the stored definition in the foreground and returns its actual
+  datacli run record. `run` only asks Windows to dispatch the installed task;
+  acceptance is not completion.
+- Jobs run as the current user with `InteractiveToken`: locked is supported,
+  logged out is not. Defaults do not wake the computer, do not start on
+  battery, do not stop active work on a later battery transition, and do not
+  retry failures automatically.
+- Google Drive jobs require an existing cached login. Scheduled execution never
+  opens a browser; run `sync login` interactively first.
+- `pause` affects future dispatches. `delete` writes a tombstone and preserves
+  run history/snapshots; destructive history removal is a separate confirmed
+  `purge` operation.
+- `status` reports desired state, Windows observation, and datacli run history
+  independently. It does not infer a successful run from a nominal trigger or
+  Windows result alone.
+
 ## Architecture
 
 ```
@@ -624,6 +676,7 @@ datacli/
 ├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI
 ├─ lab/                  the Raw Data Lab (personas, skills, grounded agent, pipeline)
 ├─ storage/              push-only backup (Google Drive / local) behind `sync`
+├─ scheduler/            registry, definitions, locks, runner, journal, Windows adapter
 ├─ mcp_server.py         MCP server exposing sql / describe_schema / list_lanes
 ├─ scripts/blackbox.py   black-box scenario harness (see SCENARIOS.md)
 └─ tests/                unit tests

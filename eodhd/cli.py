@@ -553,6 +553,7 @@ def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> i
         return 0
 
     failures: list[tuple[Step, int]] = []
+    completed = 0
     for i, step in enumerate(steps, 1):
         print(f"\n===== [{i}/{len(steps)}] {step.lane} :: {step.kind} =====")
         print(f"    {step.display()}")
@@ -563,9 +564,12 @@ def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> i
             if not keep_going:
                 print("Stopping (use --keep-going to continue past failures).")
                 break
+        else:
+            completed += 1
 
     print(
-        f"\nRefresh finished: {len(steps) - len(failures)} ok, {len(failures)} failed."
+        f"\nRefresh finished: {completed} ok, {len(failures)} failed, "
+        f"{len(steps) - completed - len(failures)} not run."
     )
     for step, rc in failures:
         print(f"  FAILED: {step.lane} {step.kind} (exit {rc})")
@@ -781,7 +785,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == "lanes":
         return cmd_lanes(rest)
     if command == "refresh":
-        return cmd_refresh(rest)
+        from scheduler.commands import direct_mutation_lock
+
+        with direct_mutation_lock("eodhd", "refresh", rest):
+            return cmd_refresh(rest)
     if command == "config":
         return cmd_config(rest)
     if command == "status":
@@ -789,6 +796,11 @@ def main(argv: list[str] | None = None) -> int:
     if command == "qc":
         return cmd_qc(rest)
     if command in EXPLORE_COMMANDS:
+        if command == "reindex":
+            from scheduler.commands import direct_mutation_lock
+
+            with direct_mutation_lock("eodhd", "reindex", rest):
+                return delegate("explore_eodhd.py", [command, *rest], prog=command)
         return delegate("explore_eodhd.py", [command, *rest], prog=command)
     if command in DELEGATED:
         return delegate(DELEGATED[command], rest, prog=command)

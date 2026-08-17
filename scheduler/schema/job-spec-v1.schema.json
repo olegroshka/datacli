@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datacli.local/schema/job-spec-v1.schema.json",
+  "title": "Datacli JobSpec v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "profile_id", "job_id", "generation", "display_name",
+    "enabled", "repo_root", "interpreter", "config_path", "runtime_bindings",
+    "command_contract_version", "trigger", "steps", "policy", "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_id": {"type": "string", "format": "uuid"},
+    "job_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "generation": {"type": "integer", "minimum": 1},
+    "display_name": {"type": "string", "minLength": 1},
+    "enabled": {"type": "boolean"},
+    "repo_root": {"type": "string", "minLength": 1},
+    "interpreter": {"type": "string", "minLength": 1},
+    "config_path": {"type": ["string", "null"]},
+    "runtime_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/runtime_binding"}
+    },
+    "command_contract_version": {"const": "scheduler-commands-v1"},
+    "trigger": {"$ref": "#/$defs/trigger"},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/command"}
+    },
+    "policy": {"$ref": "#/$defs/policy"},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_id", "mode", "scope"],
+      "properties": {
+        "resource_id": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["shared", "exclusive"]},
+        "scope": {"const": "user_machine"}
+      }
+    },
+    "runtime_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "resource_id", "resolved_value", "source", "fingerprint"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "resource_id": {"type": "string", "minLength": 1},
+        "resolved_value": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "fingerprint": {"type": ["string", "null"]}
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind", "local_time", "days_of_week", "time_basis",
+        "timezone_at_validation", "start_when_available", "wake_to_run", "ac_only"
+      ],
+      "properties": {
+        "kind": {"enum": ["daily", "weekly", "manual"]},
+        "local_time": {"type": ["string", "null"]},
+        "days_of_week": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "time_basis": {"type": ["string", "null"]},
+        "timezone_at_validation": {"type": ["string", "null"]},
+        "start_when_available": {"type": "boolean"},
+        "wake_to_run": {"type": "boolean"},
+        "ac_only": {"type": "boolean"}
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "verb", "argv", "contract_version", "resources", "mutation", "network"],
+      "properties": {
+        "family": {"enum": ["eodhd", "macro", "sync"]},
+        "verb": {"type": "string", "minLength": 1},
+        "argv": {"type": "array", "items": {"type": "string"}},
+        "contract_version": {"const": "scheduler-commands-v1"},
+        "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
+        "mutation": {"type": "boolean"},
+        "network": {"type": "boolean"}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "on_step_failure", "same_job_overlap", "resource_overlap",
+        "lock_wait_seconds", "execution_timeout_seconds", "retry", "retain_runs"
+      ],
+      "properties": {
+        "on_step_failure": {"const": "stop"},
+        "same_job_overlap": {"const": "skip"},
+        "resource_overlap": {"const": "skip"},
+        "lock_wait_seconds": {"const": 0},
+        "execution_timeout_seconds": {"type": "integer", "minimum": 60, "maximum": 604800},
+        "retry": {"const": "none"},
+        "retain_runs": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

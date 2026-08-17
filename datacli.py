@@ -355,6 +355,12 @@ class DataCli(cmd2.Cmd):
 
         macro_cli.main(self._argv(statement))
 
+    def do_schedule(self, statement: object) -> None:
+        """Manage recurring jobs: schedule commands | add | create | list | status"""
+        from scheduler import cli as scheduler_cli
+
+        scheduler_cli.main(self._argv(statement))
+
     # ----- source-scoped commands ------------------------------------------- #
     def do_status(self, statement: object) -> None:
         """Show the CURRENT source's data status (each source has its own datasets)."""
@@ -558,6 +564,42 @@ class DataCli(cmd2.Cmd):
             ("status", "push", "login", "--run", "--with-caches", "--keep-going"),
         )
 
+    def complete_schedule(self, text: str, line: str, begidx: int, endidx: int) -> Any:
+        return self._by_position(
+            text,
+            line,
+            begidx,
+            endidx,
+            {
+                1: (
+                    "commands",
+                    "profile",
+                    "list",
+                    "drafts",
+                    "show",
+                    "status",
+                    "add",
+                    "create",
+                    "step",
+                    "enable",
+                    "history",
+                    "logs",
+                    "test",
+                    "run",
+                    "pause",
+                    "resume",
+                    "stop",
+                    "edit",
+                    "delete",
+                    "reconcile",
+                    "discard",
+                    "purge",
+                    "doctor",
+                    "export",
+                )
+            },
+        )
+
     def complete_lab(self, text: str, line: str, begidx: int, endidx: int) -> Any:
         pos = self._arg_pos(line, begidx, endidx)
         if pos == 1:
@@ -585,6 +627,7 @@ cmd2.categorize(
         DataCli.do_sync,
         DataCli.do_score,
         DataCli.do_macro,
+        DataCli.do_schedule,
         DataCli.do_clear,
         DataCli.do_exit,
     ),
@@ -620,7 +663,17 @@ cmd2.categorize(
 )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "schedule":
+        from scheduler import cli as scheduler_cli
+
+        return scheduler_cli.main(args[1:])
+    if args:
+        print(
+            "headless usage: datacli.py schedule <operation> [options]", file=sys.stderr
+        )
+        return 2
     return DataCli().cmdloop() or 0
 
 

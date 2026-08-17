@@ -474,6 +474,11 @@ def main(argv: list[str] | None = None) -> int:
             print(top_help())
         return 0
     if command in dispatch:
+        if command == "fetch":
+            from scheduler.commands import direct_mutation_lock
+
+            with direct_mutation_lock("macro", "fetch", rest):
+                return dispatch[command](rest)
         return dispatch[command](rest)
     near = difflib.get_close_matches(command, list(dispatch), n=1)
     hint = f" -- did you mean {near[0]}?" if near else ""
