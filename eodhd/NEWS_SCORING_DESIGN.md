@@ -797,3 +797,75 @@ numbers are bucket edges rather than point values.
 Direction, for completeness, remains dead: contemporaneous `f0_ex` +53 bps
 (t = 1.98) and forward horizons negative and marginal (f5_ex −107 bps, t = −2.32),
 none surviving correction across the four horizons tested.
+
+## 17. `event@5`: both fixes landed, and the signal improved 18 %
+
+87 days, 13,004 articles, 35 invalid (0.27 %), **11 errors**, 15.4 h. The errors
+were transient Ollama failures (model unload/reload), 10 of them on one day — not
+data or schema problems, and re-runnable since the runner skips rows already `ok`.
+
+### Distributions, full passes, same model and sampling
+
+| | v4 | v5 |
+|---|---|---|
+| `none` / `minor` / `meaningful` / `major` | 24.9 / 66.7 / 8.3 / **0.1** | 10.5 / 54.2 / **34.8** / **0.5** |
+| sentiment neutral | 69.5 % | **46.3 %** |
+| distinct sentiment values | 4 | **6** |
+| `horizon` answered | 100 % | 100 % |
+
+Both intended fixes landed. Sentiment came back from a scale that had collapsed
+(70 % neutral, 4 distinct values) to a rankable one. Materiality went from
+effectively two populated levels to three.
+
+### The signal improved on every horizon
+
+Per-day rank correlation against `|market-adjusted return|`:
+
+| horizon | v4 corr | v5 corr | v4 t | v5 t | monotone |
+|---|---|---|---|---|---|
+| `f0_ex` same session | 0.1163 | **0.1633** | 9.33 | **11.00** | 1.0 |
+| `f1_ex` next session | 0.0839 | **0.0987** | 6.90 | **8.49** | 1.0 |
+| `f5_ex` one week | 0.0374 | **0.0501** | 2.84 | **4.52** | 1.0 |
+| *free baseline (article count), f1_ex* | *0.0383* | *0.0354* | *3.14* | *2.84* | — |
+
+**+18 % on the forward horizon, and the signal now reaches a week** (f5 t went 2.84
+→ 4.52). The free baseline moved slightly the *other* way, which is the control
+that matters: the same articles, the same days, the same returns — so the gain is
+in the model's judgement, not in the data or the harness. The model-to-baseline
+ratio went from 2.2× to 2.8×.
+
+This also retires the worry recorded in §16 that tuning the distribution was
+optimising an unvalidated proxy. It was not: spreading materiality across three
+populated levels instead of two improved the measured correlation.
+
+### Direction, measured cleanly at last
+
+`cross_section` still used the extremes-only statistic that §16 replaced inside
+`magnitude()` — the top and bottom buckets have to appear on the same day, and v5's
+sentiment paired them on **6 days of 58**. It now reports the same per-day rank
+correlation, against the *signed* return:
+
+| schema | same session | next session |
+|---|---|---|
+| v4 | 0.0904 (t = 5.84) | −0.0212 (t = −1.30) |
+| **v5** | **0.1009 (t = 6.27)** | **−0.0016 (t = −0.11, p = 0.92)** |
+
+That is the sharpest statement of the direction result in this whole record:
+sentiment correlates **0.10 with the session it lands in and 0.00 with the next
+one**, over 58 trading days.
+
+### What did not work
+
+`major` remains rare: 0.1 % → 0.5 %. Three wordings across v4 and v5 moved it
+between 0.1 % and 1.5 %, and the differences are within noise at the sample sizes
+that measured them. The conclusion from §16 stands and is now firmer — **the
+anchoring effect is asymmetric**. A stated base rate reliably pushes answers down
+(`mat_low` ran 0.59 → 0.78 → 0.89 across v2/v3/v4 on the same instruction) but
+saying "this is NOT a rare-exception label" does not push them up. The model has a
+floor on claiming large price impact from text alone that prompt wording does not
+move.
+
+It does not block anything: the correlation uses every level, so the field works
+regardless. It does mean a strategy trading only the top bucket would have a
+handful of names per day, which is recorded as a limit in the README rather than
+chased with a fourth wording.

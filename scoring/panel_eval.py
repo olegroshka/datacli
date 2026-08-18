@@ -375,8 +375,15 @@ def cross_section(
         "n_days_rankable": int(d["date"].nunique()),
         "days_dropped_saturated": int(sizes[sizes >= min_names].shape[0] - d["date"].nunique()),
     }
+    # Same fix as magnitude(): the top-minus-bottom spread needs both extreme
+    # buckets present on a day, which a saturated score rarely manages -- v5's
+    # sentiment paired them on 6 days of 58. The per-day rank correlation between
+    # the score and the SIGNED return uses the whole cross-section every day.
+    stats.update(_daily_rank_corr(d, score_col, horizon, signed=True))
     if top in per_day.columns and bot in per_day.columns and top != bot:
-        stats.update(_t_stat(per_day[top] - per_day[bot], lags=_lags_for(horizon)))
+        ext = _t_stat(per_day[top] - per_day[bot], lags=_lags_for(horizon))
+        stats.update({f"ext_{k}": v for k, v in ext.items()})
+        stats.update(ext)  # keep the flat names the earlier tests and CLI read
         stats["monotone"] = _spearman_int(table["bucket"], table["mean_bps"])
     elif top == bot:
         stats["note"] = "score too saturated to rank: one bucket"
@@ -458,6 +465,7 @@ def _daily_rank_corr(
     *,
     min_rows: int = 20,
     min_levels: int = 2,
+    signed: bool = False,
 ) -> dict[str, Any]:
     """Mean per-day Spearman of ``field`` against ``|return|``, with a t over days.
 
@@ -475,7 +483,8 @@ def _daily_rank_corr(
     for _, g in d.groupby(key):
         if len(g) < min_rows or g[field].nunique() < min_levels:
             continue
-        c = _spearman_int(g[field], g[horizon].abs())
+        y = g[horizon] if signed else g[horizon].abs()
+        c = _spearman_int(g[field], y)
         if c == c:  # not NaN
             vals.append(c)
     if len(vals) < 5:

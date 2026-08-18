@@ -96,10 +96,11 @@ def fig_anchoring(con) -> None:
 def fig_sentiment_horizons(con) -> None:
     """Sentiment reads the session it lands in; it does not predict the next one.
 
-    Uses the ``event@2`` panel because it has the widest sentiment spread of the
-    passes (22% neutral against v4's 65%), so the buckets are actually populated.
+    Uses the current ``event@5`` pass: 13,004 articles over 87 days, with the
+    seven-level sentiment scale that keeps the buckets populated (46% neutral,
+    against v4's 70% when the scale was cut to five levels).
     """
-    panel = pe.signal_panel(con, "news_scores_event_v2")
+    panel = pe.signal_panel(con, "news_scores_event_v5")
     j, _ = pe.attach_returns(con, panel)
     j = j.dropna(subset=["f0_ex", "f1_ex", "score"])
     j = j[j["score"].abs() <= 1.0]
@@ -144,7 +145,7 @@ def fig_sentiment_horizons(con) -> None:
 
 def fig_magnitude(con) -> None:
     """The one thing that does predict forward: how big the news is."""
-    panel = pe.signal_panel(con, "news_scores_event_v4")
+    panel = pe.signal_panel(con, "news_scores_event_v5")
     j, _ = pe.attach_returns(con, panel)
     j = j.dropna(subset=["f1_ex", "mat_max"])
 
@@ -183,7 +184,7 @@ def fig_magnitude(con) -> None:
     ax1.set_ylabel("|next session|, bps (market-adjusted)")
     ax1.set_title(
         "The model's judgement of how big the news is\n"
-        "rank corr 0.084, t = 6.9 over 59 trading days",
+        "rank corr 0.099, t = 8.5 over 58 trading days",
         loc="left",
     )
     for i, (v, c) in enumerate(zip(gm.values, nm.values)):
@@ -199,7 +200,7 @@ def fig_magnitude(con) -> None:
     ax2.set_xticklabels(gi.index, fontsize=9)
     ax2.set_xlabel("articles about that stock that day")
     ax2.set_title(
-        "The free baseline: just count the articles\nrank corr 0.038, t = 3.1",
+        "The free baseline: just count the articles\nrank corr 0.035, t = 2.8",
         loc="left",
     )
     for i, v in enumerate(gi.values):

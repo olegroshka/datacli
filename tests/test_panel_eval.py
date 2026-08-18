@@ -319,3 +319,29 @@ def test_cross_section_uses_the_buckets_that_materialised_not_the_ones_requested
     assert stats["buckets_realised"] < 5  # fewer buckets than requested
     assert stats.get("n_days", 0) > 0  # ...but a verdict is still produced
     assert stats["mean_bps"] > 0 and stats["p"] < 0.05
+
+
+def test_cross_section_rank_correlation_is_signed_not_absolute() -> None:
+    """Direction asks which way, so its per-day correlation must run against the
+    SIGNED return -- using |return| would score a config that predicts big moves
+    as if it had predicted their direction."""
+    n_days, n_names = 60, 40
+    rows = []
+    for d in range(n_days):
+        for i in range(n_names):
+            score = (i % 7) - 3  # -3..3, seven distinct values
+            rows.append(
+                {
+                    "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=d),
+                    "symbol": f"S{i}.US",
+                    "score": score,
+                    # return tracks the SIGN of the score, magnitude constant
+                    "f1_ex": (0.01 if score > 0 else -0.01) + _jitter(d, i),
+                }
+            )
+    _, stats = pe.cross_section(
+        pd.DataFrame(rows), horizon="f1_ex", score_col="score", n_buckets=5
+    )
+    # signed correlation finds it; an absolute one would see no ordering at all
+    assert stats["corr_mean"] > 0.5 and stats["corr_p"] < 0.01
+    assert stats["corr_n_days"] == n_days

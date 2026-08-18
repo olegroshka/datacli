@@ -175,12 +175,13 @@ monotonically. On the **next** session the ordering is gone.
 
 ![Sentiment sorts the same session but not the next one](docs/img/sentiment_horizons.png)
 
-That contrast is the whole story, and it has an unglamorous explanation: much of
-what the model "predicts" is a move the article itself already reports
-("shares fell 8 % after…"). Confirmed three independent ways — per-article edge
-over 803 committed rows (p = 0.78), a vendor-signal quintile long-short over
-**2,564 trading days** (t = 1.27), and our own over 11 days (t = 1.54). Every
-significant direction number is contemporaneous.
+Put as one number, over 58 trading days: sentiment's rank correlation with the
+**same** session's return is 0.10 (t = 6.3); with the **next** session's it is
+−0.002 (t = −0.11, p = 0.92). It has an unglamorous explanation — much of what the
+model "predicts" is a move the article itself already reports ("shares fell 8 %
+after…"). Confirmed independently on a vendor-signal quintile long-short over
+**2,564 trading days** (t = 1.27) and a per-article edge over 803 committed rows
+(p = 0.78). Every significant direction number is contemporaneous.
 
 This is roughly what an efficient market should look like. Public news sentiment
 against next-day returns is one of the most competed-away signals there is; finding
@@ -196,14 +197,16 @@ how many articles a stock drew that day — is nearly flat over the same rows.
 
 | signal | rank corr with \|next-session move\| | t (over trading days) |
 |---|---|---|
-| model's materiality judgement | **0.084** | **6.9** |
-| article count (free, no model) | 0.038 | 3.1 |
+| model's materiality judgement | **0.099** | **8.5** |
+| article count (free, no model) | 0.035 | 2.8 |
 
-Measured over 59 trading days, market-adjusted, with a per-day rank correlation and
+Measured over 58 trading days, market-adjusted, with a per-day rank correlation and
 a Newey–West correction for overlapping windows. It first appeared on 15 days
-(t = 6.1) and replicated on a 4× larger sample. Article counting does win the
-*same* session — attention tracks today's move, t = 15.3 over 2,215 days — but has
-nothing forward.
+(t = 6.1), replicated on a 4× larger sample (t = 6.9), and improved again when the
+schema was tuned to spread the scale (t = 8.5) — while the free baseline stayed
+flat throughout, which is the control that says the gain is in the model's
+judgement and not in the data. Article counting does win the *same* session —
+attention tracks today's move, t = 15.3 over 2,215 days — but has nothing forward.
 
 So the deliverable is an **event-driven magnitude / volatility feature**, not an
 alpha signal: useful for position sizing, risk, and options screens.
@@ -228,11 +231,17 @@ behaviour — 428 tests in total.
 
 ### Limits
 
-One provider, one price venue per name, ~5 years of news and a 59-day scored
-window. Returns are close-to-close and market-adjusted by an exchange median, with
+One provider, one price venue per name, ~5 years of news and an 87-day scored
+window (58 trading days with usable forward returns). Returns are close-to-close and market-adjusted by an exchange median, with
 no transaction costs, borrow, or liquidity screen. Correlations of 0.08 are real
 but small. **None of this is investment advice**, and it is not a backtest — it is a
 measurement of whether a feature carries information.
+
+One caveat we could not fix: the top impact level (`major`) lands on well under 1 %
+of articles no matter how the prompt is worded — three attempts moved it between
+0.1 % and 1.5 %. The correlations above hold regardless, because they use every
+level, but a strategy that trades only the top bucket would be working with a
+handful of names per day.
 
 The full working record, including the dead ends, is in
 [`eodhd/NEWS_SCORING_DESIGN.md`](eodhd/NEWS_SCORING_DESIGN.md).
