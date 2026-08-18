@@ -1,0 +1,165 @@
+# event_v5 -- v4 with its two measured regressions fixed, and `expected_move` dropped.
+#
+# v4's pass (88 days, 13,158 articles, see NEWS_SCORING_DESIGN.md sec 16) settled
+# three things. Each change below follows from one of them.
+#
+# 1. `expected_move` LOST ITS PAIRED COMPARISON, so it is removed. Both fields were
+#    answered in the same call on the same articles, which is why the result is
+#    trustworthy, and the rule was fixed before the run: a loss means the new field
+#    goes, not the incumbent.
+#        materiality    corr 0.0839  t 6.88  monotone 1.0 (and 1.0 at 20 days)
+#        expected_move  corr 0.0730  t 5.56  monotone 1.0 (but 0.4 at 20 days)
+#    Asking directly for a percentage bucket made the model far too conservative:
+#    87% of answers in the bottom two buckets, 37 rows in `3_to_7pct`, ONE in
+#    `over_7pct`, and realised moves ~4.5x the prediction. The abstract 4-level
+#    scale wins precisely because it has no external anchor to be conservative
+#    against. Dropping the field also takes v5 to 9 article fields from v4's 10.
+#
+# 2. SENTIMENT COLLAPSED ONTO "neutral": 64.8% of articles, against v3's 43.5%.
+#    v4 cut the scale from 7 labels to 5, and the mild cases had nowhere to go but
+#    the middle. The cost is not to direction -- direction is dead either way -- but
+#    to *rankability*: with so few distinct values a day's cross-section collapses
+#    to 2 buckets, and the direction test ran on 15 days instead of 59.
+#    => v5 restores `slightly_negative` / `slightly_positive`, and adds an explicit
+#    instruction not to use "neutral" as a hedge for uncertainty (that is what
+#    `confidence` is for).
+#
+# 3. `materiality = major` LANDED ON 0.19% OF ROWS (15 of 8,005), against ~11% in
+#    the v2 corpus. The field still worked, but a level that rare cannot carry a
+#    bucket-based strategy, and the top of a scale that is never used is wasted.
+#    The cause is the blanket suppression "MOST ARTICLES ARE none OR minor",
+#    inherited from v2 where the opposite problem needed fixing (73% piled on
+#    level 2), and compounded by the label rewrite: mat_low ran 0.59 (v2) -> 0.78
+#    (v3) -> 0.89 (v4) as each revision leaned harder on the same hint.
+#    => v5 keeps a base rate but makes it two-sided, names what `major` covers in
+#    concrete and *common* terms, and says outright that `major` is not a
+#    rare-exception label. This is a deliberate use of the anchoring effect rather
+#    than a fight against it: the repeated finding is that a model complies with
+#    whatever base rate the prompt states (sec 12, sec 16), so v5 states the one it
+#    should comply with instead of only warning it downward.
+#
+# What is deliberately NOT changed: the label mechanism (v3's ordinal labels beat
+# v2's numeric anchors 5x on the magnitude axis, sec 15), the 4-level materiality
+# scale itself (it produced t=6.88 and is the thing that works), `horizon` with no
+# escape hatch, and the field ordering.
+
+[schema]
+name = "event"
+version = 5
+description = "Magnitude-first event record: 4-level materiality with a two-sided base rate, seven-level sentiment restored for rankability, horizon with no escape hatch, and no expected_move (it lost its paired comparison against materiality)."
+scope = "article+symbol"
+max_symbols = 3
+text = "title+content"
+max_chars = 6000
+
+[prompt]
+system = """You are a meticulous financial news analyst. You read one article and fill a fixed JSON record about it. You never invent facts that are not in the text, you keep summaries short and factual, you only ever use the allowed values, and you answer strictly with one JSON object and nothing else."""
+
+instructions = """Fill the record for the article below.
+
+Your most important judgement is `materiality`: how far this news could move the stock. Everything else supports it.
+
+Rules:
+- Base every value only on the article text. If the text does not support a value, use the neutral option and lower `confidence`.
+- Every field is a LABEL from its allowed list. Never output a number where a label is asked for, and never invent a label.
+- `summary`: one factual sentence -- who did what, with the key number if any.
+- `event_type`: choose the CLOSEST class. Use "index_etf_flow" for market wrap-ups, index moves and fund-flow pieces; "economic_data" for macro releases and central-bank actions; "supply_chain" for suppliers, shortages, tariffs, logistics; "competition" for market-share and rivalry stories; "partnership" for alliances, integrations, joint ventures; "technical_analysis" for chart/price-level commentary; "market_commentary" for opinion about a stock with no new event.
+- `price_move_mentioned`: true if the article ITSELF reports that the share price already moved (e.g. "shares fell 8%", "the stock jumped after"). This is about the text, not your opinion.
+- `expectation_vs_outcome`: only when the article compares an outcome with an expectation (results vs estimates, guidance vs consensus, a target vs delivery): "beat", "in_line" or "miss". Otherwise "not_applicable".
+- `novelty`: true only if the article reports something new (an event, a number, a decision), not commentary on known facts.
+- `materiality`: how much this could move the MAIN SUBJECT's price. Judge the news, not the direction.
+  - "none": no price relevance at all -- listicles, evergreen explainers, incidental mentions, wrap-ups naming many companies, pure chart commentary.
+  - "minor": real but routine -- ordinary PR, a small contract, a product update, an analyst note with no rating change, a scheduled filing.
+  - "meaningful": changes the near-term picture -- results roughly in line or modestly off, guidance reiterated, a rating change with a new target, a mid-size deal or acquisition, a notable customer won or lost, a new product with real revenue attached.
+  - "major": changes the investment case -- results or guidance clearly away from expectations, M&A involving this company, a regulatory or legal decision that matters, a CEO or CFO departure, a dividend or buyback started or cut, financing that changes the balance sheet, fraud or an investigation, a trial or approval outcome.
+  As a rough guide across a day's news: most articles are "minor", "none" and "meaningful" are each common, and roughly one article in twenty is "major". "major" is NOT a rare-exception label -- if the criteria above fit, use it.
+- `horizon`: when the move you expect would happen. "days" = it plays out immediately. "weeks" = it takes a few reporting cycles or news follow-ups. "quarters" = it shows up in future results. Always choose one of the three, even for news you judged immaterial -- pick the horizon the event would matter over if it mattered at all.
+- `sentiment`: the market-relevant tone for the MAIN SUBJECT. "very_negative" = fraud, bankruptcy, collapse. "negative" = miss, guidance cut, lawsuit lost, downgrade. "slightly_negative" = a soft spot in otherwise routine news. "neutral" = genuinely no directional implication, or genuinely mixed. "slightly_positive" = a bright spot in routine news. "positive" = beat, raise, approval, upgrade. "very_positive" = transformational deal, blow-out quarter. Do NOT use "neutral" as a way of saying you are unsure -- if the text leans one way at all, pick the "slightly_" label and lower `confidence` instead.
+- `confidence`: how well the text supports the values you gave -- "low", "medium" or "high".
+- Per-symbol fields: judge each listed symbol separately. `role`: subject = the article is about it; peer = mentioned as a competitor/comparison; mentioned = incidental. `direction`: the implication for that symbol's price from this article alone. `relevance`: "primary" = the article is mainly about it, "secondary" = a real but smaller part, "incidental" = a passing mention.
+- Output exactly one JSON object with keys "article" and "symbols" as specified. No prose, no code fences."""
+
+# ---- article-level fields ---------------------------------------------------
+# Order is deliberate: the factual and contextual fields come first so the
+# judgement fields that depend on them (`materiality` above all) are answered
+# after the model has committed to what the article actually says.
+
+[[fields]]
+name = "summary"
+type = "string"
+max_length = 160
+description = "One factual sentence: who did what, with the key number if any."
+
+[[fields]]
+name = "event_type"
+type = "enum"
+values = ["earnings", "guidance", "m_and_a", "capital_return", "financing", "product", "management", "legal_regulatory", "supply_chain", "competition", "partnership", "economic_data", "macro", "index_etf_flow", "analyst_rating", "technical_analysis", "market_commentary", "other"]
+description = "Primary event class -- the CLOSEST allowed class, never a new one."
+
+[[fields]]
+name = "price_move_mentioned"
+type = "bool"
+description = "True if the article itself reports that the share price already moved."
+
+[[fields]]
+name = "expectation_vs_outcome"
+type = "enum"
+values = ["beat", "in_line", "miss", "not_applicable"]
+description = "Outcome versus a stated expectation, when the article makes that comparison."
+
+[[fields]]
+name = "novelty"
+type = "bool"
+description = "True if the article reports something new rather than commenting on known facts."
+
+[[fields]]
+name = "materiality_label"
+type = "enum"
+values = ["none", "minor", "meaningful", "major"]
+numeric = { none = 0.0, minor = 1.0, meaningful = 2.0, major = 3.0 }
+numeric_as = "materiality"
+description = "Potential price impact for the main subject. The field that predicts: corr 0.0839 with the next session's |move|, t=6.88 over 59 trading days."
+
+[[fields]]
+name = "horizon"
+type = "enum"
+values = ["days", "weeks", "quarters"]
+description = "When the expected move would happen. No escape hatch -- an optional 'n_a' drew 39% of answers from a weak model, and renaming it 'unclear' in v3 doubled refusals on a strong one."
+
+[[fields]]
+name = "sentiment_label"
+type = "enum"
+values = ["very_negative", "negative", "slightly_negative", "neutral", "slightly_positive", "positive", "very_positive"]
+numeric = { very_negative = -1.0, negative = -0.6, slightly_negative = -0.25, neutral = 0.0, slightly_positive = 0.25, positive = 0.6, very_positive = 1.0 }
+numeric_as = "sentiment"
+description = "Market-relevant tone for the main subject. Descriptive: it does not predict the next session. Seven levels restored from v4's five, which pushed 64.8% of articles onto 'neutral' and left a day's cross-section unrankable."
+
+[[fields]]
+name = "confidence_label"
+type = "enum"
+values = ["low", "medium", "high"]
+numeric = { low = 0.3, medium = 0.6, high = 0.9 }
+numeric_as = "confidence"
+description = "How well the text supports the values given. This, not 'neutral' sentiment, is where uncertainty belongs."
+
+# ---- per-symbol fields (only for target symbols, <= max_symbols) --------------
+
+[[symbol_fields]]
+name = "role"
+type = "enum"
+values = ["subject", "peer", "mentioned"]
+description = "subject = article is about it; peer = competitor/comparison; mentioned = incidental."
+
+[[symbol_fields]]
+name = "direction"
+type = "enum"
+values = ["up", "down", "neutral", "n_a"]
+description = "Price implication for this symbol from this article alone."
+
+[[symbol_fields]]
+name = "relevance_label"
+type = "enum"
+values = ["primary", "secondary", "incidental"]
+numeric = { primary = 0.9, secondary = 0.5, incidental = 0.15 }
+numeric_as = "relevance"
+description = "How much of the article is about this symbol."
