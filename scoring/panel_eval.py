@@ -360,7 +360,12 @@ def cross_section(
         .reset_index()
     )
     per_day = d.groupby(["date", "bucket"])[horizon].mean().unstack("bucket")
-    top, bot = n_buckets - 1, 0
+    # Use the buckets that actually materialised, not the ones requested. A
+    # saturated score collapses under duplicates="drop" -- v4's sentiment is 64.8%
+    # exactly neutral, which yields 2 buckets from a request for 5 -- and asking
+    # for bucket `n_buckets - 1` then finds nothing and returns silently.
+    present = [c for c in per_day.columns if pd.notna(c)]
+    top, bot = (max(present), min(present)) if present else (n_buckets - 1, 0)
     stats: dict[str, Any] = {
         "horizon": horizon,
         "score": score_col,
@@ -370,9 +375,11 @@ def cross_section(
         "n_days_rankable": int(d["date"].nunique()),
         "days_dropped_saturated": int(sizes[sizes >= min_names].shape[0] - d["date"].nunique()),
     }
-    if top in per_day.columns and bot in per_day.columns:
+    if top in per_day.columns and bot in per_day.columns and top != bot:
         stats.update(_t_stat(per_day[top] - per_day[bot], lags=_lags_for(horizon)))
         stats["monotone"] = _spearman_int(table["bucket"], table["mean_bps"])
+    elif top == bot:
+        stats["note"] = "score too saturated to rank: one bucket"
     return table, stats
 
 
@@ -398,7 +405,10 @@ def magnitude(
     if d.empty:
         return pd.DataFrame(), {}
     d["abs_ret"] = d[horizon].abs()
-    d[field] = pd.to_numeric(d[field], errors="coerce").round().astype("Int64")
+    # Do NOT round. `materiality` happens to be 0-3, but `expected_move` is a
+    # decimal return (0.0, 0.005, 0.02, 0.05, 0.10) and rounding collapsed every
+    # one of those to 0 -- one level, so the whole test silently returned nothing.
+    d[field] = pd.to_numeric(d[field], errors="coerce")
     table = (
         d.groupby(field, observed=True)
         .agg(
@@ -417,7 +427,17 @@ def magnitude(
         stats["spread_bps"] = round(
             float(table["mean_abs_bps"].iloc[-1] - table["mean_abs_bps"].iloc[0]), 1
         )
-        # top level vs bottom level, t over days
+        # Primary statistic: the per-day rank correlation between the field and
+        # |return|, then a t over days. This uses EVERY row and EVERY level each
+        # day, which the extremes-only spread below does not -- and that matters
+        # enormously once the top level is rare. Sampling 150 articles/day left
+        # `materiality = 3` on 15 of 8,005 rows, so only 12 of 63 days had both
+        # extremes present and the spread statistic was reduced to 11
+        # observations of a very noisy difference. The rank correlation kept all
+        # 63 days.
+        stats.update(_daily_rank_corr(d, field, horizon))
+        # Secondary: top level vs bottom level. Kept because it is the number in
+        # return units that a reader can interpret, but it is the fragile one.
         lo, hi = table[field].iloc[0], table[field].iloc[-1]
         per_day = (
             d[d[field].isin([lo, hi])]
@@ -426,8 +446,48 @@ def magnitude(
             .unstack(field)
         )
         if hi in per_day.columns and lo in per_day.columns:
-            stats.update(_t_stat(per_day[hi] - per_day[lo], lags=_lags_for(horizon)))
+            ext = _t_stat(per_day[hi] - per_day[lo], lags=_lags_for(horizon))
+            stats.update({f"ext_{k}": v for k, v in ext.items()})
     return table, stats
+
+
+def _daily_rank_corr(
+    d: pd.DataFrame,
+    field: str,
+    horizon: str,
+    *,
+    min_rows: int = 20,
+    min_levels: int = 2,
+) -> dict[str, Any]:
+    """Mean per-day Spearman of ``field`` against ``|return|``, with a t over days.
+
+    Each day contributes one correlation, computed over that day's whole
+    cross-section, so days are still the independent observations but no day is
+    discarded merely because its top level happened to be empty. It also answers
+    the question we actually care about -- does the field *order* the size of the
+    move -- without depending on how the levels are spaced or labelled.
+    """
+    # Group by the TRADING day, not the publication day: a Saturday and a Sunday
+    # article both price on the Monday, so counting them as separate observations
+    # would overstate the number of independent days.
+    key = "trade_date" if "trade_date" in d.columns else "date"
+    vals = []
+    for _, g in d.groupby(key):
+        if len(g) < min_rows or g[field].nunique() < min_levels:
+            continue
+        c = _spearman_int(g[field], g[horizon].abs())
+        if c == c:  # not NaN
+            vals.append(c)
+    if len(vals) < 5:
+        return {"corr_n_days": len(vals)}
+    s = pd.Series(vals)
+    out = _t_stat(s, lags=_lags_for(horizon))
+    return {
+        "corr_n_days": out.get("n_days"),
+        "corr_mean": round(float(s.mean()), 4),
+        "corr_t": out.get("t"),
+        "corr_p": out.get("p"),
+    }
 
 
 def calibration(
@@ -516,6 +576,9 @@ def intensity(
     )
     stats: dict[str, Any] = {"horizon": horizon, "n_rows": int(len(d))}
     if len(table) >= 3:
+        # Measured with exactly the same statistic as the model fields, so the
+        # free baseline and the paid one are compared like for like.
+        stats.update(_daily_rank_corr(d, "n_articles", horizon))
         stats["monotone"] = _spearman_int(
             pd.Series(range(len(table))), table["mean_abs_bps"]
         )
@@ -531,5 +594,6 @@ def intensity(
             .unstack("n_bucket")
         )
         if hi in per_day.columns and lo in per_day.columns:
-            stats.update(_t_stat(per_day[hi] - per_day[lo], lags=_lags_for(horizon)))
+            ext = _t_stat(per_day[hi] - per_day[lo], lags=_lags_for(horizon))
+            stats.update({f"ext_{k}": v for k, v in ext.items()})
     return table, stats

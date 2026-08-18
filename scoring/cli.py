@@ -627,13 +627,20 @@ def cmd_panel_eval(args: argparse.Namespace) -> int:
 
     horizons = [f"f{h}_ex" for h in pev.HORIZONS]
     keys = ("n_days", "nw_lags", "mean_bps", "t", "p", "monotone")
+    # magnitude leads with the per-day rank correlation, which uses every row and
+    # level; the extremes-only spread is reported next to it as the interpretable
+    # but fragile number.
+    mag_keys = (
+        "corr_n_days", "corr_mean", "corr_t", "corr_p",
+        "monotone", "spread_bps", "ext_n_days", "ext_mean_bps", "ext_t",
+    )
 
-    def _rows(fn: Any, **kw: Any) -> pd.DataFrame:
+    def _rows(fn: Any, which: tuple = keys, **kw: Any) -> pd.DataFrame:
         out = []
         for h in horizons:
             _, st = fn(joined, horizon=h, **kw)
             if st:
-                out.append({"horizon": h, **{k: st.get(k) for k in keys}})
+                out.append({"horizon": h, **{k: st.get(k) for k in which}})
         return pd.DataFrame(out)
 
     direction = _rows(pev.cross_section, score_col=score_col, n_buckets=args.buckets)
@@ -647,7 +654,7 @@ def cmd_panel_eval(args: argparse.Namespace) -> int:
         f"{f}_max" for f in pev.IMPACT_FIELDS if f"{f}_max" in joined.columns
     ] or ([mat_field] if mat_field and mat_field in joined.columns else [])
     for field in impact_cols:
-        mag = _rows(pev.magnitude, field=field)
+        mag = _rows(pev.magnitude, which=mag_keys, field=field)
         if not mag.empty:
             console.print(
                 _render.df_table(mag, title=f"magnitude: {field} vs |return|")
@@ -667,7 +674,7 @@ def cmd_panel_eval(args: argparse.Namespace) -> int:
                         f"{cst.get('top_bucket_ratio')})",
                     )
                 )
-    inten = _rows(pev.intensity)
+    inten = _rows(pev.intensity, which=mag_keys)
     if not inten.empty:
         console.print(
             _render.df_table(inten, title="magnitude: article count vs |return| (free)")

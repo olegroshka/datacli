@@ -723,3 +723,77 @@ identical articles with the same model. Renaming an opt-out does not remove the
 incentive to take it — which is why v4 removes it outright rather than renaming it
 again. The conclusion (drop the hatch) survives; the stated reason was overstated
 and is now corrected in both places.
+
+## 16. The v4 pass: the magnitude result holds, and `expected_move` loses
+
+88 days, 13,158 articles scored, 42 invalid (**0.32 %**), 0 errors, 16.1 h on
+`qwen2.5:14b-instruct`. Joined to prices: 8,005 `(date, symbol)` rows over 63
+trading days — a **4× increase in the day count** the finding rests on.
+
+### Three measurement bugs found first
+
+Each returned a wrong or empty answer *silently*, which is the failure mode to
+watch for in this module:
+
+1. **Rounding collapsed `expected_move` to a single level.** `magnitude()` did
+   `.round().astype(Int64)`, fine for `materiality` (0–3) but fatal for a decimal
+   return (0.0, 0.005, 0.02, 0.05, 0.10 → all 0). The test then found one level
+   and returned nothing rather than failing.
+2. **The extremes-only statistic threw away 80 % of the data.** Comparing top
+   level against bottom level per day needs both present. Sampling 150
+   articles/day left `materiality = 3` on **15 of 8,005 rows**, so only 12 of 63
+   days qualified and the statistic became 11 observations of a very noisy
+   difference — which is why a first read showed t collapsing from 6.14 to 1.93.
+   The primary statistic is now the **per-day rank correlation** between the field
+   and `|return|`, which uses every row and every level and keeps all 59–60 days.
+3. **The independence unit was the publication day, not the trading day.** A
+   Saturday and a Sunday article both price on the Monday; counting them
+   separately inflated the day count from 60 to 87.
+
+### The result
+
+Per-day rank correlation against `|market-adjusted return|`, t over trading days:
+
+| field | horizon | days | corr | t | p | monotone |
+|---|---|---|---|---|---|---|
+| **`materiality`** | f1_ex | 59 | **0.0839** | **6.88** | <0.0001 | **1.0** |
+| `expected_move` | f1_ex | 59 | 0.0730 | 5.56 | <0.0001 | 1.0 |
+| article count *(free)* | f1_ex | 59 | 0.0383 | 3.14 | 0.0017 | 0.7 |
+| **`materiality`** | f20_ex | 40 | 0.0431 | 3.50 | 0.0005 | **1.0** |
+| `expected_move` | f20_ex | 40 | 0.0275 | 2.47 | 0.0135 | 0.4 |
+
+**The magnitude finding held**: t = 6.88 over 59 trading days, against t = 6.14
+over 15. It is monotone at every horizon and still significant at 20 days. That
+was the result the whole change of objective rests on, and it survived a 4× larger
+sample with a stricter statistic.
+
+**`expected_move` lost the paired comparison.** Asking directly for a percentage
+bucket is *worse* than the abstract 4-level judgement — lower correlation at every
+horizon, and it stops being monotone at 20 days. Both were answered in the same
+call on the same articles, which is exactly why that comparison is trustworthy,
+and the pre-committed rule was that a loss means v5 drops the field rather than
+the reverse. **So v5 drops `expected_move` and keeps `materiality`.**
+
+Why it lost is visible in its calibration: it collapsed onto the bottom buckets —
+87 % in `none`/`under_1pct`, **37 rows** in `3_to_7pct` and **1** in `over_7pct` —
+and under-predicts realised moves by ~4.5×. Naming concrete percentages, plus a
+"most articles are none or under_1pct" hint, made the model far too conservative.
+The abstract scale spreads better precisely because it has no external anchor to
+be conservative against. This is the anchoring finding (§12) arriving from a new
+direction: naming numbers in a prompt determines the answers even when the
+numbers are bucket edges rather than point values.
+
+### Two v4 regressions worth fixing in v5
+
+- **Sentiment is 64.8 % exactly neutral**, up from v3's 43.5 %. Collapsing 7
+  labels to 5 removed `slightly_positive`/`slightly_negative` and pushed those
+  mild cases into `neutral`. Direction is dead anyway, but this leaves too few
+  distinct values to rank a cross-section: the direction test now runs on 2
+  buckets and 15 days instead of 5 and 59. v5 should restore the two mild labels.
+- **`materiality = 3` on 0.19 % of rows** (15 of 8,005), against ~11 % in the v2
+  corpus. The base-rate hints are over-suppressing the top of the scale. The field
+  still works, but a level that rare cannot carry a bucket-based strategy.
+
+Direction, for completeness, remains dead: contemporaneous `f0_ex` +53 bps
+(t = 1.98) and forward horizons negative and marginal (f5_ex −107 bps, t = −2.32),
+none surviving correction across the four horizons tested.

@@ -54,6 +54,16 @@ def test_t_stat_is_conservative_on_a_zero_variance_series() -> None:
     assert flat["mean_bps"] == 100.0 and flat["t"] == 0.0 and flat["p"] == 1.0
 
 
+def _jitter(d: int, i: int, scale: float = 0.0008) -> float:
+    """Deterministic wobble so per-day rank correlations vary between days.
+
+    Without it every synthetic day yields exactly the same correlation, the daily
+    series has zero variance, and the t is undefined -- which is correct
+    behaviour but tests nothing.
+    """
+    return ((d * 7 + i * 13) % 11 - 5) * scale
+
+
 def _panel(n_days: int, n_names: int, score_fn, ret_fn, n_articles_fn=None):
     rows = []
     for d in range(n_days):
@@ -128,14 +138,16 @@ def test_magnitude_orders_absolute_moves_by_materiality() -> None:
         40,
         lambda d, s: 0.0,
         lambda d, s: (1 if s % 2 else -1)
-        * (s % 4 + 1)
-        * 0.01
-        * (1 + 0.4 * math.sin(d)),
+        * ((s % 4 + 1) * 0.01 * (1 + 0.4 * math.sin(d)) + _jitter(d, s)),
     )
     table, stats = pe.magnitude(df, horizon="f1_ex", field="mat_max")
     assert stats["monotone"] == 1.0
-    assert stats["spread_bps"] > 0 and stats["p"] < 0.01
+    assert stats["spread_bps"] > 0
     assert table["mean_abs_bps"].is_monotonic_increasing
+    # the primary statistic is the per-day rank correlation over the whole
+    # cross-section, not the extremes-only spread
+    assert stats["corr_mean"] > 0.5 and stats["corr_p"] < 0.01
+    assert stats["ext_p"] < 0.01
 
 
 def test_intensity_buckets_by_article_count() -> None:
@@ -143,12 +155,15 @@ def test_intensity_buckets_by_article_count() -> None:
         40,
         40,
         lambda d, s: 0.0,
-        lambda d, s: (1 if s % 2 else -1) * (s + 1) * 0.001 * (1 + 0.4 * math.sin(d)),
+        lambda d, s: (1 if s % 2 else -1)
+        * ((s + 1) * 0.001 * (1 + 0.4 * math.sin(d)) + _jitter(d, s, 0.0002)),
         n_articles_fn=lambda d, s: s + 1,
     )
     table, stats = pe.intensity(df, horizon="f1_ex")
     assert list(table["n_bucket"]) == ["1", "2", "3", "4-5", "6+"]
     assert stats["monotone"] == 1.0 and stats["spread_bps"] > 0
+    # the free baseline is scored with the same statistic as the model fields
+    assert stats["corr_mean"] > 0.5 and stats["corr_p"] < 0.01
 
 
 def test_empty_and_missing_columns_are_handled() -> None:
@@ -170,6 +185,59 @@ def test_magnitude_accepts_either_materiality_column(field: str) -> None:
     df["mat_mean"] = df["mat_max"]
     table, stats = pe.magnitude(df, horizon="f1_ex", field=field)
     assert not table.empty and stats["monotone"] == 1.0
+
+
+def test_magnitude_survives_a_top_level_too_rare_to_pair_daily() -> None:
+    """The failure the rank correlation exists for.
+
+    With 150 articles/day the top materiality level landed on 15 of 8,005 rows, so
+    only 12 of 63 days had both extremes present and the extremes-only spread was
+    reduced to a handful of very noisy observations. The per-day rank correlation
+    uses every row and level, so it keeps all the days.
+    """
+    rows = []
+    for d in range(60):
+        for i in range(40):
+            # level 3 appears on only a couple of days, and only once
+            lvl = 3 if (d % 25 == 0 and i == 0) else i % 3
+            rows.append(
+                {
+                    "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=d),
+                    "symbol": f"S{i}.US",
+                    "mat_max": lvl,
+                    "n_articles": 1,
+                    "f1_ex": (1 if i % 2 else -1)
+                    * ((lvl + 1) * 0.01 + _jitter(d, i)),
+                }
+            )
+    _, stats = pe.magnitude(pd.DataFrame(rows), horizon="f1_ex", field="mat_max")
+    assert stats["corr_n_days"] == 60  # every day usable
+    assert stats["ext_n_days"] < 5  # ...while the extremes pair on almost none
+    assert stats["corr_mean"] > 0.5 and stats["corr_p"] < 0.01
+
+
+def test_magnitude_does_not_round_a_decimal_field_into_one_level() -> None:
+    """expected_move is a decimal return (0.0 ... 0.10). Rounding it to an integer
+    collapsed every level to 0, and the whole test then silently returned nothing
+    rather than failing."""
+    rows = []
+    for d in range(40):
+        for i, b in enumerate([0.0, 0.005, 0.02, 0.05]):
+            for k in range(10):
+                rows.append(
+                    {
+                        "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=d),
+                        "symbol": f"S{i}{k}.US",
+                        "expected_move_max": b,
+                        "n_articles": 1,
+                        "f1_ex": (1 if k % 2 else -1) * (b + _jitter(d, k, 0.0002)),
+                    }
+                )
+    table, stats = pe.magnitude(
+        pd.DataFrame(rows), horizon="f1_ex", field="expected_move_max"
+    )
+    assert len(table) == 4  # four levels survive, not one
+    assert stats["monotone"] == 1.0 and stats["corr_mean"] > 0.5
 
 
 def test_calibration_reads_predicted_against_realised() -> None:
@@ -224,3 +292,30 @@ def test_calibration_needs_the_field_and_horizon_present() -> None:
     df = _panel(5, 5, lambda d, s: 0.0, lambda d, s: 0.01)
     t, s = pe.calibration(df, field="expected_move_max")  # field absent
     assert t.empty and s == {}
+
+
+def test_cross_section_uses_the_buckets_that_materialised_not_the_ones_requested() -> None:
+    """A saturated score collapses under duplicates="drop" -- v4's sentiment is
+    64.8% exactly neutral, giving 2 buckets from a request for 5. Asking for
+    bucket `n_buckets - 1` then found nothing and the test returned silently."""
+    n_days, n_names = 60, 40
+    rows = []
+    for d in range(n_days):
+        for i in range(n_names):
+            # six distinct scores (clearing MIN_DISTINCT_SCORES) but ~65% of the
+            # mass on exactly 0.0, like v4's sentiment
+            score = 0.0 if i % 3 else [-0.6, -0.3, 0.3, 0.6, 1.0][(i // 3) % 5]
+            rows.append(
+                {
+                    "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=d),
+                    "symbol": f"S{i}.US",
+                    "score": score,
+                    "f1_ex": score * 0.01 + _jitter(d, i),
+                }
+            )
+    _, stats = pe.cross_section(
+        pd.DataFrame(rows), horizon="f1_ex", score_col="score", n_buckets=5
+    )
+    assert stats["buckets_realised"] < 5  # fewer buckets than requested
+    assert stats.get("n_days", 0) > 0  # ...but a verdict is still produced
+    assert stats["mean_bps"] > 0 and stats["p"] < 0.05
