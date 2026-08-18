@@ -38,6 +38,24 @@
 #    whatever base rate the prompt states (sec 12, sec 16), so v5 states the one it
 #    should comply with instead of only warning it downward.
 #
+#    MEASURED, first attempt (344 articles, paired against v4 on the same sample):
+#    the shift happened but landed in the wrong bucket.
+#        none / minor / meaningful / major
+#        v4:  16.8 / 68.5 / 14.4 / 0.3
+#        v5a:  4.1 / 40.4 / 54.1 / 1.5
+#    Saying "none and meaningful are each common" over-fed `meaningful` and
+#    recreated the pile-on-the-middle failure the original downward hint existed to
+#    prevent (v2: 73% on that level). The wording below is the correction: `minor`
+#    is named as the modal answer, `meaningful` is given an exclusion ("being real
+#    and specific is not enough"), and the one-in-twenty rate for `major` is kept.
+#
+#    Worth stating plainly: the magnitude signal was IDENTICAL across v4 and v5a
+#    (rank corr 0.089 both, market-adjusted). The ~5% target for `major` came from
+#    analogy with the v2 corpus, not from evidence that a fatter top bucket
+#    predicts better, so this is tuned for USABILITY -- at 1.5% a level yields ~5
+#    rows per day, which is what starved the extremes statistic in sec 16 and would
+#    starve any bucket-based strategy -- and not for a measured gain in correlation.
+#
 # What is deliberately NOT changed: the label mechanism (v3's ordinal labels beat
 # v2's numeric anchors 5x on the magnitude axis, sec 15), the 4-level materiality
 # scale itself (it produced t=6.88 and is the thing that works), `horizon` with no
@@ -72,7 +90,7 @@ Rules:
   - "minor": real but routine -- ordinary PR, a small contract, a product update, an analyst note with no rating change, a scheduled filing.
   - "meaningful": changes the near-term picture -- results roughly in line or modestly off, guidance reiterated, a rating change with a new target, a mid-size deal or acquisition, a notable customer won or lost, a new product with real revenue attached.
   - "major": changes the investment case -- results or guidance clearly away from expectations, M&A involving this company, a regulatory or legal decision that matters, a CEO or CFO departure, a dividend or buyback started or cut, financing that changes the balance sheet, fraud or an investigation, a trial or approval outcome.
-  As a rough guide across a day's news: most articles are "minor", "none" and "meaningful" are each common, and roughly one article in twenty is "major". "major" is NOT a rare-exception label -- if the criteria above fit, use it.
+  As a rough guide across a day's news: "minor" is by far the most common answer. Reserve "meaningful" for news that genuinely changes the near-term picture -- being real and specific is not enough on its own, or everything becomes "meaningful". Roughly one article in twenty is "major"; it is NOT a rare-exception label, so use it whenever the criteria above fit.
 - `horizon`: when the move you expect would happen. "days" = it plays out immediately. "weeks" = it takes a few reporting cycles or news follow-ups. "quarters" = it shows up in future results. Always choose one of the three, even for news you judged immaterial -- pick the horizon the event would matter over if it mattered at all.
 - `sentiment`: the market-relevant tone for the MAIN SUBJECT. "very_negative" = fraud, bankruptcy, collapse. "negative" = miss, guidance cut, lawsuit lost, downgrade. "slightly_negative" = a soft spot in otherwise routine news. "neutral" = genuinely no directional implication, or genuinely mixed. "slightly_positive" = a bright spot in routine news. "positive" = beat, raise, approval, upgrade. "very_positive" = transformational deal, blow-out quarter. Do NOT use "neutral" as a way of saying you are unsure -- if the text leans one way at all, pick the "slightly_" label and lower `confidence` instead.
 - `confidence`: how well the text supports the values you gave -- "low", "medium" or "high".
