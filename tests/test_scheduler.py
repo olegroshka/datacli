@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import scheduler.commands as scheduler_commands
 from scheduler.backends.base import FakeBackend, RunnerAction
 from scheduler.backends.windows import (
     OBSERVATION_SCRIPT,
@@ -196,6 +197,43 @@ def test_registry_executes_safe_local_sync_and_returns_typed_noop(
     assert first.outcome == "succeeded" and first.effect == "complete"
     assert second.outcome == "no_op" and second.effect == "none"
     assert (tmp_path / "backup" / "STATUS.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_registry_runs_eodhd_through_module_entrypoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _config(tmp_path)
+    context = ValidationContext.current(
+        REPO,
+        Path(sys.executable),
+        config,
+        environment={"EODHD_API_KEY": "fixture-key"},
+    )
+    validated = default_registry().validate(
+        "eodhd", "refresh", ["--with-fundamentals", "--run"], context
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(args, *, cwd, env, timeout):
+        captured.update(args=list(args), cwd=cwd, env=env, timeout=timeout)
+        return subprocess.CompletedProcess(list(args), 0, "", ""), False
+
+    monkeypatch.setattr(scheduler_commands, "_run_process_tree", fake_run)
+    result = default_registry().execute(
+        validated.spec,
+        ExecutionContext(context, validated.bindings, timeout_seconds=30),
+    )
+
+    assert result.outcome == "succeeded"
+    assert captured["args"] == [
+        str(sys.executable),
+        "-m",
+        "eodhd.cli",
+        "refresh",
+        "--with-fundamentals",
+        "--run",
+    ]
+    assert captured["cwd"] == REPO
 
 
 def test_store_round_trip_cas_tombstone_and_snapshot_retention(tmp_path: Path) -> None:

@@ -761,7 +761,8 @@ class CommandRegistry:
         if command.family == "eodhd":
             args = [
                 str(validation.interpreter),
-                str(validation.repo_root / "eodhd" / "cli.py"),
+                "-m",
+                "eodhd.cli",
                 command.verb,
                 *command.argv,
             ]
