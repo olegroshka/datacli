@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -28,6 +27,8 @@ from .model import (
     new_run_id,
     utc_now,
 )
+from .notify import notify_terminal
+from .power import awake_clock, keep_system_awake
 from .store import JobStore, NotFound, ProfileRegistry
 
 RUNNER_VERSION = "datacli-scheduler-1"
@@ -281,12 +282,49 @@ class JobRunner:
         backend_cause_hint: str | None,
         scheduled_for_hint: str | None,
     ) -> RunRecord:
-        started_monotonic = time.monotonic()
+        # The timeout budget is measured on the *awake* clock (sleep and
+        # hibernation excluded) so it agrees with the OS-level wait the
+        # child-process timeout uses, and a power request keeps the machine
+        # from idling to sleep mid-workflow. See scheduler/power.py.
+        started_awake = awake_clock()
+        results: list[StepResult] = []
+        terminal_outcome = "succeeded"
+        power = keep_system_awake()
+        handle.append("power_request", {"system_required": power.__enter__()})
+        try:
+            terminal_outcome, results = self._execute_steps(
+                spec, handle, validation, started_awake
+            )
+        finally:
+            power.__exit__(None, None, None)
+        return self._terminal(
+            handle,
+            observed_started,
+            spec.job_id,
+            spec.generation,
+            spec.digest,
+            dispatch_kind,
+            terminal_outcome,
+            tuple(results),
+            snapshot_status="loaded",
+            snapshot_ref=self.store.snapshot_ref(spec),
+            bindings=spec.runtime_bindings,
+            backend_cause_hint=backend_cause_hint,
+            scheduled_for_hint=scheduled_for_hint,
+        )
+
+    def _execute_steps(
+        self,
+        spec,
+        handle: RunHandle,
+        validation: ValidationContext,
+        started_awake: float,
+    ) -> tuple[str, list[StepResult]]:
         results: list[StepResult] = []
         terminal_outcome = "succeeded"
         for index, command in enumerate(spec.steps, 1):
             remaining = spec.policy.execution_timeout_seconds - (
-                time.monotonic() - started_monotonic
+                awake_clock() - started_awake
             )
             if remaining <= 0:
                 terminal_outcome = "timed_out"
@@ -343,21 +381,7 @@ class JobRunner:
         else:
             if results and all(result.outcome == "no_op" for result in results):
                 terminal_outcome = "no_op"
-        return self._terminal(
-            handle,
-            observed_started,
-            spec.job_id,
-            spec.generation,
-            spec.digest,
-            dispatch_kind,
-            terminal_outcome,
-            tuple(results),
-            snapshot_status="loaded",
-            snapshot_ref=self.store.snapshot_ref(spec),
-            bindings=spec.runtime_bindings,
-            backend_cause_hint=backend_cause_hint,
-            scheduled_for_hint=scheduled_for_hint,
-        )
+        return terminal_outcome, results
 
     @staticmethod
     def _not_run(commands: Sequence, *, start: int = 1) -> list[StepResult]:
@@ -406,7 +430,20 @@ class JobRunner:
             runner_version=RUNNER_VERSION,
             command_contract_version=COMMAND_CONTRACT_VERSION,
         )
-        handle.append("run_terminal", {"record": record.to_dict()})
+        # Status files / notify command run before the terminal event so the
+        # journal still ends with run_terminal (recovery relies on that); the
+        # notifier's own result rides along in the terminal payload.
+        try:
+            notified = notify_terminal(
+                record,
+                config_path=self.store.profile.config_path,
+                environment=self.environment,
+            )
+        except Exception as exc:  # noqa: BLE001 - a notifier must not break a run
+            notified = {"error": f"{type(exc).__name__}: {exc}"}
+        handle.append(
+            "run_terminal", {"record": record.to_dict(), "notified": notified}
+        )
         return record
 
 

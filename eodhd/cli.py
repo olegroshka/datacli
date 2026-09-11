@@ -27,6 +27,7 @@ import difflib
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -553,27 +554,48 @@ def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> i
         return 0
 
     failures: list[tuple[Step, int]] = []
+    timings: list[tuple[Step, float, str]] = []
     completed = 0
+    run_started = time.monotonic()
     for i, step in enumerate(steps, 1):
         print(f"\n===== [{i}/{len(steps)}] {step.lane} :: {step.kind} =====")
         print(f"    {step.display()}")
+        step_started = time.monotonic()
         rc = subprocess.run(step.argv(), cwd=str(REPO_ROOT)).returncode
+        elapsed = time.monotonic() - step_started
         if rc != 0:
             failures.append((step, rc))
-            print(f"    -> FAILED (exit {rc})")
+            timings.append((step, elapsed, f"FAILED (exit {rc})"))
+            print(f"    -> FAILED (exit {rc}) after {_hms(elapsed)}")
             if not keep_going:
                 print("Stopping (use --keep-going to continue past failures).")
                 break
         else:
             completed += 1
+            timings.append((step, elapsed, "ok"))
+            print(f"    -> ok in {_hms(elapsed)}")
 
+    # Per-step wall time so a slow day can be attributed to a lane without
+    # reading the whole log (sleep/hibernation is not excluded here).
+    print("\nRefresh timing (wall clock per step):")
+    for step, elapsed, status in timings:
+        print(f"  {_hms(elapsed):>9}  {step.lane} :: {step.kind}  {status}")
     print(
         f"\nRefresh finished: {completed} ok, {len(failures)} failed, "
-        f"{len(steps) - completed - len(failures)} not run."
+        f"{len(steps) - completed - len(failures)} not run"
+        f" in {_hms(time.monotonic() - run_started)}."
     )
     for step, rc in failures:
         print(f"  FAILED: {step.lane} {step.kind} (exit {rc})")
     return 1 if failures else 0
+
+
+def _hms(seconds: float) -> str:
+    """``h:mm:ss`` for a duration."""
+    total = int(round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
 # --------------------------------------------------------------------------- #
