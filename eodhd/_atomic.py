@@ -25,8 +25,11 @@ def to_parquet(df: pd.DataFrame, path: Path | str, **kwargs: Any) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp(target)
-    df.to_parquet(tmp, **kwargs)
-    os.replace(tmp, target)
+    try:
+        df.to_parquet(tmp, **kwargs)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def to_csv(df: pd.DataFrame, path: Path | str, **kwargs: Any) -> None:
@@ -34,8 +37,11 @@ def to_csv(df: pd.DataFrame, path: Path | str, **kwargs: Any) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp(target)
-    df.to_csv(tmp, **kwargs)
-    os.replace(tmp, target)
+    try:
+        df.to_csv(tmp, **kwargs)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def write_table(table: Any, path: Path | str, **kwargs: Any) -> None:
@@ -45,5 +51,8 @@ def write_table(table: Any, path: Path | str, **kwargs: Any) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp(target)
-    pq.write_table(table, tmp, **kwargs)
-    os.replace(tmp, target)
+    try:
+        pq.write_table(table, tmp, **kwargs)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)

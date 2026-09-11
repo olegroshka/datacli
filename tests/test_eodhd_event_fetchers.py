@@ -4,12 +4,14 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCRIPTS_EODHD = _REPO_ROOT / "eodhd"
 if str(_SCRIPTS_EODHD) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_EODHD))
 
+import _atomic  # type: ignore  # noqa: E402
 import eodhd_event_fetch_common as common  # type: ignore  # noqa: E402
 import fetch_eodhd_dividends as dividends  # type: ignore  # noqa: E402
 import fetch_eodhd_splits as splits  # type: ignore  # noqa: E402
@@ -300,3 +302,85 @@ def test_rebuild_event_audit_keeps_existing_rows_without_state() -> None:
     assert len(rebuilt) == 1
     assert rebuilt.loc[0, "ticker"] == "CCC"
     assert rebuilt.loc[0, "status"] == "empty"
+
+
+def test_dividends_flush_atomically_replaces_and_reads_fixture_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "dividends_history.parquet"
+    pd.DataFrame(
+        [
+            {
+                "ticker": "AAA",
+                "exchange": "LSE",
+                "ex_date": "2025-01-01",
+                "dividend": 1.0,
+            }
+        ]
+    ).to_parquet(output_path, index=False)
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return [{"date": "2026-01-02", "value": 1.25, "currency": "GBP"}]
+
+    class Session:
+        params = {}
+
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(dividends, "DIVIDENDS_PATH", output_path)
+    monkeypatch.setattr(
+        dividends, "DIVIDENDS_AUDIT_PATH", tmp_path / "dividends_fetch_audit.csv"
+    )
+    monkeypatch.setattr(
+        dividends, "DIVIDENDS_STATE_PATH", tmp_path / "dividends_fetch_state.csv"
+    )
+    monkeypatch.setattr(dividends, "_get_api_key", lambda: "fixture-key")
+    monkeypatch.setattr(dividends.requests, "Session", Session)
+    monkeypatch.setattr(dividends, "FLUSH_EVERY", 1)
+    monkeypatch.setattr(dividends, "DELAY", 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fetch_eodhd_dividends.py",
+            "--tickers",
+            "BBB.LSE",
+            "--from",
+            "2026-01-01",
+            "--to",
+            "2026-01-03",
+        ],
+    )
+
+    dividends.main()
+
+    result = pd.read_parquet(output_path)
+    assert set(zip(result["ticker"], result["ex_date"])) == {
+        ("AAA", "2025-01-01"),
+        ("BBB", "2026-01-02"),
+    }
+    assert not output_path.with_name(output_path.name + ".tmp").exists()
+
+
+def test_atomic_parquet_failure_keeps_previous_output_and_cleans_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "dividends_history.parquet"
+    previous = pd.DataFrame([{"ticker": "AAA", "value": 1.0}])
+    previous.to_parquet(output_path, index=False)
+
+    def write_partial_then_fail(self, path, **kwargs):
+        Path(path).write_bytes(b"partial parquet")
+        raise OSError("fixture parquet failure")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", write_partial_then_fail)
+    with pytest.raises(OSError, match="fixture parquet failure"):
+        _atomic.to_parquet(pd.DataFrame([{"ticker": "BBB", "value": 2.0}]), output_path)
+
+    assert pd.read_parquet(output_path).equals(previous)
+    assert not output_path.with_name(output_path.name + ".tmp").exists()

@@ -11,6 +11,7 @@ import re
 import time
 from pathlib import Path
 
+import _atomic
 import pandas as pd
 import requests
 from fetch_eodhd_eu_fundamentals import RAW_DIR as UK_EU_COMMON_RAW_DIR

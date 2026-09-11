@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+import _atomic
 import pandas as pd
 import requests
 from eodhd_event_fetch_common import (

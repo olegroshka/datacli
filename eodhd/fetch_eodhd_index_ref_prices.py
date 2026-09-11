@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+import _atomic
 import pandas as pd
 import requests
 from fetch_eodhd_eu_prices import (

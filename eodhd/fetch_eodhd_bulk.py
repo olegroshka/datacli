@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import _atomic
 import pandas as pd
 import requests  # type: ignore[import-untyped]
 
