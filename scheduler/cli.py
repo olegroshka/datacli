@@ -866,13 +866,23 @@ def _command(value: Sequence[str]) -> tuple[str, str, list[str]]:
     return parts[0], parts[1], parts[2:]
 
 
-def _render(value: Any, *, json_output: bool) -> None:
+def _json_value(value: Any) -> Any:
     if hasattr(value, "to_dict"):
-        value = value.to_dict()
+        return _json_value(value.to_dict())
     elif hasattr(value, "__dataclass_fields__"):
-        value = asdict(value)
+        return _json_value(asdict(value))
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _render(value: Any, *, json_output: bool) -> None:
     if json_output:
-        print(json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False))
+        print(
+            json.dumps(_json_value(value), sort_keys=True, indent=2, ensure_ascii=False)
+        )
     elif isinstance(value, dict):
         for key, item in value.items():
             if isinstance(item, (dict, list, tuple)):

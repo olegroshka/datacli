@@ -900,6 +900,35 @@ def test_documented_cli_draft_grammar_with_fake_backend(tmp_path: Path, capsys) 
     assert '"state": "in_sync"' in output
 
 
+def test_json_drafts_serializes_dataclass_collection(tmp_path: Path, capsys) -> None:
+    state = tmp_path / "state"
+    config, _ = _config(tmp_path)
+    profile = ProfileRegistry(state).ensure(REPO, Path(sys.executable), config)
+    store = JobStore(profile, state)
+    store.put_draft(
+        JobDraft(
+            draft_id="draft-json",
+            profile_id=profile.profile_id,
+            job_id="draft-json",
+            display_name="Draft JSON",
+            trigger=TriggerSpec.manual(),
+        )
+    )
+
+    common = [
+        "--state-root",
+        str(state),
+        "--repo-root",
+        str(REPO),
+        "--config",
+        str(config),
+        "--json",
+        "drafts",
+    ]
+    assert schedule_main(common, backend_factory=lambda _state_root: FakeBackend()) == 0
+    assert json.loads(capsys.readouterr().out)[0]["draft_id"] == "draft-json"
+
+
 def test_scheduler_help_explains_workflows_safety_and_defaults(capsys) -> None:
     with pytest.raises(SystemExit) as top_exit:
         schedule_main(["--help"])
