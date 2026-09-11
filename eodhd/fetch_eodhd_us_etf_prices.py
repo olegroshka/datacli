@@ -8,6 +8,7 @@ import pathlib
 from datetime import datetime, timezone
 
 import _atomic
+import _http
 import pandas as pd
 import requests
 from fetch_eodhd_eu_prices import (
@@ -213,11 +214,24 @@ def main() -> None:
                 skipped,
             )
 
-        response = session.get(
-            f"{EODHD_BASE}/eod/{ticker}.{exchange}",
-            params={"from": fetch_from, "to": fetch_to, "period": "d", "fmt": "json"},
-            timeout=HTTP_TIMEOUT,
-        )
+        try:
+            response = _http.get_with_retry(
+                session,
+                f"{EODHD_BASE}/eod/{ticker}.{exchange}",
+                params={
+                    "from": fetch_from,
+                    "to": fetch_to,
+                    "period": "d",
+                    "fmt": "json",
+                },
+                timeout=HTTP_TIMEOUT,
+                log=log,
+                label=f"{ticker}.{exchange}",
+            )
+        except requests.RequestException as exc:
+            log.warning("Request failed for %s.%s: %s", ticker, exchange, exc)
+            skipped += 1
+            continue
         if response.status_code != 200:
             skipped += 1
             continue

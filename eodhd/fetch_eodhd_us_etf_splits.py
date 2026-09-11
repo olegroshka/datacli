@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 import _atomic
+import _http
 import pandas as pd
 import requests
 from eodhd_event_fetch_common import (
@@ -152,15 +153,23 @@ def main() -> None:
             continue
         fetch_from, fetch_to = fetch_window
         attempted += 1
-        response = session.get(
-            f"{EODHD_BASE}/splits/{ticker}.{exchange}",
-            params={
-                "fmt": "json",
-                "to": fetch_to,
-                **({"from": fetch_from} if fetch_from else {}),
-            },
-            timeout=HTTP_TIMEOUT,
-        )
+        try:
+            response = _http.get_with_retry(
+                session,
+                f"{EODHD_BASE}/splits/{ticker}.{exchange}",
+                params={
+                    "fmt": "json",
+                    "to": fetch_to,
+                    **({"from": fetch_from} if fetch_from else {}),
+                },
+                timeout=HTTP_TIMEOUT,
+                log=log,
+                label=f"{ticker}.{exchange}",
+            )
+        except requests.RequestException as exc:
+            log.warning("Request failed for %s.%s: %s", ticker, exchange, exc)
+            skipped += 1
+            continue
         if response.status_code != 200:
             skipped += 1
             continue
