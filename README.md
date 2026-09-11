@@ -105,7 +105,7 @@ eodhd> describe VAR.OL          # everything known about one ticker
 | **6. explore** | `describe` · `find` · `rows` · `coverage` · `sql` |
 | **7. score** | `score plan` → `score run --run` → `score panel-eval` |
 | **8. ask** | `ask` · `agent` · `investigate` · `lab run` (optional LLM lab) |
-| **9. back up** | `sync` → `sync push --run` |
+| **9. back up** | `sync` → `sync push --run` (`sync reconcile` rebuilds the manifest from Drive and lists duplicate copies) |
 
 Full command reference, configuration keys and architecture:
 **[`docs/REFERENCE.md`](docs/REFERENCE.md)**.

@@ -3,8 +3,8 @@ id: DD-001
 title: Scheduler domain records, ports and execution contracts
 status: STABLE
 owner: Oleg Roshka
-last_reviewed: 2026-08-17
-version: 1.2
+last_reviewed: 2026-09-11
+version: 1.3
 sources:
   - KB-001
   - KB-002
@@ -138,7 +138,7 @@ never by token/key value. The guarantee does not cover external programs.
 | `same_job_overlap` | enum | `skip` in the runner; OS adapter must permit launch |
 | `resource_overlap` | enum | `skip` |
 | `lock_wait_seconds` | non-negative integer | `0` |
-| `execution_timeout_seconds` | positive integer | runner-owned soft timeout; explicit per job/default |
+| `execution_timeout_seconds` | positive integer | runner-owned soft timeout; explicit per job/default. Measured on the runner's *awake* clock (system sleep and hibernation excluded, Windows `QueryUnbiasedInterruptTime`, otherwise monotonic) so it agrees with the OS relative wait that bounds each child process. The runner also holds a system-required power request for the run's duration and journals whether it was granted (`power_request`). |
 | `retry` | structured policy | `none` until failure classes exist |
 | `retain_runs` | positive integer/duration | explicit retention policy |
 
@@ -299,7 +299,11 @@ startup, there is no run lifecycle and no `RunRecord`.
    credential cache.
 8. Execute each step at most once in order; any credential refresh occurs under
    its declared resource lock. There is no implicit retry.
-9. Flush a terminal event, release resources and update only rebuildable indexes.
+9. Write the job's `LAST_RUN.txt`/`LAST_FAILURE.txt` status files and run the
+   optional `notify_command` (best effort, bounded, never alters the outcome),
+   then flush the terminal event (carrying the notifier's result), release
+   resources and update only rebuildable indexes. The journal always ends
+   with `run_terminal`.
 
 An edit after step 6 affects the next run; the active run never changes
 definition mid-flight.

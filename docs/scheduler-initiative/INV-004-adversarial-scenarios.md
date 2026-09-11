@@ -3,8 +3,8 @@ id: INV-004
 title: Adversarial scheduler scenarios and failure modes
 status: STABLE
 owner: Oleg Roshka
-last_reviewed: 2026-08-17
-version: 1.2
+last_reviewed: 2026-09-11
+version: 1.3
 sources:
   - KB-001
   - KB-002
@@ -71,6 +71,10 @@ The defensible first-release contract is therefore:
 | AS-27 | MEDIUM | Schedule creation occurs while offline and “full preflight” either fails forever or makes a paid/network call. | Separate static validation, non-interactive readiness and runtime/live preflight. Install performs no paid work and need not prove transient network reachability; execution records runtime unavailability. | Offline create/enable test with zero network calls. DD-001/WP-01. |
 | AS-28 | HIGH | A command uploads/fetches some items, then fails; the run is labelled simply failed and appears to have done nothing. | `CommandResult` records effect as `none`, `complete`, `partial` or `unknown` plus retry guidance. Workflow stops, does not roll back successful domain work and never auto-retries v1 paid work. | Partial refresh/push failure fixtures. INV-002/DD-001/WP-01. |
 | AS-29 | HIGH | The runner validates one data root/backend, then a legacy subprocess re-reads changed ambient config and mutates another target. | Build a frozen non-secret `ExecutionContext` after binding validation and pass it to every adapter/child; adapters may not independently re-resolve mutable config. Datacli config writes use an exclusive config resource lock; external/manual edits are detected where possible and remain outside the lock guarantee. | Config-change-between-steps and child-env capture tests. ADR-001/DD-001/WP-01. |
+| AS-30 | HIGH | The machine sleeps mid-run (observed 2026-09-09: 10.4 h asleep inside a 16.2 h run). `time.monotonic()` counts sleep, the OS relative wait used by the child-process timeout does not, so a healthy 5.8 h refresh was voided as `timed_out` at the next step boundary while the child was never interrupted. | The runner holds an `ES_SYSTEM_REQUIRED` power request for the whole run (journaled as `power_request`) and measures `execution_timeout_seconds` on an awake clock (`QueryUnbiasedInterruptTime`, fallback monotonic) so both mechanisms agree. Sleep forced by lid/manual action still pauses the run; the budget then excludes that time. | Fake awake clock: 6 h awake inside a 16 h calendar run succeeds, 13 h awake times out. `scheduler/power.py`, `tests/test_scheduler_runtime.py`. DD-001. |
+| AS-31 | HIGH | An unattended reboot (Windows Update at 02:00 on 2026-09-10) leaves no interactive session at trigger time. The `InteractiveToken` task cannot start, Windows treats it as a condition miss rather than a missed start, and `StartWhenAvailable` does not replay it after the next logon. No datacli run record exists. | Documented limitation of the accepted OQ-002 principal policy; the desired/backend/execution planes stay separate and nothing infers a run. Enabling Task Scheduler history gives Windows-side evidence. True logged-out execution needs the separate principal/credential ADR that OQ-002 already reserves. | Logon/logoff timeline versus trigger time in the System log (Winlogon 7001/7002). OQ-002. |
+| AS-32 | HIGH | A step's own state file is lost silently (the sync manifest read as empty on 2026-09-11 after an unclean shutdown on 2026-08-31) and the step re-does the world: 3,156 planned creates, duplicate Drive copies. | Out of the scheduler's contract but inside its blast radius: the command itself must be idempotent. `sync push` now treats an unreadable manifest as a loud failure, rebuilds an empty manifest from the backend listing before uploading, updates existing remote copies by name instead of creating, and fsyncs its state file. | `tests/test_storage_push.py`, `tests/test_storage_gdrive.py`. INV-002. |
+| AS-33 | MEDIUM | A failed or voided run is invisible: nobody is told, and the only symptom is stale data in Drive days later. | Every terminal outcome writes `LAST_RUN.txt` (and `LAST_FAILURE.txt` when not succeeded/no_op) under the job's run directory and, when `[scheduler] notify_command` is configured, runs it (failures only unless `notify_on = "always"`). The notifier's result is journaled inside `run_terminal`; it can never change the outcome. | `tests/test_scheduler_runtime.py`; `scripts/notify_toast.ps1`. DD-001. |
 
 ## Remaining adversarial questions
 

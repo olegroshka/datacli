@@ -3,8 +3,8 @@ id: INV-002
 title: Schedulable command capability inventory
 status: STABLE
 owner: Oleg Roshka
-last_reviewed: 2026-08-17
-version: 1.1
+last_reviewed: 2026-09-11
+version: 1.2
 sources:
   - KB-001
   - KB-002
@@ -28,13 +28,14 @@ substrate v1.0. A command absent from this table is unsupported. `CORE`,
 | `eodhd qc ...` | reads and reports quality | none | shared `eodhd-data-root` | OPTIONAL | output must be log-safe |
 | `macro fetch ... --run` | incrementally mutates macro parquet; not included by current EODHD-root sync | FRED/EODHD key; network | exclusive `macro-data-root` | OPTIONAL | selected provider credentials; writable root; no implied backup |
 | `macro status` | reads macro coverage | none | shared `macro-data-root` | OPTIONAL | macro root resolves |
-| `sync push ... --run` | pushes through configured sync backend | Drive token/network or local destination | shared `eodhd-data-root`; exclusive sync manifest/backend target; exclusive credential cache when refresh can write | CORE | non-interactive auth; backend configuration; source root exists |
+| `sync push ... --run` | pushes through configured sync backend; continues past per-file failures by default (`--fail-fast` stops at the first), retries transient errors, rebuilds an empty manifest from the backend before uploading and fails loudly on an unreadable one | Drive token/network or local destination | shared `eodhd-data-root`; exclusive sync manifest/backend target; exclusive credential cache when refresh can write | CORE | non-interactive auth; backend configuration; source root exists |
 | `sync status ...` | local scan vs local manifest | none | shared `eodhd-data-root` | OPTIONAL | source root and backend config resolve |
 | `score plan ...` | reads scoring state and estimates work | model metadata; normally local | shared `eodhd-data-root` | DEFER | scoring configuration |
 | `score run ... --run` | writes scores/embeddings; may spend budget | model service and possible paid budget | exclusive score outputs; shared corpus | DEFER | explicit budget policy and model health checks |
 | `score status` | reads scoring state | none | shared `eodhd-data-root` | DEFER | scoring dependencies installed |
 | `eodhd probe ...` | paid ad-hoc probe and cache writes | EODHD key; network; paid quota | probe cache write | DEFER | not a routine job; needs a separate quota policy |
 | `sync login` | interactive browser OAuth | Google; browser | token write | FORBID | must be performed manually before scheduling |
+| `sync reconcile ...` | rebuilds the manifest from the backend listing; with `--run --trash-duplicates` soft-deletes duplicate remote copies | Drive token/network | exclusive sync manifest (takes the `sync push --run` locks) | FORBID | manual recovery with human review of the duplicate list; the scheduled push already self-heals an empty manifest |
 | `eodhd config ...` | changes machine/repository configuration | varies | config write | FORBID | configuration is not scheduled work |
 | exploratory commands (`describe`, `find`, `rows`, `coverage`, `sql`) | interactive/user-directed reads | none | shared read | FORBID | schedule reports can be designed separately if needed |
 | lab/agent/investigation commands | interactive and model-directed | model-dependent | variable | FORBID | no deterministic headless contract |

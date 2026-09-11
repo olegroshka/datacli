@@ -4,9 +4,9 @@ title: What Windows account, dispatch, time and power defaults should schedules 
 status: STABLE
 question_state: RESOLVED
 owner: Oleg Roshka
-last_reviewed: 2026-08-17
+last_reviewed: 2026-09-11
 target_resolution: 2026-08-24
-version: 1.0
+version: 1.1
 sources:
   - KB-001
   - KB-002
@@ -127,3 +127,18 @@ separate approval gate rather than an adapter flag.
 Resolved by owner authorization on 2026-08-17: the recommended first-release
 defaults are accepted as an amendment to ADR-002 and bind the Windows XML
 fixtures.
+
+## Observed consequences (2026-09-11 review)
+
+- 2026-09-10: Windows Update rebooted the machine at 02:00 with the user logged
+  off; the 05:00 trigger found no interactive session, the `InteractiveToken`
+  task did not start, and `StartWhenAvailable` did not replay it after the
+  08:32 logon. No datacli run record exists for that day (INV-004 AS-31).
+  This is the accepted limitation above, now seen in production. If daily
+  delivery must survive unattended reboots, the owner must open the deferred
+  principal/credential ADR (password logon or a service account); it is not
+  an adapter flag.
+- 2026-09-09: `WakeToRun` woke the machine but nothing kept it awake; it slept
+  10.4 h mid-run. The runner now holds a system-required power request and
+  measures the timeout on an awake clock (INV-004 AS-30, DD-001).
+- This machine is a desktop without a battery, so `ac_only=true` is inert here.
