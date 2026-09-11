@@ -4,7 +4,7 @@ title: Scheduler initiative substrate inventory
 status: STABLE
 owner: Oleg Roshka
 last_reviewed: 2026-09-11
-version: 1.4
+version: 1.5
 sources:
   - Shared Substrate v0.2, sections 4 and Appendix A
 depends_on: [KB-001, KB-002, INV-002, INV-003, INV-004, DD-001, ADR-001, ADR-002, ADR-003, ADR-004, ADR-005, OQ-001, OQ-002, OQ-003, GLOSSARY]
@@ -32,15 +32,15 @@ referenced_by: [BOOTSTRAP-SCHEDULER]
 | KB-002 | `KB-002-current-system.md` | STABLE | 1.2 | verified facts about current datacli execution |
 | INV-002 | `INV-002-command-capability.md` | STABLE | 1.2 | schedulable command capability matrix |
 | INV-003 | `INV-003-implementation-work-packages.md` | STABLE | 1.3 | dependency-ordered technical expansion |
-| INV-004 | `INV-004-adversarial-scenarios.md` | STABLE | 1.3 | adversarial scenarios, corrected guarantees and failure-mode oracles |
-| DD-001 | `DD-001-scheduler-domain-contracts.md` | STABLE | 1.3 | domain records, ports, states, execution semantics |
+| INV-004 | `INV-004-adversarial-scenarios.md` | STABLE | 1.4 | adversarial scenarios, corrected guarantees and failure-mode oracles |
+| DD-001 | `DD-001-scheduler-domain-contracts.md` | STABLE | 1.4 | domain records, ports, states, execution semantics |
 | ADR-001 | `ADR-001-shared-execution-substrate.md` | STABLE / ACCEPTED | 1.0 | shared execution substrate and adapter boundary |
 | ADR-002 | `ADR-002-windows-task-scheduler-adapter.md` | STABLE / ACCEPTED | 1.2 | native Windows scheduling adapter |
 | ADR-003 | `ADR-003-allowlisted-argv-workflows.md` | STABLE / ACCEPTED | 1.0 | allowed command representation and workflow semantics |
 | ADR-004 | `ADR-004-desired-state-reconciliation.md` | STABLE / ACCEPTED | 1.0 | desired/backend/execution state and immutable snapshots |
 | ADR-005 | `ADR-005-locale-neutral-windows-observation.md` | STABLE / ACCEPTED | 1.1 | fixed read-only locale-neutral Task Scheduler observation |
 | OQ-001 | `OQ-001-definition-storage-and-profile-identity.md` | STABLE / RESOLVED | 1.0 | definition location and profile identity |
-| OQ-002 | `OQ-002-windows-runtime-policy.md` | STABLE / RESOLVED | 1.1 | Windows principal, dispatch, time and power defaults |
+| OQ-002 | `OQ-002-windows-runtime-policy.md` | STABLE / RESOLVED | 1.2 | Windows principal, dispatch, time and power defaults |
 | OQ-003 | `OQ-003-mvp-command-and-workflow-ux.md` | STABLE / RESOLVED | 1.1 | first-release command set and workflow UX |
 | GLOSSARY | `GLOSSARY.md` | STABLE | 1.0 | authoritative scheduler terminology |
 

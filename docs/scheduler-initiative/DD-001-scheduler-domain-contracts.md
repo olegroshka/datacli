@@ -4,7 +4,7 @@ title: Scheduler domain records, ports and execution contracts
 status: STABLE
 owner: Oleg Roshka
 last_reviewed: 2026-09-11
-version: 1.3
+version: 1.4
 sources:
   - KB-001
   - KB-002
@@ -83,6 +83,7 @@ history unless the referenced snapshot is retained.
 | `start_when_available` | boolean | yes | allows a delayed start; does not promise replay of every miss |
 | `wake_to_run` | boolean | yes | never implied |
 | `ac_only` | boolean | yes | never implied |
+| `logon` | `interactive`, `logged_off` | yes (default `interactive`) | `interactive` = Windows InteractiveToken, the user must stay logged on; `logged_off` = S4U, runs in session 0 with the user profile loaded and no stored password, registration needs an elevated terminal. The default is omitted from the digest so earlier definitions keep their digest. |
 
 ### `CommandSpec`
 

@@ -78,6 +78,7 @@ SCHEDULE_OPERATION_OPTIONS: dict[str, tuple[str, ...]] = {
         "--days",
         "--wake",
         "--battery",
+        "--logged-off",
         "--",
     ),
     "create": (
@@ -89,6 +90,7 @@ SCHEDULE_OPERATION_OPTIONS: dict[str, tuple[str, ...]] = {
         "--days",
         "--wake",
         "--battery",
+        "--logged-off",
     ),
     "logs": ("--run-id",),
     "export": ("--output",),
@@ -103,6 +105,7 @@ SCHEDULE_OPERATION_OPTIONS: dict[str, tuple[str, ...]] = {
         "--days",
         "--wake",
         "--battery",
+        "--logged-off",
     ),
     "purge": ("--yes",),
 }
@@ -269,6 +272,15 @@ def _trigger_options(parser: argparse.ArgumentParser, *, required: bool) -> None
         action="store_true",
         help="allow starting on battery (active work is never stopped on transition)",
     )
+    parser.add_argument(
+        "--logged-off",
+        action="store_true",
+        help=(
+            "run whether or not the user is logged on (Windows S4U: no password is"
+            " stored, the task runs in a non-interactive session; register it from"
+            " an elevated terminal)"
+        ),
+    )
 
 
 def _management_parser() -> argparse.ArgumentParser:
@@ -278,7 +290,9 @@ def _management_parser() -> argparse.ArgumentParser:
             "Create and operate recurring datacli workflows backed by Windows Task Scheduler.\n\n"
             "Datacli keeps desired definitions, Windows observations, and run history as three\n"
             "independent state planes. Management never performs paid command work. Scheduled\n"
-            "tasks run as the current user with InteractiveToken, so that user must remain logged on."
+            "tasks run as the current user: with InteractiveToken by default (the user must stay\n"
+            "logged on) or with S4U when --logged-off is set (no password stored; register from an\n"
+            "elevated terminal)."
         ),
         epilog=(
             "common workflows:\n"
@@ -833,7 +847,10 @@ def _trigger(
         if args.days:
             raise ManagementError("--days is valid only with --weekly")
         return TriggerSpec.daily(
-            args.daily, wake_to_run=args.wake, ac_only=not args.battery
+            args.daily,
+            wake_to_run=args.wake,
+            ac_only=not args.battery,
+            logon=_logon(args),
         )
     if args.weekly:
         days = [
@@ -844,17 +861,25 @@ def _trigger(
         if not days:
             raise ManagementError("--weekly requires --days")
         return TriggerSpec.weekly(
-            args.weekly, days, wake_to_run=args.wake, ac_only=not args.battery
+            args.weekly,
+            days,
+            wake_to_run=args.wake,
+            ac_only=not args.battery,
+            logon=_logon(args),
         )
     if args.manual:
         if args.days:
             raise ManagementError("--days is valid only with --weekly")
-        return TriggerSpec.manual()
+        return TriggerSpec.manual(logon=_logon(args))
     if current is not None:
-        if args.days or args.wake or args.battery:
-            raise ManagementError("power/day options require a new trigger")
+        if args.days or args.wake or args.battery or args.logged_off:
+            raise ManagementError("power/day/logon options require a new trigger")
         return current
     raise ManagementError("a trigger is required")
+
+
+def _logon(args: argparse.Namespace) -> str:
+    return "logged_off" if getattr(args, "logged_off", False) else "interactive"
 
 
 def _command(value: Sequence[str]) -> tuple[str, str, list[str]]:
@@ -1103,6 +1128,7 @@ def main(
                         args.days,
                         args.wake,
                         args.battery,
+                        args.logged_off,
                     )
                 ):
                     raise ManagementError(

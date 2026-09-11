@@ -130,7 +130,11 @@ def build_task_xml(spec: JobSpec, action: RunnerAction, *, user_id: str) -> byte
     principals = ET.SubElement(root, _q("Principals"))
     principal = ET.SubElement(principals, _q("Principal"), {"id": "Author"})
     _text(principal, "UserId", user_id)
-    _text(principal, "LogonType", "InteractiveToken")
+    _text(
+        principal,
+        "LogonType",
+        "S4U" if spec.trigger.logon == "logged_off" else "InteractiveToken",
+    )
     _text(principal, "RunLevel", "LeastPrivilege")
 
     settings = ET.SubElement(root, _q("Settings"))
@@ -274,9 +278,15 @@ class WindowsTaskSchedulerBackend:
                 ]
             )
             if result.returncode != 0:
+                hint = ""
+                if spec.trigger.logon == "logged_off":
+                    hint = (
+                        " (a task that runs while logged off is registered with"
+                        " S4U; Windows only allows that from an elevated terminal)"
+                    )
                 raise RuntimeError(
                     f"Task Scheduler registration failed (exit {result.returncode})"
-                    f"{_failure_detail(result)}"
+                    f"{_failure_detail(result)}{hint}"
                 )
         finally:
             with contextlib.suppress(FileNotFoundError):

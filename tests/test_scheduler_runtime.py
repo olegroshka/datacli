@@ -309,3 +309,76 @@ def test_load_notify_settings_reads_scheduler_section(tmp_path: Path) -> None:
     assert notify.load_notify_settings(None) == {}
     config.write_text("not = [toml", encoding="utf-8")
     assert notify.load_notify_settings(config) == {}
+
+
+# --------------------------------------------------------------------------- #
+# logged-off (S4U) logon mode
+# --------------------------------------------------------------------------- #
+def test_logged_off_trigger_emits_s4u_and_default_keeps_digest_stable(
+    tmp_path: Path,
+) -> None:
+    import xml.etree.ElementTree as ET
+    from dataclasses import replace
+
+    from test_scheduler import TASK_NS
+
+    from scheduler.backends.windows import build_task_xml
+    from scheduler.model import ContractError, JobSpec, TriggerSpec
+    from scheduler.service import runner_action
+
+    _, _, store, _, _, base = _store(tmp_path)
+    interactive = replace(base, trigger=TriggerSpec.daily("06:00"))
+    # pre-existing definitions never carried `logon`: the default is omitted so
+    # their digests do not move
+    assert "logon" not in interactive.to_dict()["trigger"]
+    assert JobSpec.from_dict(interactive.to_dict()).digest == interactive.digest
+
+    off = replace(base, trigger=TriggerSpec.daily("06:00", logon="logged_off"))
+    assert off.to_dict()["trigger"]["logon"] == "logged_off"
+    assert off.digest != interactive.digest
+    assert JobSpec.from_dict(off.to_dict()).trigger.logon == "logged_off"
+
+    ns = {"t": TASK_NS}
+    for spec, expected in ((interactive, "InteractiveToken"), (off, "S4U")):
+        payload = build_task_xml(
+            spec, runner_action(spec, store.state_root), user_id="TEST\\user"
+        )
+        root = ET.fromstring(payload.decode("utf-16"))
+        assert (
+            root.findtext("t:Principals/t:Principal/t:LogonType", namespaces=ns)
+            == expected
+        )
+        assert "password" not in payload.decode("utf-16").casefold()
+
+    assert TriggerSpec.from_dict({"kind": "manual"}).logon == "interactive"
+    with pytest.raises(ContractError):
+        TriggerSpec.manual(logon="password")
+
+
+def test_cli_trigger_honours_logged_off_flag() -> None:
+    import argparse
+
+    from scheduler.cli import ManagementError, _trigger
+    from scheduler.model import TriggerSpec
+
+    def ns(**overrides):
+        base = dict(
+            daily=None,
+            weekly=None,
+            manual=False,
+            days=None,
+            wake=False,
+            battery=False,
+            logged_off=False,
+        )
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    trigger = _trigger(ns(daily="05:00", wake=True, logged_off=True))
+    assert trigger.logon == "logged_off" and trigger.wake_to_run
+    assert _trigger(ns(daily="05:00")).logon == "interactive"
+    assert _trigger(ns(manual=True, logged_off=True)).logon == "logged_off"
+    current = TriggerSpec.daily("05:00")
+    assert _trigger(ns(), current=current) is current
+    with pytest.raises(ManagementError):
+        _trigger(ns(logged_off=True), current=current)

@@ -6,7 +6,7 @@ question_state: RESOLVED
 owner: Oleg Roshka
 last_reviewed: 2026-09-11
 target_resolution: 2026-08-24
-version: 1.1
+version: 1.2
 sources:
   - KB-001
   - KB-002
@@ -142,3 +142,23 @@ fixtures.
   10.4 h mid-run. The runner now holds a system-required power request and
   measures the timeout on an awake clock (INV-004 AS-30, DD-001).
 - This machine is a desktop without a battery, so `ac_only=true` is inert here.
+
+## Amendment 2026-09-11: logged-off execution via S4U is supported
+
+The owner asked for runs that do not require being logged on. The claim
+above that S4U "cannot be treated as unattended Google Drive execution" was
+tested with a harmless probe task (`LogonType=S4U`, registered and deleted
+from an elevated shell, one run of a script that stores no secret values):
+it ran in session 0 with the user profile loaded (`USERPROFILE`,
+`LOCALAPPDATA`, `HKCU\\Environment` all present), saw `EODHD_API_KEY` both in
+the environment and in `HKCU\\Environment`, could read the Drive token file,
+reached `eodhd.com` and `googleapis.com` over HTTPS, could set
+`ES_SYSTEM_REQUIRED`, and could write under `%LOCALAPPDATA%\\datacli`. What
+S4U really lacks is network *credentials* (SMB shares, Kerberos) and
+DPAPI/EFS-protected data; datacli uses neither. Toast notifications cannot
+reach a desktop from session 0, so the event-log notifier is used instead.
+
+Decision: `TriggerSpec.logon` (`interactive` default, `logged_off` = S4U)
+is an explicit per-job opt-in through `--logged-off`. Registering an S4U
+task needs an elevated terminal; datacli never receives or stores a
+password. Password logon and service accounts remain out of scope.

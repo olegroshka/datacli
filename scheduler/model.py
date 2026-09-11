@@ -152,6 +152,9 @@ class CommandSpec:
         )
 
 
+LOGON_MODES = ("interactive", "logged_off")
+
+
 @dataclass(frozen=True)
 class TriggerSpec:
     kind: str
@@ -162,10 +165,16 @@ class TriggerSpec:
     start_when_available: bool = True
     wake_to_run: bool = False
     ac_only: bool = True
+    #: ``interactive`` = Windows InteractiveToken (the user must stay logged
+    #: on); ``logged_off`` = S4U (runs in session 0 without a stored password;
+    #: registering it needs an elevated terminal).
+    logon: str = "interactive"
 
     def __post_init__(self) -> None:
         if self.kind not in {"daily", "weekly", "manual"}:
             raise ContractError(f"unsupported trigger kind: {self.kind}")
+        if self.logon not in LOGON_MODES:
+            raise ContractError(f"unsupported logon mode: {self.logon}")
         if self.kind in {"daily", "weekly"}:
             if not self.local_time or not re.fullmatch(
                 r"(?:[01]\d|2[0-3]):[0-5]\d", self.local_time
@@ -195,12 +204,19 @@ class TriggerSpec:
             raise ContractError("days_of_week is valid only for weekly triggers")
 
     @classmethod
-    def manual(cls) -> "TriggerSpec":
-        return cls(kind="manual", start_when_available=False, ac_only=False)
+    def manual(cls, *, logon: str = "interactive") -> "TriggerSpec":
+        return cls(
+            kind="manual", start_when_available=False, ac_only=False, logon=logon
+        )
 
     @classmethod
     def daily(
-        cls, local_time: str, *, wake_to_run: bool = False, ac_only: bool = True
+        cls,
+        local_time: str,
+        *,
+        wake_to_run: bool = False,
+        ac_only: bool = True,
+        logon: str = "interactive",
     ) -> "TriggerSpec":
         return cls(
             kind="daily",
@@ -209,6 +225,7 @@ class TriggerSpec:
             timezone_at_validation=local_timezone_name(),
             wake_to_run=wake_to_run,
             ac_only=ac_only,
+            logon=logon,
         )
 
     @classmethod
@@ -219,6 +236,7 @@ class TriggerSpec:
         *,
         wake_to_run: bool = False,
         ac_only: bool = True,
+        logon: str = "interactive",
     ) -> "TriggerSpec":
         return cls(
             kind="weekly",
@@ -228,6 +246,7 @@ class TriggerSpec:
             timezone_at_validation=local_timezone_name(),
             wake_to_run=wake_to_run,
             ac_only=ac_only,
+            logon=logon,
         )
 
     @classmethod
@@ -241,6 +260,7 @@ class TriggerSpec:
             start_when_available=bool(value.get("start_when_available", True)),
             wake_to_run=bool(value.get("wake_to_run", False)),
             ac_only=bool(value.get("ac_only", True)),
+            logon=str(value.get("logon", "interactive")),
         )
 
 
@@ -318,7 +338,12 @@ class JobSpec:
             raise ContractError("job command contract version is incompatible")
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        # ``logon`` arrived after generation-3 definitions were installed;
+        # omit the default so their digests stay byte-for-byte stable.
+        if value["trigger"].get("logon", "interactive") == "interactive":
+            value["trigger"].pop("logon", None)
+        return value
 
     @property
     def digest(self) -> str:

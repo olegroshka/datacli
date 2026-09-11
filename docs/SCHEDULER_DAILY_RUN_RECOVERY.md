@@ -16,9 +16,10 @@ pass were wrong and are corrected in section 1.
 ```text
 You are continuing the datacli scheduler initiative in
 C:\Users\olegr\PycharmProjects\datacli. Read docs/SCHEDULER_DAILY_RUN_RECOVERY.md
-first. Sections 4.1 to 4.4 are done and committed; start at section 5 (Drive
-recovery) and section 6 (gates), in order. Also read AGENTS.md and
-docs/scheduler-initiative/README.md for the substrate rules.
+first. Sections 4 and 5 are done; the job is generation 4 and runs while
+logged off (S4U). Start at section 6: inspect the next 05:00 run against
+gates A to D. Also read AGENTS.md and docs/scheduler-initiative/README.md
+for the substrate rules.
 
 Goal: the daily job eodhd-all-sync-20260820-r3 must refresh every EODHD lane,
 reindex, and push the delta to Google Drive every day without human help, and
@@ -74,24 +75,31 @@ Never stage or commit .codex/, .claude/, AGENTS.md, or datacli.toml.
 | Item | Value |
 |---|---|
 | Profile | `a17568ea-c0a4-4f6f-9031-d4b3bab3216a` |
-| Active job | `eodhd-all-sync-20260820-r3`, generation 3, enabled |
+| Active job | `eodhd-all-sync-20260820-r3`, generation 4 (since 2026-09-11 20:26 UTC), enabled |
 | Tombstoned jobs | `eodhd-all-sync-20260819`, `eodhd-all-sync-20260820-r2` (IDs not reusable) |
-| Trigger | daily 05:00 system local, `ac_only=true`, `wake_to_run=true`, `start_when_available=true` |
+| Trigger | daily 05:00 system local, `ac_only=true`, `wake_to_run=true`, `start_when_available=true`, `logon=logged_off` (S4U) |
 | Steps | 1 `eodhd refresh --with-fundamentals --run`, 2 `eodhd reindex`, 3 `sync push --run` |
 | Policy | fail-fast (`on_step_failure=stop`), `retry=none`, timeout 43,200 s, same-job overlap skip |
-| Digest | `87b4241c…ddec0c`, matches the installed Windows task |
+| Digest | `96577315…1d2c45`, matches the installed Windows task (generation 3 was `87b4241c…ddec0c`) |
 
-The job definition was **not** changed by this pass. The code it runs was.
+Generation 4 was committed through `schedule edit … --daily 05:00 --wake
+--logged-off` from an elevated terminal on 2026-09-11; steps and policy are
+unchanged, only the logon mode and the config-file binding moved. Note the
+trap that surfaced on the way: `datacli.toml` is fingerprinted into the
+runtime bindings, so any edit to it makes `schedule status` report
+`incompatible` until the job is re-committed with `schedule edit <job>`.
 
 ### Backend observation (Windows Task Scheduler)
 
 Task `\Datacli-a17568ea-c0a-eodhd-all-sync-20260820-r3`: enabled, Ready,
 last run 2026-09-11 05:00:01, last result 1 ("datacli workflow step failed"),
-next run 2026-09-12 05:00. Principal `InteractiveToken`,
+next run 2026-09-12 05:00. Principal `S4U` (runs whether or not the user is
+logged on; no password stored; `InteractiveToken` until generation 3),
 `DisallowStartIfOnBatteries=true`, `ExecutionTimeLimit=PT13H`,
 `MultipleInstancesPolicy=Parallel`, `StartWhenAvailable=true`,
-`WakeToRun=true`. Task Scheduler history logging is **disabled**
-(`Microsoft-Windows-TaskScheduler/Operational` IsEnabled = False).
+`WakeToRun=true`. Task Scheduler history logging was **enabled** on
+2026-09-11 (`Microsoft-Windows-TaskScheduler/Operational`), so the next
+silent day has a Windows record.
 
 ### Execution history (datacli run records, job r3)
 
@@ -252,8 +260,9 @@ reverted, line endings normalised. Two commits, see section 2.
   (failures only unless `notify_on = "always"`); the notifier result rides
   inside the `run_terminal` payload so the journal still ends with
   `run_terminal`.
-- `scripts/notify_toast.ps1`: a Windows toast for `notify_command`. The
-  config snippet is in the `scheduler/notify.py` docstring.
+- `scripts/notify_toast.ps1` (toast, interactive sessions only) and
+  `scripts/notify_eventlog.ps1` (Application event log, works from S4U) for
+  `notify_command`. Config snippets are in each script's header.
 - `eodhd/cli.py`: the refresh prints `-> ok in h:mm:ss` per step and a
   "Refresh timing" table at the end, so a slow day is attributable without
   reading the log.
@@ -307,8 +316,10 @@ entries and the previous 74-entry file kept as
 `.sync\gdrive.json.bak-20260911T182241Z` (copy it back over `gdrive.json`
 to revert). The dry-run push now plans 79 uploads (68 changed, addressed by
 remote id, plus 11 new) and cannot create duplicates.
-**Remaining, needs the user's OK:** `sync reconcile --run --trash-duplicates`
-to move the 74 Aug-31 copies to Drive trash, then gate C.
+**Done 2026-09-11 20:18 UTC with the user's OK:** `sync reconcile --run
+--trash-duplicates` moved the 74 Aug-31 copies to Drive trash; a following
+read-only reconcile reports 0 duplicate paths and the dry-run push plans
+79 uploads. Gate C is the next real push.
 
 ## 6. Real-run gates and owner decisions
 
@@ -330,30 +341,22 @@ Gates, one at a time, each with the user's explicit OK:
   bytes, single-copy check), plus `LAST_RUN.txt`. Never collapse these into
   "in sync".
 
-Decisions only the owner can make:
+Owner decisions, resolved on 2026-09-11 evening:
 
-1. **Logged-out execution.** The 09-10 miss will recur on every unattended
-   reboot. Options: accept it (the next day's run catches up), or open the
-   principal/credential ADR that OQ-002 defers (password logon or a service
-   account, never through datacli argv). This is a substrate decision, not a
-   flag.
-2. **Task Scheduler history.** Needs an elevated shell:
-   `wevtutil sl Microsoft-Windows-TaskScheduler/Operational /e:true`.
-   Without it Windows cannot say why a day did not fire.
-3. **Notification target.** Add to `datacli.toml`:
-   ```toml
-   [scheduler]
-   notify_command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                     "-File", "C:/Users/olegr/PycharmProjects/datacli/scripts/notify_toast.ps1",
-                     "-Title", "datacli {job_id}: {outcome}",
-                     "-Message", "{summary}"]
-   ```
-   Editing `datacli.toml` changes a runtime binding fingerprint only if the
-   scheduler reads that section; today it does not, but verify with
-   `schedule --json doctor` after the edit. Email via SMTP can be wired the
-   same way with a small script.
-4. **Push to origin.** `git push origin main` after the user confirms the
-   commit list.
+1. **Logged-off execution: done.** A harmless S4U probe task proved that a
+   logged-off task on this machine loads the user profile, sees the EODHD
+   key, reads the Drive token and reaches both APIs (OQ-002 amendment).
+   `TriggerSpec.logon = logged_off` was added (`--logged-off`), and the job
+   was re-committed as generation 4 with `LogonType=S4U`. Registering an
+   S4U task needs an elevated terminal; datacli never handles a password.
+2. **Task Scheduler history: enabled** (elevated `wevtutil`).
+3. **Notification: configured.** `[scheduler]` in `datacli.toml` runs
+   `scripts/notify_eventlog.ps1` on every outcome (`notify_on = "always"`);
+   it writes to the Application event log, source `datacli`, event 1000 for
+   success and 1001 for anything else. A toast cannot reach the desktop from
+   a session-0 task, which is why the event log was chosen. To reach a phone,
+   wire a webhook or SMTP script into the same `notify_command`.
+4. **Pushed to origin.**
 
 If a job definition change is ever needed, use the managed flow
 (`schedule edit` or draft + `enable`), never a raw `schtasks` change, and
@@ -409,13 +412,13 @@ git diff --check
 |---|---|
 | Repo | `C:\Users\olegr\PycharmProjects\datacli` |
 | Python | `.venv\Scripts\python.exe` (3.13) |
-| Config | `datacli.toml` (`[eodhd] data_root`, `[sync] backend, remote_root, gdrive_client_secrets`, optional `[scheduler] notify_command`) |
+| Config | `datacli.toml` (`[eodhd] data_root`, `[sync] backend, remote_root, gdrive_client_secrets`, `[scheduler] notify_on, notify_command`); editing it requires `schedule edit <job>` to re-bind |
 | Data root | `C:\Users\olegr\PycharmProjects\btest\data\raw\eodhd` |
 | Sync manifest | `<data root>\.sync\gdrive.json` (74 entries today; about 3,145 on 08-31) |
 | Drive token | `%USERPROFILE%\.datacli\tokens\gdrive.json` (never read or print) |
 | Drive target | `gdrive:/datacli/eodhd`, folder id `1YGuE21YP0k89vhVWtMWx-nMM-Zi-AbwA` |
 | Scheduler state | `%LOCALAPPDATA%\datacli\profiles\a17568ea-c0a4-4f6f-9031-d4b3bab3216a\` |
-| Windows task | `\Datacli-a17568ea-c0a-eodhd-all-sync-20260820-r3` (InteractiveToken, PT13H limit) |
+| Windows task | `\Datacli-a17568ea-c0a-eodhd-all-sync-20260820-r3` (S4U since generation 4, PT13H limit) |
 | Last good push | run `20260831T040001.781131Z-0dc0f496034d`, 68 files, 1.4 GB |
 | Sleep-voided run | `20260909T040001.835237Z-54c1e7812ae0` |
 | Duplicate-creating run | `20260911T040001.997013Z-39e832991c25` |
