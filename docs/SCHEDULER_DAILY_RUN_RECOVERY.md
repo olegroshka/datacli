@@ -299,14 +299,15 @@ If the user prefers not to trash anything yet, step 3 without
 update the chosen copies and the losers stay as stale extras until trashed.
 
 **Done on 2026-09-11 evening (no Drive effect):** step 1 ran read-only and
-step 3 ran *without* . Inventory ():
+step 3 ran *without* `--trash-duplicates`. Inventory (`tmp\reconcile.json`):
 3,145 remote paths, 3,077 match local by md5, 68 differ (the daily delta),
 0 remote-only, 11 local-only, 74 paths with two copies; for all 74 the 09-11
 copy is the md5 match and is the keeper. The manifest was rebuilt to 3,145
-entries and the previous 74-entry file kept as 
-(copy it back over  to revert). The dry-run push now plans
-79 uploads (68 changed by id, 11 new) and cannot create duplicates.
-**Remaining, needs the user OK:** 
+entries and the previous 74-entry file kept as
+`.sync\gdrive.json.bak-20260911T182241Z` (copy it back over `gdrive.json`
+to revert). The dry-run push now plans 79 uploads (68 changed, addressed by
+remote id, plus 11 new) and cannot create duplicates.
+**Remaining, needs the user's OK:** `sync reconcile --run --trash-duplicates`
 to move the 74 Aug-31 copies to Drive trash, then gate C.
 
 ## 6. Real-run gates and owner decisions
