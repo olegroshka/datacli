@@ -477,7 +477,7 @@ class CommandRegistry:
         elif identity in {"sync push", "sync status"}:
             allowed_boolean = {"--with-caches"}
             if identity == "sync push":
-                allowed_boolean |= {"--run", "--keep-going"}
+                allowed_boolean |= {"--run", "--keep-going", "--fail-fast"}
             positionals, options = _parse_known_options(
                 argv, boolean=allowed_boolean, scalar=set()
             )

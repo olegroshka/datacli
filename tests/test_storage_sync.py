@@ -127,7 +127,11 @@ def test_manifest_round_trip_and_bad_file(tmp_path: Path) -> None:
     assert entry["uploaded_at"].endswith("Z")
 
     path.write_text("not json", encoding="utf-8")
-    assert engine.load_manifest(path)["files"] == {}  # corrupt -> fresh, not a crash
+    with pytest.raises(engine.ManifestError):
+        engine.load_manifest(path)  # corrupt -> loud, never a silent first push
+    moved = engine.quarantine_manifest(path)
+    assert moved.name.startswith("gdrive.json.corrupt-") and not path.exists()
+    assert engine.load_manifest(path)["files"] == {}  # absent -> fresh
 
 
 # --------------------------------------------------------------------------- #
@@ -184,7 +188,9 @@ def test_push_stops_on_failure_but_keeps_progress(tmp_path: Path) -> None:
     manifest_path = root / ".sync" / "local.json"
 
     class FlakyBackend(LocalBackend):
-        def upload(self, local: Path, relpath: str, remote_id: str | None = None) -> str:
+        def upload(
+            self, local: Path, relpath: str, remote_id: str | None = None
+        ) -> str:
             if relpath == "b.parquet":
                 raise OSError("disk full")
             return super().upload(local, relpath, remote_id)
