@@ -16,10 +16,10 @@ pass were wrong and are corrected in section 1.
 ```text
 You are continuing the datacli scheduler initiative in
 C:\Users\olegr\PycharmProjects\datacli. Read docs/SCHEDULER_DAILY_RUN_RECOVERY.md
-first. Sections 4 and 5 are done; the job is generation 4 and runs while
-logged off (S4U). Start at section 6: inspect the next 05:00 run against
-gates A to D. Also read AGENTS.md and docs/scheduler-initiative/README.md
-for the substrate rules.
+first. Sections 4 to 6a are done; the job is generation 4, runs while
+logged off (S4U), and the 2026-09-12 run is evaluated in section 6a. Inspect
+the next 05:00 run against gates A to D the same way. Also read AGENTS.md
+and docs/scheduler-initiative/README.md for the substrate rules.
 
 Goal: the daily job eodhd-all-sync-20260820-r3 must refresh every EODHD lane,
 reindex, and push the delta to Google Drive every day without human help, and
@@ -361,6 +361,37 @@ Owner decisions, resolved on 2026-09-11 evening:
 If a job definition change is ever needed, use the managed flow
 (`schedule edit` or draft + `enable`), never a raw `schtasks` change, and
 verify with `schedule --json doctor`.
+
+## 6a. First run under the new code: 2026-09-12 05:00 (evaluated)
+
+Run `20260912T040001.739801Z-96e97d4d6f01`, generation 4, S4U principal.
+
+| Plane | Observation |
+|---|---|
+| Backend | Task Scheduler history: launched 05:00:01 on the calendar trigger, action started, completed 10:54:56. Machine woke at 04:59:33; zero sleep events during the run. |
+| Principal | Six python processes in session 0 (logged-off session) for the whole run; nobody had to be logged on. |
+| Runner | `power_request {system_required: true}`; step 1 `succeeded` in 5:27:47 (24 lane steps ok, timing table in the log, no lane above 1:00:22); step 2 `succeeded`, 172,838 index entries; step 3 `failed`. |
+| Push | 84 planned (78 files, 258 MB uploaded; 3 touch); **6 failed** after four retries each with `RedirectMissingLocation`. All six are the parquet files above the 100 MB resumable chunk (`news/news_symbol_daily`, five `prices_daily`). |
+| Notification | `LAST_RUN.txt` and `LAST_FAILURE.txt` written; Application event 1001 (Error) from source `datacli` at 10:54:56 with the one-line summary. |
+| Drive | After the failure: 3,157 paths, 0 duplicates, 6 differ. No duplicate was created by the failed resumable uploads (they address the existing id). |
+
+Gate A **pass**, gate B **pass**, gate C **failed then recovered**, gate D this table.
+
+Root cause of the 6 failures: the explicit-timeout `httplib2.Http` added on
+2026-09-11 left `follow_redirects=True`. A resumable upload answers every
+chunk with `308 Resume Incomplete` and no `Location` header, which httplib2
+treats as a broken redirect; the stock `googleapiclient.http.build_http`
+excludes 308 for exactly this reason. Fixed in `fd8f7853` (redirects off on
+the Drive client, regression test in `tests/test_storage_gdrive.py`). A manual
+`sync push --run` with the fix then uploaded the 6 files (1.2 GB) with 0
+failures; the dry-run reports "Everything in sync" and a read-only reconcile
+shows 3,157 remote paths, all matching local by md5, 0 duplicates.
+
+Remaining watch items for 2026-09-13: the scheduled push must complete with
+`0 failed` on its own (the fix is in the tree the job runs), and the event
+log should show 1000 rather than 1001. The us_common fast-catch-up backlog
+(94 price pairs, 14 dividend pairs more than 7 days behind) is unchanged by
+any of this and is a separate `refresh us_common --run` decision.
 
 ## 7. Commands
 
