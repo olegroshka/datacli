@@ -74,7 +74,13 @@ def _authorized_http(creds: Any, timeout: float) -> Any:
         from google_auth_httplib2 import AuthorizedHttp
     except ImportError:  # pragma: no cover - env-dependent
         return None
-    return AuthorizedHttp(creds, http=httplib2.Http(timeout=timeout))
+    http = httplib2.Http(timeout=timeout)
+    # Resumable uploads answer each chunk with 308 Resume Incomplete and no
+    # Location header; httplib2 would treat that as a broken redirect
+    # (RedirectMissingLocation) unless redirects are left to the client lib.
+    # googleapiclient.http.build_http does the same.
+    http.follow_redirects = False
+    return AuthorizedHttp(creds, http=http)
 
 
 def _quote(value: str) -> str:

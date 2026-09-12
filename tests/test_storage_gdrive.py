@@ -255,3 +255,22 @@ def test_every_request_carries_num_retries() -> None:
     backend = _backend(_CountingFiles({}))
     backend.trash("x")
     assert seen == [2]
+
+
+def test_authorized_http_has_timeout_and_does_not_follow_redirects() -> None:
+    """Run 20260912T040001.739801Z-96e97d4d6f01: every file larger than one
+    resumable chunk failed with RedirectMissingLocation because httplib2 tried
+    to follow the 308 Resume Incomplete that carries no Location header."""
+
+    class _Creds:
+        token = "t"
+        expired = False
+        valid = True
+
+        def before_request(self, request, method, url, headers):  # pragma: no cover
+            headers["authorization"] = "Bearer t"
+
+    authorized = gdrive._authorized_http(_Creds(), 120.0)
+    assert authorized is not None
+    assert authorized.http.timeout == 120.0
+    assert authorized.http.follow_redirects is False
