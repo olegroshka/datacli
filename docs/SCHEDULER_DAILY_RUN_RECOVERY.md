@@ -411,15 +411,16 @@ sync (3,157 paths, 0 duplicates). The only stale datasets are
 `news_scores` and `news_embeddings` (28 days), which the refresh does not
 produce.
 
-Decisions still open for the owner:
+Owner decisions, taken 2026-09-12:
 
-1. **Scoring currency.** `news_scores`/`news_embeddings` come from `score run`,
-   which INV-002 defers from scheduling (paid model budget, no health
-   contract). If "all up to date every day" includes scores, that needs a
-   budget policy and a registry admission, then a fourth job step.
-2. **Retired pairs.** Roughly 490 delisted instruments stay in the state files
-   and on Drive for history. Pruning them is possible but changes history;
-   the default is to keep them.
+1. **Scoring currency: deferred to the fleet initiative.** news_scores and
+   news_embeddings stay unscheduled on the single node; status keeps
+   reporting them stale (correct, and deliberately visible). They become the
+   first GPU workload of the fleet (docs/fleet-initiative, KB-001 G1) and get
+   scheduled once the fleet can run them under a budget envelope.
+2. **Retired pairs: keep.** The roughly 490 delisted instruments stay in the
+   state files and on Drive for history. They are labelled retired by status,
+   are never a catch-up item, and cost nothing daily. No pruning.
 
 ## 7. Commands
 
