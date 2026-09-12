@@ -392,7 +392,8 @@ def test_pairs_behind_and_catch_up_hints() -> None:
             "pairs_quiet": 9,
         },
     ]
-    (line,) = st.catch_up_hints(quiet, stale_days=7)
+    assert st.catch_up_hints(quiet, stale_days=7) == []
+    (line,) = st.quiet_notes(quiet, stale_days=7)
     assert line.startswith(
         "us_etf/prices: 3 of 10 pairs were queried but have no new bars"
     )
@@ -416,3 +417,63 @@ def test_pairs_behind_and_catch_up_hints() -> None:
         == 1
     )
     assert st.pairs_behind(state, "coverage_through", as_of_ts=as_of, days=7) == 1
+
+
+def test_pairs_outside_the_universe_are_retired_not_behind(tmp_path: Path) -> None:
+    """us_etf 2026-09-12: 326 pairs the provider delisted sat in the state with
+    a stale coverage date and were reported as catch-up work."""
+    universe = tmp_path / "tickers_US_ETF.parquet"
+    pd.DataFrame({"Code": ["SPY", "QQQ"], "Name": ["a", "b"]}).to_parquet(
+        universe, index=False
+    )
+    pd.DataFrame(
+        {
+            "ticker": ["SPY", "QQQ", "GONE"],
+            "exchange": ["US", "US", "US"],
+            "status": ["ok", "ok", "ok"],
+            "latest_data_date": ["2026-08-14", "2026-08-01", "2026-06-01"],
+            "coverage_through": ["2026-08-15", "2026-08-15", "2026-06-07"],
+        }
+    ).to_csv(tmp_path / "prices_fetch_state.csv", index=False)
+    lane = reg.LaneConfig(
+        name="us_etf_fixture",
+        region="US",
+        asset_class="etf",
+        datasets=(reg.prices_spec(),),
+        universe_path=universe,
+        root=tmp_path,
+        default_exchange="US",
+    )
+    rec = st.collect_dataset(
+        lane,
+        lane.datasets[0],
+        as_of_ts=pd.Timestamp("2026-08-15"),
+        stale_days=7,
+        deep=False,
+    )
+    assert rec["pairs"] == 3
+    assert rec["pairs_retired"] == 1  # GONE left the universe
+    assert rec["pairs_behind"] == 0  # ...so it is not a catch-up item
+    assert rec["pairs_quiet"] == 1  # QQQ: queried, no new bars
+    (note,) = st.retired_notes([rec])
+    assert note.startswith(
+        "us_etf_fixture/prices: 1 of 3 pairs in the fetch state are no longer"
+    )
+    assert st.retired_notes([{"kind": "prices", "pairs_retired": 0}]) == []
+
+    # a lane without a universe file never retires anything
+    plain = reg.LaneConfig(
+        name="plain",
+        region="US",
+        asset_class="common",
+        datasets=(reg.prices_spec(),),
+        root=tmp_path,
+    )
+    rec = st.collect_dataset(
+        plain,
+        plain.datasets[0],
+        as_of_ts=pd.Timestamp("2026-08-15"),
+        stale_days=7,
+        deep=False,
+    )
+    assert rec["pairs_retired"] is None and rec["pairs_behind"] == 1

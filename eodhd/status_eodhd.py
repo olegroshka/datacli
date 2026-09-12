@@ -220,6 +220,7 @@ def collect_dataset(
         "stale": None,
         "pairs_behind": None,
         "pairs_quiet": None,
+        "pairs_retired": None,
         "status": {},
     }
 
@@ -244,11 +245,31 @@ def collect_dataset(
         # failing); quiet = queried, but no new data (delisted/halted). The
         # old heuristic looked at the freshness column alone, mixed the two,
         # and recommended a refresh that could not change either.
+        # Pairs that left the lane's provider universe (delisted) are retired:
+        # kept for history, never refreshed, and not a catch-up item.
+        active = state
+        universe = (
+            lane_universe_pairs(lane)
+            if dataset.kind in ("prices", "dividends", "splits")
+            else None
+        )
+        if universe is not None and {"ticker", "exchange"}.issubset(state.columns):
+            member = pd.Series(
+                [
+                    (ticker, exchange) in universe
+                    for ticker, exchange in zip(
+                        state["ticker"].astype(str), state["exchange"].astype(str)
+                    )
+                ],
+                index=state.index,
+            )
+            record["pairs_retired"] = int((~member).sum())
+            active = state[member]
         record["pairs_behind"] = pairs_behind(
-            state, dataset.coverage_col, as_of_ts=as_of_ts, days=stale_days
+            active, dataset.coverage_col, as_of_ts=as_of_ts, days=stale_days
         )
         record["pairs_quiet"] = pairs_quiet(
-            state,
+            active,
             dataset.coverage_col,
             dataset.as_of_state_col,
             as_of_ts=as_of_ts,
@@ -299,6 +320,49 @@ def pairs_behind(
     return int((dates.notna() & (dates < cutoff)).sum())
 
 
+def lane_universe_pairs(lane: LaneConfig) -> set[tuple[str, str]] | None:
+    """(ticker, exchange) pairs in the lane's current universe parquet.
+
+    ``None`` when the lane has no single universe file (the common-stock lanes
+    pull qualifying + previously tracked pairs, so nothing in their state is
+    ever retired) or the file cannot be read.
+    """
+    path = lane.universe_path
+    if path is None or not Path(path).exists():
+        return None
+    try:
+        frame = pd.read_parquet(path)
+    except Exception:  # noqa: BLE001 - status must never crash on a bad file
+        return None
+    if lane.universe_code_column not in frame.columns:
+        return None
+    codes = frame[lane.universe_code_column].astype(str)
+    column = lane.universe_exchange_column
+    if column and column in frame.columns:
+        exchanges = frame[column].astype(str)
+    elif lane.default_exchange:
+        exchanges = pd.Series([lane.default_exchange] * len(frame), index=frame.index)
+    else:
+        return None
+    return set(zip(codes, exchanges))
+
+
+def retired_notes(records: list[dict[str, Any]]) -> list[str]:
+    """One line per price/event dataset with pairs no longer in the universe."""
+    notes: list[str] = []
+    for r in records:
+        n = r.get("pairs_retired")
+        if not n or r.get("kind") not in ("prices", "dividends", "splits"):
+            continue
+        total = r.get("pairs") or 0
+        notes.append(
+            f"{r['lane']}/{r['dataset']}: {n:,} of {total:,} pairs in the fetch state are "
+            f"no longer listed in the lane's universe file (delisted by the provider); "
+            f"kept for history."
+        )
+    return notes
+
+
 def pairs_quiet(
     state: pd.DataFrame,
     coverage_col: str,
@@ -323,30 +387,41 @@ def pairs_quiet(
 
 
 def catch_up_hints(records: list[dict[str, Any]], *, stale_days: int) -> list[str]:
-    """One line per price/event dataset with pairs not queried lately, plus one
-    per price dataset with pairs that were queried but have no new bars."""
+    """One line per price/event dataset with pairs the refresh did not query
+    lately: these are the only rows a human may need to act on."""
     hints: list[str] = []
     for r in records:
         if r.get("kind") not in ("prices", "dividends", "splits"):
             continue
-        total = r.get("pairs") or 0
         n = r.get("pairs_behind")
-        if n:
-            hints.append(
-                f"{r['lane']}/{r['dataset']}: {n:,} of {total:,} pairs were not queried in "
-                f"the last {stale_days}d -- they left the lane's pull universe (delisted, "
-                f"or no longer qualifying) or keep failing; `refresh {r['lane']} --run` "
-                f"does not reach them. Check their status counts, or re-include them "
-                f"with --tickers."
-            )
-        q = r.get("pairs_quiet")
-        if q and r.get("kind") == "prices":
-            hints.append(
-                f"{r['lane']}/{r['dataset']}: {q:,} of {total:,} pairs were queried but "
-                f"have no new bars for > {stale_days}d (delisted or halted): nothing to "
-                f"fetch."
-            )
+        if not n:
+            continue
+        total = r.get("pairs") or 0
+        hints.append(
+            f"{r['lane']}/{r['dataset']}: {n:,} of {total:,} pairs were not queried in "
+            f"the last {stale_days}d -- they left the lane's pull universe (delisted, "
+            f"or no longer qualifying) or keep failing; `refresh {r['lane']} --run` "
+            f"does not reach them. Check their status counts, or re-include them "
+            f"with --tickers."
+        )
     return hints
+
+
+def quiet_notes(records: list[dict[str, Any]], *, stale_days: int) -> list[str]:
+    """One line per price dataset with pairs queried lately but without new bars
+    (delisted or halted instruments): informational, nothing to fetch."""
+    notes: list[str] = []
+    for r in records:
+        q = r.get("pairs_quiet")
+        if not q or r.get("kind") != "prices":
+            continue
+        total = r.get("pairs") or 0
+        notes.append(
+            f"{r['lane']}/{r['dataset']}: {q:,} of {total:,} pairs were queried but "
+            f"have no new bars for > {stale_days}d (delisted or halted): nothing to "
+            f"fetch."
+        )
+    return notes
 
 
 def _fetched_iso(value: pd.Timestamp | None) -> str | None:
@@ -543,6 +618,10 @@ def print_status(
         console.print(Text(hint, style="dim"))
     for line in catch_up_hints(records, stale_days=stale_days):
         console.print(Text(f"⚠ {line}", style="yellow"))
+    for line in quiet_notes(records, stale_days=stale_days):
+        console.print(Text(f"· {line}", style="dim"))
+    for line in retired_notes(records):
+        console.print(Text(f"· {line}", style="dim"))
 
 
 def render_markdown(
@@ -588,6 +667,14 @@ def render_markdown(
     if catch_up:
         lines += ["", "## Catch-up needed", ""]
         lines += [f"- {c}" for c in catch_up]
+    quiet = quiet_notes(records, stale_days=stale_days)
+    if quiet:
+        lines += ["", "## Quiet pairs (nothing to fetch)", ""]
+        lines += [f"- {c}" for c in quiet]
+    retired = retired_notes(records)
+    if retired:
+        lines += ["", "## Retired pairs", ""]
+        lines += [f"- {c}" for c in retired]
     warnings = discovery_warnings()
     if warnings:
         lines += ["", "## Discovery warnings", ""]

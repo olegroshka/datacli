@@ -393,6 +393,34 @@ log should show 1000 rather than 1001. The us_common fast-catch-up backlog
 (94 price pairs, 14 dividend pairs more than 7 days behind) is unchanged by
 any of this and is a separate `refresh us_common --run` decision.
 
+## 6b. Data-currency gaps, 2026-09-12 (closed, with two decisions left)
+
+The status tool's "N pairs > 7d behind" hints mixed three unrelated things. A
+plain `refresh us_common --run` at 12:36 fetched nothing (all 2,585 qualifying
+pairs already current), which proved the hint was pointing at the wrong cure.
+
+| What it was | Count | Cause | Fix |
+|---|---|---|---|
+| Dropped from the pull | 14 us_common names (APP, ARM, BKR, CEG, CRWD, DASH, DDOG, GEHC, PLTR, PYPL, SHOP, SNDK, WDAY, ZS) | `both_60q` fell to 0 (young histories); the loaders only pulled qualifying pairs, so these silently stopped on 2026-06-07 | Common-stock loaders now pull qualifying + every pair already in the lane's fetch state (sticky). Re-fetched 12:45, current through 2026-09-11. |
+| Retired by the provider | us_etf 330, uk_eu_etf 149, index_ref 6, uk_eu_index_ref 1, us_common 1 | Delisted; no longer in the universe parquet (verified at pair level) | Status reports them as "retired, kept for history"; never a catch-up item. |
+| Quiet | us_common 80, uk_eu 51, us_etf 70, uk_eu_etf 34, index_ref 2 price pairs | Queried daily, no new bars (halted/illiquid/delisted-in-place) | Status reports them as quiet; nothing to fetch. |
+| STATUS.md/json stale since 08-20 | 2 files | Never written by the daily job | Every `refresh --run` now ends with a local `status --write` step; pushed to Drive by step 3. |
+
+After the fixes: "behind" is zero everywhere, every lane is fresh, Drive is in
+sync (3,157 paths, 0 duplicates). The only stale datasets are
+`news_scores` and `news_embeddings` (28 days), which the refresh does not
+produce.
+
+Decisions still open for the owner:
+
+1. **Scoring currency.** `news_scores`/`news_embeddings` come from `score run`,
+   which INV-002 defers from scheduling (paid model budget, no health
+   contract). If "all up to date every day" includes scores, that needs a
+   budget policy and a registry admission, then a fourth job step.
+2. **Retired pairs.** Roughly 490 delisted instruments stay in the state files
+   and on Drive for history. Pruning them is possible but changes history;
+   the default is to keep them.
+
 ## 7. Commands
 
 ```powershell
