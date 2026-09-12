@@ -384,3 +384,38 @@ def test_atomic_parquet_failure_keeps_previous_output_and_cleans_temp(
 
     assert pd.read_parquet(output_path).equals(previous)
     assert not output_path.with_name(output_path.name + ".tmp").exists()
+
+
+def test_qualifying_pairs_keep_previously_tracked_pairs(tmp_path: Path) -> None:
+    """A firm that stops qualifying (both_60q -> 0) must keep being pulled once
+    it is in a lane's fetch state; until 2026-09-12 it silently stopped."""
+    coverage = tmp_path / "coverage_summary.csv"
+    pd.DataFrame(
+        [
+            {"ticker": "AAA", "exchange": "US", "both_60q": 1},
+            {"ticker": "PLTR", "exchange": "US", "both_60q": 0},
+            {"ticker": "ZZZ", "exchange": "US", "both_60q": 0},
+        ]
+    ).to_csv(coverage, index=False)
+    pd.DataFrame(
+        [
+            {"ticker": "PLTR", "exchange": "US", "status": "ok"},
+            {"ticker": "AAA", "exchange": "US", "status": "ok"},
+        ]
+    ).to_csv(tmp_path / "prices_fetch_state.csv", index=False)
+
+    assert common.qualifying_pairs(coverage) == [("AAA", "US")]
+    sticky = common.lane_state_paths(tmp_path)
+    assert common.qualifying_pairs(coverage, sticky_from=sticky) == [
+        ("AAA", "US"),
+        ("PLTR", "US"),  # tracked before, kept; ZZZ never pulled, not added
+    ]
+    assert common.load_target_tickers(
+        [], coverage_path=coverage, sticky_from=sticky
+    ) == [("AAA", "US"), ("PLTR", "US")]
+    assert common.load_target_tickers(
+        ["BBB.LSE"], coverage_path=coverage, sticky_from=sticky
+    ) == [("BBB", "LSE")]
+    assert common.sticky_pairs([tmp_path / "missing.csv"]) == set()
+    with pytest.raises(RuntimeError, match="Coverage file not found"):
+        common.qualifying_pairs(tmp_path / "nope.csv")

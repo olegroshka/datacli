@@ -246,3 +246,14 @@ def test_local_steps_are_marked() -> None:
     by_kind = {s.kind: s for s in plan}
     assert by_kind["news_daily"].local is True and by_kind["news"].local is False
     assert reg.LANES["news"].datasets[1].local is True  # news_daily spec
+
+
+def test_refresh_plan_ends_with_a_local_status_write() -> None:
+    step = cli.Step("us_common", "prices", "fetch_eodhd_us_prices.py")
+    plan = cli.with_status_step([step])
+    assert plan[0] is step and plan[-1] is cli.STATUS_STEP
+    assert cli.STATUS_STEP.local is True
+    assert cli.STATUS_STEP.display() == (
+        "python eodhd/status_eodhd.py --write --no-discovery --no-color"
+    )
+    assert cli.with_status_step([]) == []  # nothing ran, nothing to rewrite

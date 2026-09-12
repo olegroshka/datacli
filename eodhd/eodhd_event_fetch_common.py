@@ -6,6 +6,7 @@ cache-aware UK/EU workflow already established in `btest`.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -22,6 +23,66 @@ HTTP_TIMEOUT = 60
 DELAY = 0.12
 FLUSH_EVERY = 100
 SUCCESS_AUDIT_STATUSES = {"ok", "empty"}
+#: Per-ticker fetch-state sidecars of a common-stock lane (see sticky_pairs).
+STATE_FILES = (
+    "prices_fetch_state.csv",
+    "dividends_fetch_state.csv",
+    "splits_fetch_state.csv",
+)
+
+_log = logging.getLogger(__name__)
+
+
+def lane_state_paths(raw_dir: Path) -> tuple[Path, ...]:
+    """The fetch-state sidecars that record which pairs a lane has pulled."""
+    return tuple(Path(raw_dir) / name for name in STATE_FILES)
+
+
+def sticky_pairs(state_paths: Iterable[Path]) -> set[tuple[str, str]]:
+    """Every (ticker, exchange) a lane has ever pulled, from its sidecars.
+
+    Why: the qualifying rule (``both_60q == 1``) can drop a firm later (a
+    young IPO, a restated history). Until 2026-09-12 such a firm silently
+    stopped advancing while ``status`` counted it as behind and told the user
+    to re-run a refresh that never visited it. Once tracked, a pair stays in
+    the pull; a delisted one simply comes back empty and shows as "quiet".
+    """
+    pairs: set[tuple[str, str]] = set()
+    for path in state_paths:
+        path = Path(path)
+        if not path.exists():
+            continue
+        frame = pd.read_csv(path, usecols=lambda c: c in ("ticker", "exchange"))
+        if not {"ticker", "exchange"}.issubset(frame.columns):
+            continue
+        frame = frame[["ticker", "exchange"]].dropna().drop_duplicates()
+        pairs.update(
+            (str(ticker), str(exchange))
+            for ticker, exchange in frame.itertuples(index=False, name=None)
+        )
+    return pairs
+
+
+def qualifying_pairs(
+    coverage_path: Path, *, sticky_from: Iterable[Path] = ()
+) -> list[tuple[str, str]]:
+    """Qualifying firms (``both_60q == 1``) plus every pair already tracked."""
+    coverage_path = Path(coverage_path)
+    if not coverage_path.exists():
+        raise RuntimeError(f"Coverage file not found: {coverage_path}")
+    cov = pd.read_csv(coverage_path)
+    qualifying = cov[cov["both_60q"] == 1][["ticker", "exchange"]].drop_duplicates()
+    tickers = [
+        (str(ticker), str(exchange))
+        for ticker, exchange in qualifying.itertuples(index=False, name=None)
+    ]
+    extra = sorted(sticky_pairs(sticky_from) - set(tickers))
+    if extra:
+        _log.info(
+            "%d previously tracked pair(s) kept in the pull beyond the qualifying set",
+            len(extra),
+        )
+    return tickers + extra
 
 
 def load_target_tickers(
@@ -29,16 +90,20 @@ def load_target_tickers(
     *,
     coverage_path: Path = COVERAGE_PATH,
     limit: int = 0,
+    sticky_from: Iterable[Path] | None = None,
 ) -> list[tuple[str, str]]:
+    """Targets: explicit specs, else the lane's qualifying + tracked pairs.
+
+    ``sticky_from`` defaults to the fetch-state sidecars next to the coverage
+    file, which is where a lane keeps them.
+    """
     explicit_specs = list(explicit_specs)
     if explicit_specs:
         tickers = [parse_ticker_spec(value) for value in explicit_specs]
     else:
-        if not coverage_path.exists():
-            raise RuntimeError(f"Coverage file not found: {coverage_path}")
-        cov = pd.read_csv(coverage_path)
-        qualifying = cov[cov["both_60q"] == 1][["ticker", "exchange"]].drop_duplicates()
-        tickers = [tuple(row) for row in qualifying.itertuples(index=False, name=None)]
+        if sticky_from is None:
+            sticky_from = lane_state_paths(Path(coverage_path).parent)
+        tickers = qualifying_pairs(coverage_path, sticky_from=sticky_from)
     if limit > 0:
         tickers = tickers[:limit]
     return tickers

@@ -230,6 +230,23 @@ class Step:
         return [sys.executable, str(SCRIPTS_DIR / self.script), *self.args]
 
 
+#: Appended to every refresh plan: rewrite STATUS.md/STATUS.json in the data
+#: root from the fetch state just produced (local, no API calls), so the
+#: status files the daily job pushes to Drive are never older than the data.
+STATUS_STEP = Step(
+    "status",
+    "write",
+    "status_eodhd.py",
+    ["--write", "--no-discovery", "--no-color"],
+    local=True,
+)
+
+
+def with_status_step(steps: list[Step]) -> list[Step]:
+    """A non-empty plan always ends by rewriting the status files."""
+    return [*steps, STATUS_STEP] if steps else steps
+
+
 def build_refresh_plan(
     lane_names: list[str],
     *,
@@ -452,7 +469,7 @@ def cmd_refresh(argv: list[str]) -> int:
         )
         if extra:
             rc_extra = _print_and_run_steps(
-                extra, run=args.run, keep_going=args.keep_going
+                with_status_step(extra), run=args.run, keep_going=args.keep_going
             )
             rc = rc or rc_extra
         return rc
@@ -500,7 +517,9 @@ def cmd_refresh(argv: list[str]) -> int:
             print(f"hint: opt in with --datasets {','.join(opt_in)}")
         return 0
 
-    return _print_and_run_steps(steps, run=args.run, keep_going=args.keep_going)
+    return _print_and_run_steps(
+        with_status_step(steps), run=args.run, keep_going=args.keep_going
+    )
 
 
 def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> int:

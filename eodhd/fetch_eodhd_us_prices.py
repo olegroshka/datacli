@@ -21,10 +21,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import _atomic
 import pandas as pd
 import requests
-import _atomic
 from _datadir import EODHD_RAW_ROOT
+from eodhd_event_fetch_common import lane_state_paths, qualifying_pairs
 from fetch_eodhd_eu_prices import (
     DEFAULT_FROM,
     EODHD_BASE,
@@ -66,9 +67,9 @@ def load_target_tickers(
             raise RuntimeError(
                 f"Run fetch_eodhd_us_fundamentals.py first — {COVERAGE_PATH} not found"
             )
-        cov = pd.read_csv(COVERAGE_PATH)
-        qualifying = cov[cov["both_60q"] == 1][["ticker", "exchange"]].drop_duplicates()
-        tickers = [tuple(row) for row in qualifying.itertuples(index=False, name=None)]
+        tickers = qualifying_pairs(
+            COVERAGE_PATH, sticky_from=lane_state_paths(COVERAGE_PATH.parent)
+        )
     if limit > 0:
         tickers = tickers[:limit]
     return tickers

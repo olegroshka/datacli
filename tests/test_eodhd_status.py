@@ -370,6 +370,49 @@ def test_pairs_behind_and_catch_up_hints() -> None:
     ]
     hints = st.catch_up_hints(records, stale_days=7)
     assert len(hints) == 1 and hints[0].startswith(
-        "us_common/prices: 2 of 4 pairs are > 7d behind"
+        "us_common/prices: 2 of 4 pairs were not queried in the last 7d"
     )
-    assert "refresh us_common --run" in hints[0] and "--fast --days N" in hints[0]
+    assert "refresh us_common --run" in hints[0] and "pull universe" in hints[0]
+
+    # queried pairs with no new bars are reported, but only for prices and
+    # never as something a refresh could fix
+    quiet = [
+        {
+            "lane": "us_etf",
+            "dataset": "prices",
+            "kind": "prices",
+            "pairs": 10,
+            "pairs_quiet": 3,
+        },
+        {
+            "lane": "us_etf",
+            "dataset": "dividends",
+            "kind": "dividends",
+            "pairs": 10,
+            "pairs_quiet": 9,
+        },
+    ]
+    (line,) = st.catch_up_hints(quiet, stale_days=7)
+    assert line.startswith(
+        "us_etf/prices: 3 of 10 pairs were queried but have no new bars"
+    )
+
+    state = pd.DataFrame(
+        {
+            "coverage_through": ["2026-08-15", "2026-08-15", "2026-08-01", None],
+            "latest_data_date": [
+                "2026-08-14",
+                "2026-06-01",
+                "2026-07-30",
+                "2026-08-14",
+            ],
+        }
+    )
+    # row 1 is quiet (queried, stale bars); row 2 is behind (not queried); row 3 unknown
+    assert (
+        st.pairs_quiet(
+            state, "coverage_through", "latest_data_date", as_of_ts=as_of, days=7
+        )
+        == 1
+    )
+    assert st.pairs_behind(state, "coverage_through", as_of_ts=as_of, days=7) == 1

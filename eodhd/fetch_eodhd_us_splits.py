@@ -21,9 +21,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import _atomic
 import pandas as pd
 import requests
-import _atomic
 from _datadir import EODHD_RAW_ROOT
 from eodhd_event_fetch_common import (
     DELAY,

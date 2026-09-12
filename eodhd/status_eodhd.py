@@ -219,6 +219,7 @@ def collect_dataset(
         "stale_days": None,
         "stale": None,
         "pairs_behind": None,
+        "pairs_quiet": None,
         "status": {},
     }
 
@@ -239,8 +240,19 @@ def collect_dataset(
         record["coverage"] = _iso_date(_max_date(state, dataset.coverage_col))
         record["fetched"] = _fetched_iso(_max_timestamp(state, dataset.fetched_col))
         freshness = _max_date(state, dataset.freshness_col)
+        # behind = not even queried lately (left the pull universe, or keeps
+        # failing); quiet = queried, but no new data (delisted/halted). The
+        # old heuristic looked at the freshness column alone, mixed the two,
+        # and recommended a refresh that could not change either.
         record["pairs_behind"] = pairs_behind(
-            state, dataset.freshness_col, as_of_ts=as_of_ts, days=stale_days
+            state, dataset.coverage_col, as_of_ts=as_of_ts, days=stale_days
+        )
+        record["pairs_quiet"] = pairs_quiet(
+            state,
+            dataset.coverage_col,
+            dataset.as_of_state_col,
+            as_of_ts=as_of_ts,
+            days=stale_days,
         )
         if deep and present and dataset.as_of_data_col in parquet_columns(out_path):
             record["output_max"] = _iso_date(
@@ -287,19 +299,53 @@ def pairs_behind(
     return int((dates.notna() & (dates < cutoff)).sum())
 
 
+def pairs_quiet(
+    state: pd.DataFrame,
+    coverage_col: str,
+    data_col: str,
+    *,
+    as_of_ts: pd.Timestamp,
+    days: int,
+) -> int | None:
+    """Pairs queried within ``days`` whose last real bar is older than ``days``.
+
+    Delisted, halted or otherwise silent instruments: the pull is current, the
+    provider just has nothing new. Nothing to fetch, so not a catch-up item.
+    """
+    if coverage_col not in state.columns or data_col not in state.columns:
+        return None
+    cutoff = as_of_ts.normalize() - pd.Timedelta(days=days)
+    coverage = pd.to_datetime(state[coverage_col], errors="coerce")
+    data = pd.to_datetime(state[data_col], errors="coerce")
+    return int(
+        (coverage.notna() & (coverage >= cutoff) & data.notna() & (data < cutoff)).sum()
+    )
+
+
 def catch_up_hints(records: list[dict[str, Any]], *, stale_days: int) -> list[str]:
-    """One line per state-backed dataset with pairs more than ``stale_days`` behind."""
+    """One line per price/event dataset with pairs not queried lately, plus one
+    per price dataset with pairs that were queried but have no new bars."""
     hints: list[str] = []
     for r in records:
-        n = r.get("pairs_behind")
-        if not n or r.get("kind") not in ("prices", "dividends", "splits"):
+        if r.get("kind") not in ("prices", "dividends", "splits"):
             continue
         total = r.get("pairs") or 0
-        hints.append(
-            f"{r['lane']}/{r['dataset']}: {n:,} of {total:,} pairs are > {stale_days}d "
-            f"behind -- `refresh --fast` (default --days 7) skips them; catch up with "
-            f"`refresh {r['lane']} --run` or `refresh --fast --days N --run`"
-        )
+        n = r.get("pairs_behind")
+        if n:
+            hints.append(
+                f"{r['lane']}/{r['dataset']}: {n:,} of {total:,} pairs were not queried in "
+                f"the last {stale_days}d -- they left the lane's pull universe (delisted, "
+                f"or no longer qualifying) or keep failing; `refresh {r['lane']} --run` "
+                f"does not reach them. Check their status counts, or re-include them "
+                f"with --tickers."
+            )
+        q = r.get("pairs_quiet")
+        if q and r.get("kind") == "prices":
+            hints.append(
+                f"{r['lane']}/{r['dataset']}: {q:,} of {total:,} pairs were queried but "
+                f"have no new bars for > {stale_days}d (delisted or halted): nothing to "
+                f"fetch."
+            )
     return hints
 
 
