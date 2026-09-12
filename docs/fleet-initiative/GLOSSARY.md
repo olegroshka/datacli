@@ -4,7 +4,7 @@ title: Fleet initiative terminology
 status: DRAFT
 owner: Oleg Roshka
 last_reviewed: 2026-09-12
-version: 0.1
+version: 0.2
 sources:
   - docs/scheduler-initiative/GLOSSARY.md (terms reused, not redefined)
 depends_on: []
@@ -37,3 +37,11 @@ are not redefined here.
 | Heartbeat | A periodic ledger record proving a node is online and still holding its claims. |
 | Version skew | Nodes running different contract versions; tolerated within bounds, detected always. |
 | Fleet view | The owner-facing report that lists every node's three planes and the ledger, without inferring one plane from another. |
+| Consensus layer | The deterministic, model-free layer that decides ownership: claims, leases, tie-breaks, completions, budget counters, liveness. Implemented over the ledger medium. |
+| Negotiation layer | The model-driven layer in which agents propose, critique and accept plans through addressed ledger records. Produces inputs to consensus, never ownership. |
+| Policy layer | The owner's caps, gates, defaults, vetoes and provider tiers. Above both other layers. |
+| Provider tier | A class of model access chosen per task: local open-weight on a node's GPU; subscription harness (Claude, OpenAI) on a signed-in device; pay-per-token API under an explicit budget only. |
+| Harness | The agent runtime a node uses (for example Claude Code or Codex headless, or a local runner) that reaches datacli through its MCP tools and the registry. |
+| Role | An epoch assignment an online node takes: planner (writes the epoch plan), worker (executes claimed units, no model needed), verifier (reconciles and reviews), scout (watches for drift and failure). |
+| Epoch plan | The planner's record of pending units, proposed owners and budgets for one epoch; accepted through the negotiation protocol; realised through consensus claims. |
+| Inbox record | An addressed ledger record from one node's agent to another (question, critique, request); the unit of asynchronous agent interaction. |

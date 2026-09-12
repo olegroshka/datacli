@@ -4,7 +4,7 @@ title: Fleet initiative charter: intent, goals, requirements, scenarios
 status: DRAFT
 owner: Oleg Roshka
 last_reviewed: 2026-09-12
-version: 0.1
+version: 0.2
 sources:
   - Owner's statement of intent, 2026-09-12 ("run datacli on my different devices with powerful GPUs, agents inside each node agree on slicing the problem and work on it together")
   - docs/scheduler-initiative/KB-001 (single-node intent this extends)
@@ -51,6 +51,32 @@ shows its work per node.
 | G7 | Budgets are global: API quota, model spend and Drive bandwidth are capped for the fleet, not per node. | One bill, one quota. | Fleet spend never exceeds the cap even when nodes cannot talk to each other for a while. | likely |
 | G8 | Single-node mode keeps working unchanged. A fleet of one is just today's datacli. | Incremental adoption; no big-bang migration. | Every current test passes with fleet features off; the daily job is unaffected. | firm |
 | G9 | No secret ever crosses between devices. Each node holds its own API key and Drive token. | Security hygiene already in force. | Coordination records contain no secret material; a node with no key simply cannot claim fetch work. | firm |
+| G10 | A flexible agentic plane: a node's agent runs on a local model, on a subscription harness (Claude, OpenAI) or, only under an explicit budget, on a pay-per-token API, chosen per task class by policy. The daily steady state needs no model call at all. | Avoid extra cost; use what is already paid for; the fleet must stay useful with no model available. | Zero pay-per-token spend by default; a full daily cycle completes with model calls disabled. | firm |
+
+## 3a. Layering principle (firm)
+
+Consensus, negotiation and policy are **separate abstract layers with
+separate contracts**. This is the owner's explicit requirement and the
+single most important structural decision of the initiative.
+
+| Layer | Owns | Nature | Must hold |
+|---|---|---|---|
+| Consensus | The mechanical truth about who owns what: claims, leases, tie-breaks, completions, budget counters, node liveness. | Deterministic, model-free, small record schema, provable against a fake medium. | Correct with zero agents present. Every claim is a compare-and-set on the ledger; there is no other way to obtain ownership. |
+| Negotiation | How agents propose, critique, amend and accept plans; role assignment; exception handling (backfills, failures, new devices). | Model-driven, bounded in turns and spend, resumable, asynchronous through addressed ledger records. | Its output is only ever an *input* to the consensus layer. A negotiation outcome becomes ownership only by passing through a consensus claim. |
+| Policy | The owner's caps, gates, defaults and vetoes; provider tiers per task class. | Static configuration plus explicit owner actions. | Sits above both layers; neither layer can loosen it. |
+
+Corollaries: the ledger medium implements the consensus layer's port and
+nothing else; the negotiation layer can be switched off and the fleet still
+runs on deterministic policy; the two layers are designed, tested and
+decided in separate artefacts (ADR/DD per layer).
+
+**Quality bar for the ledger implementation.** The leaning is a git-based
+ledger (OQ-001). Its design is held to an ultra-high standard: tight,
+minimal semantics (what a ref means, what a record is, what a push proves),
+a small versioned record schema, explicit retention and compaction,
+exhaustive adversarial tests over a fake and a real git remote, and its own
+ADR and DD reviewed by the owner before a line of product code. Clean and
+small beats featureful.
 
 ## 4. Non-goals (draft)
 
@@ -78,6 +104,9 @@ Functional:
 | RF6 | A planner agent can read the fleet's state and propose a decomposition; a proposal is a record other nodes can accept, amend or ignore under a fixed protocol. | firm |
 | RF7 | The owner can veto or pin any plan and set budgets; defaults are conservative. | likely |
 | RF8 | Fleet-level observability: per node the three planes plus claims; per unit its lifecycle. | likely |
+| RF9 | Consensus, negotiation and policy have separate ports and are testable independently; negotiation can be disabled without touching consensus. | firm |
+| RF10 | Roles (planner, worker, verifier, scout) are assignments an online node takes for an epoch, not fixed machines. | likely |
+| RF11 | Agent harnesses reach a node only through its MCP tool surface and the registry; a provider adapter selects the model tier per task class. | likely |
 
 Non-functional:
 
@@ -88,6 +117,8 @@ Non-functional:
 | RN3 | Code version skew between nodes is detected and bounded (contract versions already exist). | likely |
 | RN4 | Everything is testable with fakes: an in-process simulation of N nodes over a local store backend. | firm (house rule) |
 | RN5 | Failure is loud: a fleet problem surfaces in the owner's notification channel, not in Drive. | firm (lesson learned) |
+| RN6 | Model calls are capped per epoch and per role; exhausting a cap degrades to deterministic policy, never to silence. | firm |
+| RN7 | The git-ledger implementation meets the quality bar in section 3a before it carries a single paid claim. | firm |
 
 ## 6. Candidate invariants
 
@@ -100,6 +131,9 @@ Non-functional:
 6. The fleet's spend is bounded by the owner's caps regardless of connectivity. (G7)
 7. Fleet off means today's single node, byte for byte. (G8)
 8. Coordination records are secret-free. (G9)
+9. Negotiation never bypasses consensus: no claim, lease or budget change
+   originates from an agent turn directly. (3a)
+10. The fleet completes a daily cycle with all model calls disabled. (G10)
 
 ## 7. Scenarios to design against
 
@@ -120,6 +154,11 @@ Non-functional:
   starts handing it work without any change on the other nodes.
 - S7 Two nodes run different code versions; one produces an output schema the
   other cannot read. The fleet notices before the file is consumed.
+- S8 The subscription harness hits its rate window mid-epoch. Planning
+  degrades to deterministic policy, the epoch completes, the owner is told.
+- S9 A planner proposes a cut; the verifier's critique (a ledger record) points
+  at a budget breach; the amended proposal is accepted; only then do claims
+  appear. No paid call happened during the exchange.
 
 ## 8. Success criteria for the initiative (draft)
 
@@ -133,4 +172,6 @@ Non-functional:
 
 See `SESSION-001-brainstorm-plan.md`. The two that shape everything else: what
 is the coordination medium (OQ-001), and how much do agents decide versus
-policy (OQ-003).
+policy (OQ-003). The agentic plane itself (providers, harnesses, roles,
+caps) is OQ-005. Current leanings from the 2026-09-12 discussion are recorded
+in each OQ under "Leaning"; they are not decisions.

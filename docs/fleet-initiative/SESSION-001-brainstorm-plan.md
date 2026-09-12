@@ -4,7 +4,7 @@ title: Brainstorm session 1: goals, requirements and the two shaping questions
 status: DRAFT
 owner: Oleg Roshka
 last_reviewed: 2026-09-12
-version: 0.1
+version: 0.2
 depends_on: [KB-001, KB-002, OQ-001, OQ-003]
 referenced_by: [INV-001]
 ---
@@ -27,8 +27,9 @@ two questions that shape everything else. Stay abstract; park implementation.
 | 10 min | Restate the problem in the owner's words; correct KB-001 section 1. | Agreed vision sentence. |
 | 20 min | Goals: keep, amend, drop, add. Rank the top three. | KB-001 section 3 signed; confidence tags resolved to firm or dropped. |
 | 10 min | Non-goals: what we will deliberately not build. | KB-001 section 4 signed. |
-| 20 min | OQ-001 coordination medium: is an always-on tiny service acceptable or not; how much paid-once risk is tolerable; static versus dynamic assignment of paid work. | Two options carried, one spike defined. |
-| 20 min | OQ-003 agent decision surface: fill the table row by row; choose the first protocol. | Decision surface table; protocol for the spike. |
+| 10 min | Layering principle (KB-001 3a): consensus, negotiation, policy as separate layers; the git-ledger quality bar. | Signed or amended. |
+| 15 min | OQ-001: confirm or reject the git-ledger leaning; static assignment of paid work; the compare-and-set spike. | Leaning confirmed or replaced; spike defined. |
+| 15 min | OQ-003 and OQ-005: decision surface, first protocol, provider tiers and caps, what runs headless where. | Tables filled; protocol and tiers for the spike. |
 | 10 min | Scenarios: which of S1 to S7 matter most; add the owner's own. | Ranked scenario list. |
 
 ## Questions to put to the owner, in order
@@ -46,6 +47,10 @@ two questions that shape everything else. Stay abstract; park implementation.
 6. Must the fleet keep scores current daily, and what model budget per day is
    acceptable? (Connects to the open scoring-currency decision.)
 7. Any device you do not trust with the API key or the token?
+8. Which subscriptions and harnesses exist on which devices, and are their
+   headless modes and rate windows acceptable for unattended epochs? (OQ-005)
+9. What is the cap on agent turns per epoch you would accept before the
+   fleet falls back to deterministic policy? (RN6)
 
 ## Facilitation rules
 
@@ -55,6 +60,10 @@ two questions that shape everything else. Stay abstract; park implementation.
 - Disagreements become OQ options with criteria, not arguments.
 - Nothing in the single-node substrate is weakened to make the fleet easier;
   such a need becomes an ADR request.
+- Consensus and negotiation are discussed as separate layers; a proposal that
+  merges them is a design smell to be named, not adopted.
+- The git-ledger design is not sketched in the session; it gets its own DD
+  under the quality bar.
 
 ## Parking lot
 

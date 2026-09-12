@@ -4,7 +4,7 @@ title: Fleet initiative substrate entry point (datacli on many nodes)
 status: DRAFT
 owner: Oleg Roshka
 last_reviewed: 2026-09-12
-version: 0.1
+version: 0.2
 sources:
   - Shared Substrate v0.2 conventions, as practised in docs/scheduler-initiative
 depends_on: [KB-001, GLOSSARY]
@@ -32,6 +32,15 @@ reboot and travel. Inside each node an AI agent should be able to take part in
 deciding how the work is cut, while execution stays on the deterministic,
 allowlisted substrate the scheduler initiative built.
 
+## Structural principle
+
+Consensus (who owns what), negotiation (how agents agree on a plan) and
+policy (the owner's caps and gates) are separate abstract layers with
+separate contracts and separate decision records; see KB-001 section 3a.
+The ledger implementation that carries consensus, leaning git, is held to an
+ultra-high quality bar. Leanings from the 2026-09-12 discussion live in each
+OQ under "Leaning" and are not decisions.
+
 ## What this initiative builds on
 
 The scheduler initiative (`docs/scheduler-initiative/`) gives every node a
@@ -55,9 +64,12 @@ question here, not a silent redesign there.
 | Work decomposition and claiming | OQ-002 | OPEN |
 | Agent agreement protocol | OQ-003 | OPEN |
 | Data plane across nodes | OQ-004 | OPEN |
+| Agentic plane: providers, harnesses, roles, caps | OQ-005 | OPEN |
 | Capability / work-type matrix | INV-002 | NOT STARTED |
 | Adversarial scenarios | INV-004 | NOT STARTED |
-| Domain contracts and ports | DD-001 | NOT STARTED |
+| Consensus-layer contracts | DD-001 | NOT STARTED |
+| Git-ledger implementation design (quality bar, KB-001 3a) | DD-002 | NOT STARTED |
+| Negotiation-layer contracts | DD-003 | NOT STARTED |
 | Decision records | ADR-001.. | NOT STARTED |
 | Work packages | INV-003 | NOT STARTED |
 
