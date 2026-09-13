@@ -3,12 +3,12 @@ id: OQ-002
 title: What is a unit of fleet work, how is it claimed, and how is paid-once guaranteed?
 status: OPEN
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.1
+last_reviewed: 2026-09-13
+version: 0.2
 sources:
   - KB-001 G1, G2, RF2, RF3, scenarios S1, S3, S4
   - KB-002 section 2 (locks, fetch-state sidecars, snapshot outputs)
-depends_on: [KB-001, KB-002, GLOSSARY, OQ-001]
+depends_on: [KB-001, KB-002, GLOSSARY, OQ-001, SESSION-001-PREP]
 referenced_by: [INV-001]
 ---
 
@@ -51,6 +51,36 @@ parallel, and what does owning a piece mean?
   means either partitioning the sidecar by owner or keeping lanes whole.
 - Scheduler locks protect one machine; a fleet unit is a second, outer layer of
   exclusion, not a replacement.
+
+## Code facts that narrow the question (2026-09-12, SESSION-001-PREP section 2)
+
+- Scoring output is already partitioned by publication day with provenance
+  columns (`scoring/store.py`); `score run` selects by day and resumes per
+  chunk. The scoring unit `(schema@v, model, day)` and its one-writer file
+  exist today. Sub-question 1 is answered for scoring by code.
+- The per-directory scoring `state.csv` is shared across days; it must become
+  node-local and never pushed (F16).
+- Fetchers accept `--tickers` and `--limit` but state sidecars are whole-lane
+  files; sub-lane slicing is possible but unnecessary under pinned lanes.
+- Local builds (`reindex`, the news daily tables) are rebuilt by every
+  consuming node from pulled partitions; they are not fleet units.
+
+## Owner decisions (2026-09-13, SESSION-001-PREP 10.5)
+
+- D2: the rebench on the Linux box is the first fleet unit (`score bench` as a
+  model-bound, idempotent, day-selected unit with a throughput axis).
+- D5: the laptop claims only when docked and on AC, one or two days per lease;
+  an expired lease is re-claimed and resumed from the chunks already written.
+- D8: backfill scope is the last year first, extended by envelope; one
+  `(schema, model, quantisation)` per pass.
+- D9: embeddings are a second unit type on the same day units from the first
+  real epoch.
+- Leases are sized from each node's measured articles per hour (estimate
+  times 1.5); policy caps backfill days held per node per epoch.
+
+Proposal P2 (pinned paid units by policy, claimable idempotent units by lease,
+one invariant) is the recommended shape for the two unit classes; failover of
+a pinned lane in v1 is an owner re-pin. Not yet accepted.
 
 ## Criteria
 

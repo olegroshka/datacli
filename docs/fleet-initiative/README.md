@@ -3,8 +3,8 @@ id: BOOTSTRAP-FLEET
 title: Fleet initiative substrate entry point (datacli on many nodes)
 status: DRAFT
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.2
+last_reviewed: 2026-09-13
+version: 0.3
 sources:
   - Shared Substrate v0.2 conventions, as practised in docs/scheduler-initiative
 depends_on: [KB-001, GLOSSARY]
@@ -57,7 +57,7 @@ question here, not a silent redesign there.
 | Layer | Artefact | Status |
 |---|---|---|
 | Intent, goals, requirements, scenarios | KB-001 | DRAFT (for brainstorm session 1) |
-| Facts about today's single node | KB-002 | DRAFT (code-grounded) |
+| Facts about today's single node and the owner's devices | KB-002 | DRAFT (code-grounded, v0.2) |
 | Terms | GLOSSARY | DRAFT |
 | Register, priorities, dependencies | INV-001 | DRAFT |
 | Coordination medium | OQ-001 | OPEN |
@@ -65,6 +65,8 @@ question here, not a silent redesign there.
 | Agent agreement protocol | OQ-003 | OPEN |
 | Data plane across nodes | OQ-004 | OPEN |
 | Agentic plane: providers, harnesses, roles, caps | OQ-005 | OPEN |
+| Linux node scheduling (fleet tick) | OQ-006 | OPEN |
+| Code findings, proposals, agreed design, decisions D1-D13, trajectory | SESSION-001-PREP | DRAFT (2026-09-13) |
 | Capability / work-type matrix | INV-002 | NOT STARTED |
 | Adversarial scenarios | INV-004 | NOT STARTED |
 | Consensus-layer contracts | DD-001 | NOT STARTED |
@@ -79,8 +81,11 @@ question here, not a silent redesign there.
 2. Read KB-002 for what is true today and what is inherently single-node.
 3. Use GLOSSARY terms exactly; propose new ones there, not inline.
 4. Pick the OQ being discussed; leave the others closed.
-5. Park implementation ideas in `SESSION-001-brainstorm-plan.md` under
-   "parking lot"; nothing in this directory is an implementation plan yet.
+5. Read `SESSION-001-prep.md` sections 6 and 10 for the revised trajectory
+   and the decisions of 2026-09-13; proposals P1 to P15 there are not
+   decisions until KB-001 is signed.
+6. Park implementation ideas in `SESSION-001-brainstorm-plan.md` under
+   "parking lot".
 
 ## Edit protocol
 

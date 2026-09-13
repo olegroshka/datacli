@@ -3,9 +3,9 @@ id: SESSION-001
 title: Brainstorm session 1: goals, requirements and the two shaping questions
 status: DRAFT
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.2
-depends_on: [KB-001, KB-002, OQ-001, OQ-003]
+last_reviewed: 2026-09-13
+version: 0.3
+depends_on: [KB-001, KB-002, OQ-001, OQ-003, SESSION-001-PREP]
 referenced_by: [INV-001]
 ---
 
@@ -65,9 +65,28 @@ two questions that shape everything else. Stay abstract; park implementation.
 - The git-ledger design is not sketched in the session; it gets its own DD
   under the quality bar.
 
+## Outcomes so far (2026-09-13)
+
+The session ran as three design rounds in conversation, recorded in
+`SESSION-001-prep.md` section 10. Of the nine owner questions: 1 (devices)
+answered in KB-002 section 4; 3 (no server) answered by D11, a hosted git
+repository; 4 (fixed split by lane) answered yes in principle (P2, pending);
+5 (approval) answered by D7, two tiers; 6 (scoring currency) answered by D2,
+D8 and D9, the rebench then a one-year pass with embeddings; 8 (harnesses)
+partly answered by D3 and D13. Still open: 2 (what hurts most, implicitly
+scoring), 7 (untrusted devices), 9 (turn caps). KB-001 goals are not yet
+signed; the amendments proposed in SESSION-001-PREP section 4 await the
+owner.
+
 ## Parking lot
 
-(implementation ideas captured during the session go here, untriaged)
+- Local bare git repository as the "real" ledger in CI.
+- `git log` of the ledger repository as the first fleet audit view.
+- `drive.file` visibility across devices sharing one OAuth client: verify
+  before ADR-003.
+- Price data hygiene remains the blocker for absolute signal claims; the
+  median market proxy is accepted for ranking configs only (D2).
+- A systemd adapter contract for the Linux node (OQ-006, Option B).
 
 ## Outputs and next steps
 

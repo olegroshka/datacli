@@ -3,8 +3,8 @@ id: OQ-004
 title: How do many nodes share one data plane with one writer per file?
 status: OPEN
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.1
+last_reviewed: 2026-09-13
+version: 0.2
 sources:
   - KB-001 G3, RF4, RF5, scenario S1, S7
   - KB-002 section 1 (storage) and 2 (push-only, one manifest)
@@ -43,6 +43,33 @@ that needs them, and how is "one current copy per file" kept?
    Drive stays the rendezvous for data while the ledger lives elsewhere
    (OQ-001), and what a successor store would need (object store with
    conditional writes would simplify ownership).
+
+## Code facts that narrow the question (2026-09-12, SESSION-001-PREP section 2)
+
+- The push planner has no write scope (include globs and excluded directory
+  names only); orphans are reported, never deleted; trash is manual.
+- The manifest is `<data_root>/.sync/<backend>.json`, entries `size,
+  mtime_ns, md5, remote_id, uploaded_at`: the right shape for an output
+  descriptor.
+- No download, pull, ETag or conditional-write path exists in `storage/`; the
+  backend port needs one `download` method.
+- Drive folder creation is list-then-create and not atomic; `drive.file`
+  visibility across devices that share one OAuth client is unverified (spike
+  before ADR-003).
+- A scoring node needs the day's article partition plus the lane price-state
+  sidecars (the universe filter reads them).
+
+## Owner decision (2026-09-13, D6)
+
+The Linux box holds a full mirror of the data root, seeded once over the LAN
+and kept current by pulling yesterday's descriptors from Drive each epoch.
+Drive stays the plane of record with one current copy per file. The Linux
+node's write scope is scores and embeddings only; the scoring `state.csv` is
+node-local and never pushed.
+
+Proposals P7 (completion records carry output descriptors), P8 (push write
+scope enforced by the planner) and P14 (exactly three additions: `download`,
+pull by descriptor, write scope) are the recommended shape for ADR-003.
 
 ## Constraints
 

@@ -3,8 +3,8 @@ id: OQ-003
 title: The negotiation layer: what do agents decide, and how do they agree?
 status: OPEN
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.2
+last_reviewed: 2026-09-13
+version: 0.3
 sources:
   - KB-001 G5, G10, RF6, RF7, RF9, RN6, section 3a, scenarios S5, S8, S9
   - docs/scheduler-initiative/ADR-003 (allowlisted execution)
@@ -60,6 +60,26 @@ for exceptions: failure triage, backfill negotiation, schema proposals, a new
 device joining. The daily steady state runs on deterministic policy with no
 agent turn (G10). Every role has a turn cap per epoch; exhaustion degrades to
 policy (RN6).
+
+## Owner decisions (2026-09-13, SESSION-001-PREP 10.4 and 10.5)
+
+- D13: the daily steady state has no agent turn. Agents handle four things,
+  all asynchronously through ledger records: proposing a pass (schema, model,
+  quantisation, window, estimated GPU hours inside the envelope), the quality
+  gate every N scored days (existing eval and panel tooling, critique record,
+  pause on a collapsing signal), triage of exceptions the deterministic policy
+  does not cover, and bench proposals before a pass is committed.
+- D7: two-tier approval. Explicit owner approval, given on the Windows box,
+  for starting or changing a pass, changing policy, and anything paid.
+  Automatic from day one for every reversible action: reassign a day, pause on
+  the quality gate, mark a node degraded, retry a pull.
+- Decision surface: "which units exist" and "who takes which day" are policy
+  (deterministic planner); "which pass to run" is agent-proposed and
+  owner-approved; slice boundaries and allowlist changes stay with the owner.
+
+Proposal P6 (a Planner port with `DeterministicPlanner` in v1 and
+`AgentPlanner` later, both emitting the same `EpochPlan`) is the recommended
+structure for RF9 and RN6; contracts follow in DD-003 after DD-001.
 
 ## Cost and safety
 

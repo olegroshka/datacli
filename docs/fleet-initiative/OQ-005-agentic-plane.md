@@ -3,8 +3,8 @@ id: OQ-005
 title: The agentic plane: which models, through which harnesses, in which roles, at what cost?
 status: OPEN
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.1
+last_reviewed: 2026-09-13
+version: 0.2
 sources:
   - KB-001 G10, RF10, RF11, RN6, section 3a, scenarios S8, S9
   - Owner discussion 2026-09-12 (Claude and OpenAI subscriptions; avoid extra cost; home boxes as extra hands)
@@ -33,6 +33,25 @@ spend bounded?
 Policy selects the tier per task class and falls back **up** a tier on quality
 failure and **down** to deterministic policy on cap exhaustion, never to
 silence (RN6).
+
+## Owner decisions (2026-09-13, D3 and D13)
+
+- The local tier is a batched OpenAI-compatible endpoint on the node (vLLM or
+  equivalent) with Ollama as the fallback. Policy declares each node's local
+  endpoints and the model ids they serve; "local" and zero cost follow from
+  that declaration, not from the `ollama/` model-id prefix used today
+  (`llm/tiers.py`). Quantisation is part of the model id because it changes
+  results.
+- The scoring runner keeps N requests in flight (D4) so batched serving pays;
+  throughput is recorded as articles per hour at the run's concurrency and
+  becomes the node's advertised capability for lease sizing (P15).
+- Harness for the planner and verifier roles: Claude Code headless on the
+  Windows box under the subscription, or a local model on the Linux box, with
+  the same role prompt. The MCP server today is read-only (three tools); the
+  agent needs only ledger read and record write, so no mutating MCP surface is
+  required in v1.
+- Steady state has no agent turn (D13); pay-per-token stays at zero by
+  default (G10).
 
 ## Harness boundary
 

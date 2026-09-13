@@ -3,8 +3,8 @@ id: OQ-001
 title: Where does the fleet ledger live, with no always-on server?
 status: OPEN
 owner: Oleg Roshka
-last_reviewed: 2026-09-12
-version: 0.2
+last_reviewed: 2026-09-13
+version: 0.3
 sources:
   - KB-001 G4, G7, G10, RN1, RN2, section 3a
   - KB-002 section 2
@@ -57,6 +57,18 @@ semantics (what a ref means, what a record is, what a push proves), a small
 versioned record schema, retention and compaction rules, and exhaustive
 adversarial tests over a fake git and a real remote, all reviewed before any
 product code.
+
+## Owner decision in principle (2026-09-13, D11; see SESSION-001-PREP 10.5)
+
+Option D confirmed: a private GitHub repository under the owner's account,
+one deploy key per device, a policy ref that nodes read and only the owner
+writes. The decision becomes ADR-001 (PROPOSED) after the first spike: a
+harmless logged-off (S4U) task on the Windows box fetching the empty
+repository. If that fetch fails, the fallback is a small interactive-session
+task that writes the daily job's two records (lane claims, news completion);
+the ledger choice stands either way. Proposals P3 (no heartbeat record; lease
+renewal by compare-and-set) and P4 (a two-operation Ledger port: `read`,
+`cas`) shape DD-001 and DD-002 and are not yet accepted.
 
 ## Criteria
 
