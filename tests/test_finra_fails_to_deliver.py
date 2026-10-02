@@ -165,4 +165,15 @@ def test_qc_flags_violations(tmp_path: Path) -> None:
         checks.setdefault(f.check, []).append(f)
     assert not qc.ok
     assert checks["partition"][0].count == 1 and checks["published_at"][0].count == 2
+    # the two files of a month must not share a (settlement date, CUSIP) row
+    first = ftd.frame_from_file(_parsed(date(2026, 8, 1)))
+    first.loc[0, "settlement_date"] = date(2026, 8, 3)
+    second = ftd.frame_from_file(_parsed(H0816))
+    second.loc[0, "settlement_date"] = date(2026, 8, 3)  # same CUSIP, same date
+    store.write_day(date(2026, 8, 1), first)
+    store.write_day(H0816, second)
+    overlap = [
+        f for f in ftd.qc(tmp_path, now=NOW).findings if f.check == "halves_overlap"
+    ]
+    assert overlap and overlap[0].count == 1
     assert any("state is missing" in f.message for f in checks["state"])

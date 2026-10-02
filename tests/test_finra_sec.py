@@ -99,7 +99,7 @@ def test_parses_the_published_layout_and_checks_both_trailers() -> None:
         ),
         (_zip(count=3), "trailer says 3 rows"),
         (_zip(quantity=1), "trailer says 1 shares"),
-        (_zip(["20260916|X|SYM|1|D|1.0"]), "outside 2026-09-01..2026-09-15"),
+        (_zip(["20261001|X|SYM|1|D|1.0"]), "outside 2026-09-01..2026-09-30"),
         (_zip(["2026090|X|SYM|1|D|1.0"]), "outside"),
         (_zip(["20260901|X|SYM|1|D"]), "5 fields, expected 6"),
         (_zip(["20260901||SYM|1|D|1.0"]), "empty CUSIP or symbol"),
@@ -162,10 +162,33 @@ def test_client_sends_the_declared_user_agent_and_parses() -> None:
     assert headers["User-Agent"] == "Name contact@example.org"
 
 
+def test_client_falls_back_to_the_alternate_path_on_404() -> None:
+    session = _Session(_Response(404), _Response(200, _zip()))
+    client = sec.SecFileClient(session, "n c@x.org", sleep=lambda _w: None)
+    assert client.fetch_half(HALF) is not None
+    assert [u.split("/files/")[1] for u, _ in session.calls] == [
+        "data/fails-deliver-data/cnsfails202609a.zip",
+        "data/other/fails-deliver-data/cnsfails202609a.zip",
+    ]
+
+
+def test_the_b_file_may_carry_the_fifteenth() -> None:
+    raw = _zip(
+        ["20260715|X|SYM|1|D|1.0", "20260731|Y|SYM2|2|D|1.0"],
+        name="cnsfails202607b.txt",
+    )
+    parsed = sec.parse_fails_file(raw, half_start=date(2026, 7, 16))
+    assert [r.settlement_date for r in parsed.rows] == [
+        date(2026, 7, 15),
+        date(2026, 7, 31),
+    ]
+    assert sec.month_bounds(date(2026, 7, 16)) == (date(2026, 7, 1), date(2026, 7, 31))
+
+
 def test_client_404_is_absent_403_is_a_policy_error() -> None:
     assert (
         sec.SecFileClient(
-            _Session(_Response(404)), "n c@x.org", sleep=lambda _w: None
+            _Session(_Response(404), _Response(404)), "n c@x.org", sleep=lambda _w: None
         ).fetch_half(HALF)
         is None
     )

@@ -29,7 +29,7 @@ import pyarrow as pa
 
 from finra import calendar as cal
 from finra import registry as reg
-from finra.sec import FailsFile, SecFileClient, half_bounds
+from finra.sec import FailsFile, SecFileClient, half_bounds, month_bounds
 from finra.store import (
     STATUS_ABSENT,
     STATUS_ERROR,
@@ -413,7 +413,7 @@ def qc(root: Path, *, now: datetime | None = None, **_: Any) -> QcReport:
                     dup,
                 )
             )
-        lo, hi = half_bounds(half)
+        lo, hi = month_bounds(half)
         sd = pd.to_datetime(frame["settlement_date"]).dt.date
         off = int(((sd < lo) | (sd > hi)).sum())
         if off:
@@ -421,10 +421,26 @@ def qc(root: Path, *, now: datetime | None = None, **_: Any) -> QcReport:
                 Finding(
                     "error",
                     "partition",
-                    f"{key}: settlement dates outside the half",
+                    f"{key}: settlement dates outside the half's month",
                     off,
                 )
             )
+        if half.day == 1:
+            sibling = day_store.read_day(half.replace(day=16))
+            if sibling is not None:
+                shared = frame.merge(
+                    sibling[["settlement_date", "cusip"]],
+                    on=["settlement_date", "cusip"],
+                )
+                if not shared.empty:
+                    findings.append(
+                        Finding(
+                            "error",
+                            "halves_overlap",
+                            f"{key}: rows also present in the month's second file",
+                            int(len(shared)),
+                        )
+                    )
         wrong_pub = int(
             (pd.to_datetime(frame["published_at"]).dt.date != published_on(half)).sum()
         )

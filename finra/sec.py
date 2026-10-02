@@ -35,6 +35,8 @@ from finra.auth import read_user_env
 from finra.errors import DailyFileFormatError, SecError
 
 SEC_BASE = "https://www.sec.gov/files/data/fails-deliver-data"
+#: The SEC has posted some months under this path instead (May 2026, for one).
+SEC_ALTERNATE_BASES = ("https://www.sec.gov/files/data/other/fails-deliver-data",)
 USER_AGENT_VAR = "SEC_USER_AGENT"
 CONFIG_KEY = "sec_user_agent"
 DEFAULT_TIMEOUT = 120.0
@@ -70,14 +72,26 @@ def file_url(half_start: date, *, base_url: str = SEC_BASE) -> str:
 
 
 def half_bounds(half_start: date) -> tuple[date, date]:
-    """First and last settlement date a half-month file may carry."""
+    """The nominal range of a half: the 1st to the 15th, or the 16th to the end."""
     if half_start.day == 1:
         return half_start, half_start.replace(day=15)
-    year, month = half_start.year, half_start.month
-    last = date(year + (month == 12), month % 12 + 1, 1)
+    return half_start, month_bounds(half_start)[1]
+
+
+def month_bounds(half_start: date) -> tuple[date, date]:
+    """First and last day of the half's month: the range a file's dates must lie in.
+
+    The split between the two files is the SEC's, not the calendar's: the
+    July 2026 "b" file carries the 15th. So a file is checked against its
+    month, and the two files of a month are checked against each other for
+    duplicate ``(settlement date, CUSIP)`` rows in ``qc``.
+    """
     from datetime import timedelta
 
-    return half_start, last - timedelta(days=1)
+    year, month = half_start.year, half_start.month
+    first = date(year, month, 1)
+    last = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+    return first, last
 
 
 @dataclass(frozen=True)
@@ -135,7 +149,7 @@ def parse_fails_file(raw_zip: bytes, *, half_start: date) -> FailsFile:
     declared_count, declared_quantity = int(count_match.group(1)), int(
         quantity_match.group(1)
     )
-    first, last = half_bounds(half_start)
+    first, last = month_bounds(half_start)
     rows: list[FailRow] = []
     seen: set[tuple[date, str]] = set()
     total = 0
@@ -203,6 +217,7 @@ class SecFileClient:
         user_agent_string: str,
         *,
         base_url: str = SEC_BASE,
+        alternate_bases: tuple[str, ...] = SEC_ALTERNATE_BASES,
         timeout: float = DEFAULT_TIMEOUT,
         sleep: Callable[[float], None] | None = None,
         log: logging.Logger | None = None,
@@ -212,31 +227,36 @@ class SecFileClient:
         self._session = session
         self._user_agent = user_agent_string.strip()
         self._base_url = base_url
+        self._alternate_bases = tuple(alternate_bases)
         self._timeout = timeout
         self._sleep = sleep
         self._log = log
 
     def fetch_raw(self, half_start: date) -> bytes | None:
+        """The zip bytes, trying the alternate paths on a 404; ``None`` when none has it."""
         from _http import request_with_retry  # type: ignore[import-not-found]
 
-        response = request_with_retry(
-            self._session,
-            "GET",
-            file_url(half_start, base_url=self._base_url),
-            headers={
-                "User-Agent": self._user_agent,
-                "Accept-Encoding": "gzip, deflate",
-            },
-            timeout=self._timeout,
-            log=self._log,
-            label=half_name(half_start),
-            sleep=self._sleep,
-        )
+        for base in (self._base_url, *self._alternate_bases):
+            response = request_with_retry(
+                self._session,
+                "GET",
+                file_url(half_start, base_url=base),
+                headers={
+                    "User-Agent": self._user_agent,
+                    "Accept-Encoding": "gzip, deflate",
+                },
+                timeout=self._timeout,
+                log=self._log,
+                label=half_name(half_start),
+                sleep=self._sleep,
+            )
+            if int(response.status_code) != 404:
+                break
+        else:
+            return None
         status = int(response.status_code)
         if status == 200:
             return bytes(response.content)
-        if status == 404:
-            return None
         if status == 403:
             raise SecError(
                 f"{half_name(half_start)}: the SEC refused the request; check SEC_USER_AGENT "
