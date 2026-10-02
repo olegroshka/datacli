@@ -178,8 +178,11 @@ def parse_fails_file(raw_zip: bytes, *, half_start: date) -> FailsFile:
     for number, line in enumerate(lines[1:-2], start=2):
         where = f"{name}: line {number}"
         fields = line.split("|")
-        if len(fields) != 6:
+        if len(fields) < 6:
             raise DailyFileFormatError(f"{where}: {len(fields)} fields, expected 6")
+        # a description may itself contain a pipe ("DMY TECHNOLOGY GROUP INC IV | ",
+        # April 2021); the fixed-position fields around it still validate
+        fields = [*fields[:4], "|".join(fields[4:-1]), fields[-1]]
         day_s, cusip, symbol, quantity_s, description, price_s = (
             f.strip() for f in fields
         )

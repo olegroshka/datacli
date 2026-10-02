@@ -201,4 +201,37 @@ partition per half (`halves/2026-09-01.parquet`, `2026-09-16.parquet`) with
 row is never treated as known before the SEC could have posted it. The
 view resolves separator-free symbols through the short volume store. Two
 live halves (121,504 rows, 21 settlement days) passed `qc`; the backfill
-from 2018-08 (194 halves) ran the same day. Suite 671 passed.
+from 2018-08 (194 halves) ran the same day.
+
+The backfill taught four SEC conventions, each caught by the strict parser
+or the 404 handling and fixed with a test: the split between a month's two
+files is the SEC's own (the July 2026 "b" file carries the 15th), so a file
+is checked against its month and `qc` checks the two files of a month for
+shared rows; some months live under `/files/data/other/` (May 2026) or
+`/files/node/add/data_distribution/` (February to April 2020) and one file
+carries a `_0` suffix (October 2019), so the client reads the SEC's listing
+page once per run and tries the listed URL before the rule-based paths;
+and "CNS INELIGIBLE SECURITY" rows carry a CUSIP and no symbol and are kept
+as published; and a description may itself contain a pipe (April 2021), so
+extra fields are folded into the description while the five fixed-position
+fields still validate. The store is complete: 194 halves from 2018-08-01
+to 2026-08-16, about 10.1M rows, `qc` clean; the finra root is 1.3 GB
+across the four datasets. Suite 677 passed.
+
+**Iteration 7, 2026-10-02: the nightly job and docs.** The job draft
+`finra-short-volume-daily-edit-935f997f` carries five steps: short volume
+fetch and qc, weekly flow, short interest and fails-to-deliver fetches,
+each capped with `--limit-days`. Enabling it (an elevated terminal, since
+the task runs logged-off) registers generation 2. REFERENCE and the design
+doc are current.
+
+## 6. Where this leaves the positioning question
+
+Four point-in-time positioning measures are now on disk per NMS symbol:
+daily short volume (and long volume), twice-monthly short interest with
+days to cover and the float ratio, weekly dark-pool and OTC flow by venue,
+and daily fails to deliver. Against the 60-day scored panel, none of them
+changes the effect of material news; short interest over outstanding is a
+strong additive magnitude factor, and the rest add nothing beyond it. The
+next useful experiment is not another positioning measure but a longer
+scored window, which the nightly scoring job accumulates by itself.

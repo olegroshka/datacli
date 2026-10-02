@@ -296,3 +296,10 @@ def test_client_prefers_the_listed_url_and_falls_back_to_the_rule() -> None:
         "/files/data/other/fails-deliver-data/cnsfails202609a.zip",
         "/files/node/add/data_distribution/cnsfails202609a.zip",
     ]
+
+
+def test_a_pipe_inside_the_description_is_kept() -> None:
+    raw = _zip(["20260901|23344K110|DMYQWS|351|DMY TECHNOLOGY GROUP INC IV | |1.49"])
+    parsed = sec.parse_fails_file(raw, half_start=HALF)
+    assert parsed.rows[0].description == "DMY TECHNOLOGY GROUP INC IV |"  # stripped
+    assert parsed.rows[0].price == 1.49 and parsed.rows[0].quantity == 351
