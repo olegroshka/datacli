@@ -84,7 +84,9 @@ def _register_short_volume(con: Any, root: Path) -> bool:
         "SELECT date, symbol, short_volume, short_exempt_volume, total_volume, "
         "facilities, source, security_kind, "
         f"{_CODE_SQL} AS eodhd_code, "
-        "CASE WHEN total_volume > 0 THEN short_volume / total_volume END AS short_ratio "
+        "CASE WHEN total_volume > 0 THEN short_volume / total_volume END AS short_ratio, "
+        "total_volume - short_volume AS long_volume, "
+        "CASE WHEN total_volume > 0 THEN 1 - short_volume / total_volume END AS long_ratio "
         f"FROM (SELECT *, {_KIND_SQL} AS security_kind FROM read_parquet('{glob}'))"
     )
     _state_view(con, STATE_VIEW, store.state_path)
@@ -133,7 +135,7 @@ def schema_snippet(*, short_volume: bool = True, weekly_flow: bool = True) -> st
     if short_volume:
         parts += [
             f"- {VIEW}(date, symbol, short_volume, short_exempt_volume, total_volume, "
-            "facilities, source, security_kind, eodhd_code, short_ratio)",
+            "facilities, source, security_kind, eodhd_code, short_ratio, long_volume, long_ratio)",
             "  [Reg SHO daily short sale volume, consolidated NMS, one row per symbol per trade date;",
             "  join on date; FINRA publishes day T at 18:00 ET, after the close of T]",
             "  symbol is FINRA's SIP spelling (BRK/B, ABRpD, AACT/WS); eodhd_code maps common",

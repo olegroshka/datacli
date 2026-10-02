@@ -84,3 +84,89 @@ def latest_publishable(now: datetime) -> date:
     if is_publishable(today, local):
         return today
     return previous_weekday(today)
+
+
+# --------------------------------------------------------------------------- #
+# NYSE holidays and business days
+# --------------------------------------------------------------------------- #
+#: Closures that no rule produces: national days of mourning.
+SPECIAL_CLOSURES: frozenset[date] = frozenset(
+    {
+        date(2018, 12, 5),  # George H. W. Bush
+        date(2025, 1, 9),  # Jimmy Carter
+    }
+)
+
+
+def easter(year: int) -> date:
+    """Easter Sunday (Gregorian, anonymous algorithm)."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7  # noqa: E741
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """The ``n``-th (1-based) ``weekday`` (Mon=0) of the month."""
+    first = date(year, month, 1)
+    offset = (weekday - first.weekday()) % 7
+    return first + timedelta(days=offset + 7 * (n - 1))
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    last = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def _observed(day: date) -> date | None:
+    """NYSE observance: Saturday -> Friday, Sunday -> Monday, with the New Year
+    exception (a Saturday New Year's Day is not observed on the Friday)."""
+    if day.weekday() == 5:
+        return None if (day.month, day.day) == (1, 1) else day - timedelta(days=1)
+    if day.weekday() == 6:
+        return day + timedelta(days=1)
+    return day
+
+
+def nyse_holidays(year: int) -> set[date]:
+    """The NYSE full-day closures of ``year`` by rule, plus the special closures."""
+    fixed = [date(year, 1, 1), date(year, 7, 4), date(year, 12, 25)]
+    if year >= 2022:
+        fixed.append(date(year, 6, 19))  # Juneteenth, observed by the NYSE since 2022
+    days = {d for d in (_observed(f) for f in fixed) if d is not None}
+    days.add(_nth_weekday(year, 1, 0, 3))  # Martin Luther King Jr. Day
+    days.add(_nth_weekday(year, 2, 0, 3))  # Presidents' Day
+    days.add(easter(year) - timedelta(days=2))  # Good Friday
+    days.add(_last_weekday(year, 5, 0))  # Memorial Day
+    days.add(_nth_weekday(year, 9, 0, 1))  # Labor Day
+    days.add(_nth_weekday(year, 11, 3, 4))  # Thanksgiving
+    days |= {d for d in SPECIAL_CLOSURES if d.year == year}
+    return {d for d in days if d.year == year}
+
+
+def is_trading_day(day: date) -> bool:
+    return is_weekday(day) and day not in nyse_holidays(day.year)
+
+
+def next_trading_day(day: date) -> date:
+    cursor = day + timedelta(days=1)
+    while not is_trading_day(cursor):
+        cursor += timedelta(days=1)
+    return cursor
+
+
+def business_days_after(day: date, n: int) -> date:
+    """The trading day ``n`` trading days after ``day`` (``n = 0`` is ``day``)."""
+    if n < 0:
+        raise ValueError("n must be >= 0")
+    cursor = day
+    for _ in range(n):
+        cursor = next_trading_day(cursor)
+    return cursor

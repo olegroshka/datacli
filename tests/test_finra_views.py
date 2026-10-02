@@ -72,7 +72,14 @@ def test_view_columns_mapping_and_ratio(tmp_path: Path) -> None:
         "security_kind",
         "eodhd_code",
         "short_ratio",
+        "long_volume",
+        "long_ratio",
     ]
+    long = con.execute(
+        "SELECT long_volume, long_ratio FROM finra_short_volume "
+        "WHERE symbol = 'A' AND date = DATE '2026-09-30'"
+    ).fetchone()
+    assert long == (1.0, 0.5)  # total 2, short 1
     rows = con.execute(
         "SELECT symbol, security_kind, eodhd_code, short_ratio FROM finra_short_volume "
         "WHERE date = DATE '2026-09-30' ORDER BY symbol"
