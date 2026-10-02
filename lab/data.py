@@ -63,12 +63,13 @@ def schema_text(con: Any) -> str:
             pass
     has_sv = _has_view(con, "finra_short_volume")
     has_flow = _has_view(con, "finra_weekly_flow")
-    if has_sv or has_flow:
+    has_si = _has_view(con, "finra_short_interest")
+    if has_sv or has_flow or has_si:
         try:
             from finra import views as finra_views
 
             text += "\n\n" + finra_views.schema_snippet(
-                short_volume=has_sv, weekly_flow=has_flow
+                short_volume=has_sv, weekly_flow=has_flow, short_interest=has_si
             )
         except Exception:
             pass

@@ -125,3 +125,15 @@ generically from the provider. Two live settlement dates (2026-08-31,
 2026-09-15; 45,164 rows) passed `qc`. Noted for a later iteration: three
 providers now carry near-identical refresh loops; a shared engine is the
 cleanup once the fourth dataset shows what varies.
+
+**Iteration 3, 2026-10-02: short interest views.** `finra_short_interest`
+adds `listed`, a `security_kind` taken from the issue name (the symbols
+carry no separators) and `eodhd_code` resolved through the SIP spellings in
+the short volume store, so `BRKB` maps to `BRK-B`. On the live 2026-09-15
+partition every one of the 12,748 listed common names maps; 9,559 OTC rows
+and 288 warrants, units, preferreds and rights map to NULL by design.
+`finra_short_interest_float` divides the position by the EODHD quarterly
+shares outstanding taken as known 45 days after the quarter end
+(point-in-time) and, separately labelled, by today's float snapshot (not
+point-in-time): GME 6.6 percent of outstanding on 2026-09-15, AAPL 0.87.
+Lab snippet, MCP surface and REFERENCE updated. Suite 647 passed.

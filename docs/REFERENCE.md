@@ -37,7 +37,7 @@ Run any command with `--help` for its full options.
 | `fetch` / `refresh [lanes] [--fast] [--run]` `$` | Download / top up data (dry-run unless `--run`) | `eodhd/cli.py refresh` |
 | `probe TICKER…` `$` | Ad-hoc availability probe; caches raw payloads under `<data-root>/probe_cache/`, never touches lane outputs | `eodhd/cli.py probe` |
 | `macro fetch [--run]` | Pull FRED (needs `FRED_API_KEY`) + EODHD macro series (`$`) | `python -m macro.cli fetch` |
-| `finra fetch [--dataset short_volume\|weekly_flow] [--from D] [--to D] [--limit-days N] [--run]` | Daily short sale volume from FINRA's public files (free, no key; `--transport api` uses the Query API), or the weekly ATS/OTC flow (Query API, needs credentials) | `python -m finra.cli fetch` |
+| `finra fetch [--dataset short_volume\|weekly_flow\|short_interest] [--from D] [--to D] [--limit-days N] [--run]` | Daily short sale volume from FINRA's public files (free, no key; `--transport api` uses the Query API), or the weekly ATS/OTC flow (Query API, needs credentials) | `python -m finra.cli fetch` |
 | `finra probe auth \| metadata \| partitions <dataset>` | Read-only calls against the FINRA Query API (credentials optional for public datasets) | `python -m finra.cli probe` |
 
 **Agentic — the [Raw Data Lab](#raw-data-lab-optional-llm-backed)** ✦ *(needs a model — see note below):*
@@ -211,8 +211,9 @@ parquet directly.
 `sql` is the raw escape hatch, running DuckDB against views named `prices`,
 `dividends`, `splits`, `fundamentals`, `news` (plus their `*_state` sidecars, the
 `catalog` once reindexed, `macro` / `macro_country` / `macro_market` once
-fetched, and `finra_short_volume` / `finra_weekly_flow_symbol` once the FINRA
-source is fetched). Every EODHD view carries a `lane` column:
+fetched, and `finra_short_volume` / `finra_weekly_flow_symbol` /
+`finra_short_interest` once the FINRA source is fetched). Every EODHD view
+carries a `lane` column:
 
 ```text
 eodhd> sql "SELECT lane, count(*) AS n, min(ex_date) AS earliest
@@ -299,7 +300,10 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   weekly_flow --run` adds the weekly ATS (dark pool) and OTC market-maker flow
   per symbol and venue (`finra_weekly_flow`, `finra_weekly_flow_symbol`), published
   by FINRA three (Tier 1) or five (Tier 2) weeks after the week, so join it on
-  `published_at`. See `docs/FINRA_SOURCE_DESIGN.md`.
+  `published_at`. `finra fetch --dataset short_interest --run` adds the twice-monthly
+  consolidated short interest (`finra_short_interest`, published seven business days
+  after settlement, and `finra_short_interest_float` over EODHD shares outstanding).
+  See `docs/FINRA_SOURCE_DESIGN.md` and `docs/FINRA_CUT2_PLAN.md`.
 - **Restricted Python (opt-in)** — set `[lab].allow_python` and the `quant` persona
   can run isolated Python (subprocess + timeout + no network) for stats and plots SQL
   can't express. A *trusted-local* convenience, **not** a hardened sandbox — off by

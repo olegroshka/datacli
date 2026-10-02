@@ -45,6 +45,7 @@ def test_register_noop_without_data(tmp_path: Path) -> None:
     assert views.register(con, root=tmp_path) == {
         "finra_short_volume": False,
         "finra_weekly_flow": False,
+        "finra_short_interest": False,
     }
     assert not con.execute(
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'finra_short_volume'"
@@ -228,4 +229,96 @@ def test_weekly_flow_views_and_dot_spelled_classes(tmp_path: Path) -> None:
     snippet = views.schema_snippet(short_volume=False)
     assert (
         "finra_weekly_flow_symbol(" in snippet and "finra_short_volume(" not in snippet
+    )
+
+
+def test_short_interest_views_mapping_and_float(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    duckdb = pytest.importorskip("duckdb")
+    from datetime import date as _date
+
+    from finra import short_interest as si
+
+    # the SIP spellings the lookup resolves class shares through
+    _seed(tmp_path, _date(2026, 9, 15), symbols=["A", "BRK/B", "AAPL"])
+    rows = [
+        {
+            "settlementDate": "2026-09-15",
+            "symbolCode": s,
+            "issueName": n,
+            "marketClassCode": c,
+            "issuerServicesGroupExchangeCode": "A",
+            "currentShortPositionQuantity": pos,
+            "previousShortPositionQuantity": pos,
+            "changePreviousNumber": 0,
+            "changePercent": 0.0,
+            "averageDailyVolumeQuantity": 100,
+            "daysToCoverQuantity": 2.0,
+            "revisionFlag": None,
+            "stockSplitFlag": None,
+            "accountingYearMonthNumber": 20260915,
+        }
+        for s, n, c, pos in (
+            ("AAPL", "Apple Inc.", "NNM", 1000),
+            ("BRKB", "Berkshire Hathaway Inc. Class B", "NYSE", 500),
+            (
+                "ABRPRD",
+                "Arbor Realty Trust 6.375% Series D Cumulative Preferred",
+                "NYSE",
+                7,
+            ),
+            ("ZZOTC", "Some OTC Co", "OTC", 9),
+        )
+    ]
+    si.store(tmp_path).write_day(
+        _date(2026, 9, 15), si.frame_from_api_rows(_date(2026, 9, 15), rows)
+    )
+    # a tiny EODHD us_common lane with quarterly shares and a float snapshot
+    eodhd_root = tmp_path / "eodhd"
+    (eodhd_root / "us_common").mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL", "BRK-B"],
+            "exchange": ["US"] * 3,
+            "date": ["2026-Q2", "2026-Q1", "2026-Q2"],
+            "date_formatted": ["2026-06-30", "2026-03-31", "2026-06-30"],
+            "shares_mln": [14750.0, 14768.0, 1398.0],
+            "shares": [14750e6, 14768e6, 1398e6],
+        }
+    ).to_parquet(
+        eodhd_root / "us_common" / "outstanding_shares_quarterly.parquet", index=False
+    )
+    pd.DataFrame(
+        {"ticker": ["AAPL"], "exchange": ["US"], "shares_float": [14584e6]}
+    ).to_parquet(
+        eodhd_root / "us_common" / "shares_stats_snapshot.parquet", index=False
+    )
+    monkeypatch.setenv("EODHD_DATA_ROOT", str(eodhd_root))
+
+    con = duckdb.connect()
+    assert views.register(con, root=tmp_path)["finra_short_interest"] is True
+    got = con.execute(
+        "SELECT symbol, listed, security_kind, eodhd_code, published_at FROM finra_short_interest ORDER BY symbol"
+    ).fetchall()
+    by = {g[0]: g for g in got}
+    assert by["BRKB"][1:4] == (True, "common", "BRK-B")  # through the SIP lookup
+    assert by["AAPL"][1:4] == (True, "common", "AAPL")
+    assert by["ABRPRD"][1:4] == (True, "preferred", None)
+    assert by["ZZOTC"][1:4] == (False, "otc", None)
+    assert str(by["AAPL"][4]) == "2026-09-24"  # settlement + 7 business days
+    flt = con.execute(
+        "SELECT symbol, quarter_end, shares_outstanding, round(short_over_outstanding * 1e6, 3), "
+        "round(short_over_float_now * 1e6, 3) FROM finra_short_interest_float ORDER BY symbol"
+    ).fetchall()
+    assert [f[0] for f in flt] == ["AAPL", "BRKB"]  # only rows with an eodhd_code
+    # 2026-06-30 + 45 days = 2026-08-14 <= 2026-09-15, so the Q2 count is the one known
+    assert str(flt[0][1]) == "2026-06-30" and flt[0][2] == 14750e6
+    assert flt[0][3] == round(1000 / 14750e6 * 1e6, 3) and flt[0][4] == round(
+        1000 / 14584e6 * 1e6, 3
+    )
+    assert flt[1][4] is None  # no float snapshot for BRK-B
+    snippet = views.schema_snippet(short_volume=False, weekly_flow=False)
+    assert (
+        "finra_short_interest(" in snippet and "finra_short_interest_float(" in snippet
     )
