@@ -102,7 +102,7 @@ def test_parses_the_published_layout_and_checks_both_trailers() -> None:
         (_zip(["20261001|X|SYM|1|D|1.0"]), "outside 2026-09-01..2026-09-30"),
         (_zip(["2026090|X|SYM|1|D|1.0"]), "outside"),
         (_zip(["20260901|X|SYM|1|D"]), "5 fields, expected 6"),
-        (_zip(["20260901||SYM|1|D|1.0"]), "empty CUSIP or symbol"),
+        (_zip(["20260901||SYM|1|D|1.0"]), "empty CUSIP"),
         (
             _zip(["20260901|X|SYM|1|D|1.0", "20260901|X|OTHER|2|D|1.0"]),
             r"duplicate \(settlement date, CUSIP\)",
@@ -151,22 +151,26 @@ class _Session:
 
 
 def test_client_sends_the_declared_user_agent_and_parses() -> None:
-    session = _Session(_Response(200, _zip()))
+    session = _Session(
+        _Response(200, b""), _Response(200, _zip())
+    )  # index, then the file
     client = sec.SecFileClient(
         session, " Name contact@example.org ", sleep=lambda _w: None
     )
     parsed = client.fetch_half(HALF)
     assert parsed is not None and len(parsed.rows) == 4
-    url, headers = session.calls[0]
+    url, headers = session.calls[1]
     assert url.endswith("/cnsfails202609a.zip")
     assert headers["User-Agent"] == "Name contact@example.org"
 
 
 def test_client_falls_back_to_the_alternate_path_on_404() -> None:
-    session = _Session(_Response(404), _Response(200, _zip()))
+    session = _Session(
+        _Response(200, b"<html>no links</html>"), _Response(404), _Response(200, _zip())
+    )
     client = sec.SecFileClient(session, "n c@x.org", sleep=lambda _w: None)
     assert client.fetch_half(HALF) is not None
-    assert [u.split("/files/")[1] for u, _ in session.calls] == [
+    assert [u.split("/files/")[1] for u, _ in session.calls[1:]] == [
         "data/fails-deliver-data/cnsfails202609a.zip",
         "data/other/fails-deliver-data/cnsfails202609a.zip",
     ]
@@ -188,17 +192,23 @@ def test_the_b_file_may_carry_the_fifteenth() -> None:
 def test_client_404_is_absent_403_is_a_policy_error() -> None:
     assert (
         sec.SecFileClient(
-            _Session(_Response(404), _Response(404)), "n c@x.org", sleep=lambda _w: None
+            _Session(_Response(404), _Response(404), _Response(404), _Response(404)),
+            "n c@x.org",
+            sleep=lambda _w: None,
         ).fetch_half(HALF)
         is None
     )
     with pytest.raises(SecError, match="SEC_USER_AGENT"):
         sec.SecFileClient(
-            _Session(_Response(403, b"<html>")), "n c@x.org", sleep=lambda _w: None
+            _Session(_Response(200, b""), _Response(403, b"<html>")),
+            "n c@x.org",
+            sleep=lambda _w: None,
         ).fetch_half(HALF)
     with pytest.raises(SecError) as info:
         sec.SecFileClient(
-            _Session(*[_Response(503)] * 4), "n c@x.org", sleep=lambda _w: None
+            _Session(_Response(200, b""), *[_Response(503)] * 4),
+            "n c@x.org",
+            sleep=lambda _w: None,
         ).fetch_half(HALF)
     assert info.value.status == 503
     with pytest.raises(ValueError, match="declared user agent"):
@@ -223,3 +233,66 @@ def test_user_agent_lookup_order(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sec.user_agent() == "from config"
     monkeypatch.setattr(eodhd_config, "section", lambda name: {})
     assert sec.user_agent() is None
+
+
+def test_cns_ineligible_rows_have_a_cusip_and_no_symbol() -> None:
+    raw = _zip(["20260901|646067NN4||15000|CNS INELIGIBLE SECURITY|1.00"])
+    parsed = sec.parse_fails_file(raw, half_start=HALF)
+    assert parsed.rows[0].symbol == "" and parsed.rows[0].cusip == "646067NN4"
+
+
+INDEX_HTML = """
+<a href="/files/data/fails-deliver-data/cnsfails202609a.zip">x</a>
+<a href="/files/data/other/fails-deliver-data/cnsfails202605b.zip">x</a>
+<a href="/files/node/add/data_distribution/cnsfails202004a.zip">x</a>
+<a href="/files/data/fails-deliver-data/cnsfails201910a_0.zip">x</a>
+<a href="/files/data/fails-deliver-data/cnsfails201910a.zip">older duplicate</a>
+"""
+
+
+def test_parse_index_maps_every_naming_quirk() -> None:
+    index = sec.parse_index(INDEX_HTML)
+    assert index["cnsfails202609a"].endswith(
+        "/files/data/fails-deliver-data/cnsfails202609a.zip"
+    )
+    assert index["cnsfails202605b"].endswith(
+        "/files/data/other/fails-deliver-data/cnsfails202605b.zip"
+    )
+    assert index["cnsfails202004a"].endswith(
+        "/files/node/add/data_distribution/cnsfails202004a.zip"
+    )
+    assert index["cnsfails201910a"].endswith(
+        "cnsfails201910a_0.zip"
+    )  # the first link wins
+    assert all(u.startswith("https://www.sec.gov/") for u in index.values())
+
+
+def test_client_prefers_the_listed_url_and_falls_back_to_the_rule() -> None:
+    # index page, then the listed (suffixed) file
+    session = _Session(
+        _Response(200, INDEX_HTML.encode()),
+        _Response(200, _zip(["20191001|X|SYM|1|D|1.0"], name="cnsfails201910a.txt")),
+    )
+    client = sec.SecFileClient(session, "n c@x.org", sleep=lambda _w: None)
+    half = date(2019, 10, 1)
+    assert client.fetch_half(half) is not None
+    assert session.calls[0][0] == sec.SEC_INDEX_URL
+    assert session.calls[1][0].endswith("cnsfails201910a_0.zip")
+    # index unreachable: the rule-based paths are tried in order
+    session = _Session(
+        _Response(503),
+        _Response(503),
+        _Response(503),
+        _Response(503),
+        _Response(404),
+        _Response(404),
+        _Response(404),
+    )
+    client = sec.SecFileClient(session, "n c@x.org", sleep=lambda _w: None)
+    assert client.fetch_half(HALF) is None
+    tried = [u.split("sec.gov")[1] for u, _ in session.calls[4:]]
+    assert tried == [
+        "/files/data/fails-deliver-data/cnsfails202609a.zip",
+        "/files/data/other/fails-deliver-data/cnsfails202609a.zip",
+        "/files/node/add/data_distribution/cnsfails202609a.zip",
+    ]

@@ -35,8 +35,30 @@ from finra.auth import read_user_env
 from finra.errors import DailyFileFormatError, SecError
 
 SEC_BASE = "https://www.sec.gov/files/data/fails-deliver-data"
-#: The SEC has posted some months under this path instead (May 2026, for one).
-SEC_ALTERNATE_BASES = ("https://www.sec.gov/files/data/other/fails-deliver-data",)
+#: The SEC has posted some months under these paths instead (May 2026; Feb-Apr 2020).
+SEC_ALTERNATE_BASES = (
+    "https://www.sec.gov/files/data/other/fails-deliver-data",
+    "https://www.sec.gov/files/node/add/data_distribution",
+)
+SEC_INDEX_URL = "https://www.sec.gov/data-research/sec-markets-data/fails-deliver-data"
+SEC_HOST = "https://www.sec.gov"
+_INDEX_LINK = re.compile(r'href="([^"]*?/(cnsfails\d{6}[ab])(?:_\d+)?\.zip)"')
+
+
+def parse_index(html: str) -> dict[str, str]:
+    """``{half name: absolute url}`` for every fails file the listing page links.
+
+    The first link for a half wins (the page lists newest first, and a
+    re-posted file appears above its predecessor).
+    """
+    found: dict[str, str] = {}
+    for match in _INDEX_LINK.finditer(html):
+        href, name = match.group(1), match.group(2)
+        url = href if href.startswith("http") else SEC_HOST + href
+        found.setdefault(name, url)
+    return found
+
+
 USER_AGENT_VAR = "SEC_USER_AGENT"
 CONFIG_KEY = "sec_user_agent"
 DEFAULT_TIMEOUT = 120.0
@@ -173,8 +195,9 @@ def parse_fails_file(raw_zip: bytes, *, half_start: date) -> FailsFile:
             raise DailyFileFormatError(
                 f"{where}: settlement date {day_s!r} outside {first}..{last}"
             )
-        if not cusip or not symbol:
-            raise DailyFileFormatError(f"{where}: empty CUSIP or symbol in {line!r}")
+        if not cusip:
+            raise DailyFileFormatError(f"{where}: empty CUSIP in {line!r}")
+        # a "CNS INELIGIBLE SECURITY" row has a CUSIP and no symbol; kept as published
         if (day, cusip) in seen:
             raise DailyFileFormatError(
                 f"{where}: duplicate (settlement date, CUSIP) {day} {cusip}"
@@ -218,6 +241,7 @@ class SecFileClient:
         *,
         base_url: str = SEC_BASE,
         alternate_bases: tuple[str, ...] = SEC_ALTERNATE_BASES,
+        index_url: str = SEC_INDEX_URL,
         timeout: float = DEFAULT_TIMEOUT,
         sleep: Callable[[float], None] | None = None,
         log: logging.Logger | None = None,
@@ -228,23 +252,67 @@ class SecFileClient:
         self._user_agent = user_agent_string.strip()
         self._base_url = base_url
         self._alternate_bases = tuple(alternate_bases)
+        self._index_url = index_url
+        self._index: dict[str, str] | None = None
         self._timeout = timeout
         self._sleep = sleep
         self._log = log
 
-    def fetch_raw(self, half_start: date) -> bytes | None:
-        """The zip bytes, trying the alternate paths on a 404; ``None`` when none has it."""
+    def _headers(self) -> dict[str, str]:
+        return {"User-Agent": self._user_agent, "Accept-Encoding": "gzip, deflate"}
+
+    def index(self) -> dict[str, str]:
+        """``{half name: absolute url}`` from the SEC's listing page, fetched once.
+
+        The SEC has posted files under three paths and once with a ``_0``
+        suffix (``cnsfails201910a_0.zip``); the listing page links every
+        file, so it is the authority when reachable. Empty when it is not.
+        """
+        if self._index is not None:
+            return self._index
         from _http import request_with_retry  # type: ignore[import-not-found]
 
-        for base in (self._base_url, *self._alternate_bases):
+        found: dict[str, str] = {}
+        try:
             response = request_with_retry(
                 self._session,
                 "GET",
-                file_url(half_start, base_url=base),
-                headers={
-                    "User-Agent": self._user_agent,
-                    "Accept-Encoding": "gzip, deflate",
-                },
+                self._index_url,
+                headers=self._headers(),
+                timeout=self._timeout,
+                log=self._log,
+                label="SEC fails index",
+                sleep=self._sleep,
+            )
+            if int(response.status_code) == 200:
+                found = parse_index(response.content.decode("utf-8", "replace"))
+        except Exception:  # the index is a convenience; the rule-based URLs remain
+            found = {}
+        self._index = found
+        return found
+
+    def candidate_urls(self, half_start: date) -> list[str]:
+        """The listing page's URL first, then the rule-based paths."""
+        urls: list[str] = []
+        listed = self.index().get(half_name(half_start))
+        if listed:
+            urls.append(listed)
+        for base in (self._base_url, *self._alternate_bases):
+            url = file_url(half_start, base_url=base)
+            if url not in urls:
+                urls.append(url)
+        return urls
+
+    def fetch_raw(self, half_start: date) -> bytes | None:
+        """The zip bytes, trying each candidate URL on a 404; ``None`` when none has it."""
+        from _http import request_with_retry  # type: ignore[import-not-found]
+
+        for url in self.candidate_urls(half_start):
+            response = request_with_retry(
+                self._session,
+                "GET",
+                url,
+                headers=self._headers(),
                 timeout=self._timeout,
                 log=self._log,
                 label=half_name(half_start),
