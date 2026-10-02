@@ -30,6 +30,8 @@ from finra import registry as reg  # noqa: E402
 from finra import short_volume as sv  # noqa: E402
 from finra import weekly_flow as wf  # noqa: E402
 from finra import short_interest as si  # noqa: E402
+from finra import fails_to_deliver as ftd  # noqa: E402
+from finra import sec  # noqa: E402
 from finra.api import QueryApiClient  # noqa: E402
 from finra.auth import (  # noqa: E402
     CLIENT_ID_VAR,
@@ -92,7 +94,7 @@ COMMANDS: dict[str, Command] = {
             (
                 Flag(
                     "--dataset",
-                    "dataset to fetch: short_volume | weekly_flow | short_interest (default: short_volume)",
+                    "dataset to fetch: short_volume | weekly_flow | short_interest | fails_to_deliver (default: short_volume)",
                     metavar="<name>",
                 ),
                 Flag(
@@ -200,16 +202,31 @@ def make_client(*, timeout: float | None = None) -> QueryApiClient:
 
 
 #: dataset name -> provider module (store / refresh / qc / SPEC / DEFAULT_OVERLAP_DAYS)
-PROVIDERS: dict[str, Any] = {sv.SPEC.name: sv, wf.SPEC.name: wf, si.SPEC.name: si}
+PROVIDERS: dict[str, Any] = {
+    sv.SPEC.name: sv,
+    wf.SPEC.name: wf,
+    si.SPEC.name: si,
+    ftd.SPEC.name: ftd,
+}
 
 
 def transports_for(spec: reg.DatasetSpec) -> tuple[str, ...]:
     """The transports a dataset accepts; the first is its default."""
+    if spec.sources:
+        return spec.sources
     return sv.SOURCES if spec.cdn_family else (sv.SOURCE_API,)
 
 
 def make_transport(spec: reg.DatasetSpec, name: str) -> Any:
-    """Every provider exposes ``ApiTransport``; only short volume has a CDN one."""
+    """API providers expose ``ApiTransport``; short volume has a CDN one, fails a SEC one."""
+    if name == ftd.SOURCE_SEC:
+        agent = sec.user_agent()
+        if not agent:
+            raise FinraError(
+                f"the SEC requires a declared user agent: set {sec.USER_AGENT_VAR} "
+                "(name and contact email) in the environment"
+            )
+        return ftd.SecTransport(sec.SecFileClient(make_session(), agent))
     if name == sv.SOURCE_API:
         return PROVIDERS[spec.name].ApiTransport(make_client())
     return sv.CdnTransport(DailyFileClient(make_session()))
@@ -288,6 +305,8 @@ def _dataset_disk_status(spec: reg.DatasetSpec, root: Path) -> dict[str, Any]:
 
 def _published(client: QueryApiClient, spec: reg.DatasetSpec) -> dict[str, Any]:
     """What FINRA has published for ``spec``: a separate plane from what is on disk."""
+    if not spec.api_addressable:
+        return {"reachable": False, "error": "not a Query API dataset"}
     try:
         parts = client.partitions(spec.api_group, spec.api_name)
     except FinraError as exc:

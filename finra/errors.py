@@ -73,3 +73,7 @@ class CdnError(FinraError):
 
 class DailyFileFormatError(FinraError):
     """A daily file broke the strict layout; the message names line and rule."""
+
+
+class SecError(FinraError):
+    """The SEC file endpoint failed in a way that is not "no such file"."""

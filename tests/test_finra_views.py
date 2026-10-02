@@ -46,6 +46,7 @@ def test_register_noop_without_data(tmp_path: Path) -> None:
         "finra_short_volume": False,
         "finra_weekly_flow": False,
         "finra_short_interest": False,
+        "finra_fails_to_deliver": False,
     }
     assert not con.execute(
         "SELECT 1 FROM information_schema.tables WHERE table_name = 'finra_short_volume'"

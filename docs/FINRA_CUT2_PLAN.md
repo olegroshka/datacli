@@ -185,3 +185,20 @@ magnitude model, materiality plus short interest over outstanding, which
 beats either alone. The hypothesis as stated in phase 5, that positioning
 *changes* the effect of material news, is not supported by any of the three
 positioning measures now on disk.
+
+**Iteration 6, 2026-10-02: SEC fails to deliver.** The owner provided the
+contact string; it lives in the Windows user environment as
+`SEC_USER_AGENT` (read like the API keys, with `[finra] sec_user_agent` as
+a config fallback) because the live eodhd job fingerprints `datacli.toml`
+and an edit there would stop it. `finra/sec.py` is the fourth transport: a
+strict parser for the half-month zips (header, six fields, dates inside the
+half, unique `(settlement date, CUSIP)`, integer quantities, `.` prices as
+null, and **both trailers checked**, the record count and the share total),
+UTF-8 with a cp1252 fallback for old files, 404 as absent and the SEC's 403
+policy page as a named error. `finra/fails_to_deliver.py` stores one
+partition per half (`halves/2026-09-01.parquet`, `2026-09-16.parquet`) with
+`published_at` as the SEC's posting rule plus a five-day margin, chosen so a
+row is never treated as known before the SEC could have posted it. The
+view resolves separator-free symbols through the short volume store. Two
+live halves (121,504 rows, 21 settlement days) passed `qc`; the backfill
+from 2018-08 (194 halves) ran the same day. Suite 671 passed.

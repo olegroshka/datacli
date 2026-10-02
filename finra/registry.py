@@ -29,12 +29,19 @@ class DatasetSpec:
     part_field: str = ""  # secondary API partition field, if any
     parts: tuple[str, ...] = ()  # the values of it that are fetched
     subdir: str = "daily"  # where the partition files live under the dataset dir
-    cadence: str = "daily"  # daily | weekly
+    cadence: str = "daily"  # daily | weekly | semimonthly
+    sources: tuple[str, ...] = ()  # transports; empty = cdn+api or api, from cdn_family
 
     @property
     def transport(self) -> str:
-        """Where routine fetches read from: the public file family or the API."""
+        """Where routine fetches read from: the public file family, the API, or the SEC."""
+        if self.sources and self.sources[0] not in ("cdn", "api"):
+            return self.sources[0]
         return f"cdn:{self.cdn_family}" if self.cdn_family else "api"
+
+    @property
+    def api_addressable(self) -> bool:
+        return bool(self.api_group and self.api_name)
 
 
 DATASETS: dict[str, DatasetSpec] = {
@@ -90,6 +97,22 @@ DATASETS: dict[str, DatasetSpec] = {
             entitled=True,
             subdir="settlement",
             cadence="semimonthly",
+        ),
+        DatasetSpec(
+            name="fails_to_deliver",
+            summary="SEC CNS fails to deliver per settlement date and CUSIP, from the half-month files",
+            api_group="",
+            api_name="",
+            partition_field="",
+            first_date=date(
+                2018, 8, 1
+            ),  # the SEC has files from 2004-02; this matches the short volume store
+            key_cols=("settlement_date", "cusip"),
+            cdn_family=None,
+            entitled=False,
+            subdir="halves",
+            cadence="semimonthly",
+            sources=("sec",),
         ),
     )
 }

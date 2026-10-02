@@ -33,6 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from finra import fails_to_deliver as ftd
 from finra import short_interest as si
 from finra import short_volume as sv
 from finra import weekly_flow as wf
@@ -46,6 +47,8 @@ FLOW_STATE_VIEW = "finra_weekly_flow_state"
 SI_VIEW = "finra_short_interest"
 SI_FLOAT_VIEW = "finra_short_interest_float"
 SI_STATE_VIEW = "finra_short_interest_state"
+FTD_VIEW = "finra_fails_to_deliver"
+FTD_STATE_VIEW = "finra_fails_to_deliver_state"
 #: Days after a quarter end by which its share count is taken as public (10-Q due in 40).
 SHARES_AVAILABLE_LAG_DAYS = 45
 
@@ -213,6 +216,21 @@ def _register_short_interest(con: Any, root: Path) -> bool:
     return True
 
 
+def _register_fails(con: Any, root: Path) -> bool:
+    store = ftd.store(root)
+    if not store.days_on_disk():
+        return False
+    glob = (store.daily_dir / "*.parquet").as_posix()
+    con.execute(
+        f"CREATE OR REPLACE VIEW {FTD_VIEW} AS "
+        "WITH lookup AS (" + _class_share_lookup_sql(root) + ") "
+        "SELECT f.*, coalesce(l.eodhd_code, f.symbol) AS eodhd_code "
+        f"FROM read_parquet('{glob}') f LEFT JOIN lookup l ON l.flat = f.symbol"
+    )
+    _state_view(con, FTD_STATE_VIEW, store.state_path)
+    return True
+
+
 def register(con: Any, *, root: Path | None = None) -> dict[str, bool]:
     """Register whichever FINRA surfaces have data. Returns ``{view: registered}``."""
     base = Path(root) if root is not None else finra_root()
@@ -220,11 +238,16 @@ def register(con: Any, *, root: Path | None = None) -> dict[str, bool]:
         VIEW: _register_short_volume(con, base),
         FLOW_VIEW: _register_weekly_flow(con, base),
         SI_VIEW: _register_short_interest(con, base),
+        FTD_VIEW: _register_fails(con, base),
     }
 
 
 def schema_snippet(
-    *, short_volume: bool = True, weekly_flow: bool = True, short_interest: bool = True
+    *,
+    short_volume: bool = True,
+    weekly_flow: bool = True,
+    short_interest: bool = True,
+    fails_to_deliver: bool = True,
 ) -> str:
     parts = ["FINRA views (join to equities by eodhd_code = ticker; dates as noted):"]
     if short_volume:
@@ -266,5 +289,15 @@ def schema_snippet(
             "  [short position over EODHD quarterly shares outstanding known 45 days after the quarter",
             "  end (point-in-time), and over today's float snapshot (NOT point-in-time)]",
             f"- {SI_STATE_VIEW}(date, status, source, rows, short_sum, total_sum, sha256, fetched_at, detail, part)",
+        ]
+    if fails_to_deliver:
+        parts += [
+            f"- {FTD_VIEW}(settlement_date, cusip, symbol, quantity, description, price, half_start, "
+            "published_at, source, eodhd_code)",
+            "  [SEC CNS fails to deliver per settlement date and CUSIP, every listed and OTC security;",
+            "  point-in-time: the SEC posts each half-month file two to four weeks later, published_at",
+            "  is that rule plus a 5-day margin, ASOF-join on it; symbols are separator-free (BRKB)",
+            "  and eodhd_code resolves class shares through the short volume store]",
+            f"- {FTD_STATE_VIEW}(date, status, source, rows, short_sum, total_sum, sha256, fetched_at, detail, part)",
         ]
     return "\n".join(parts)

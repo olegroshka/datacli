@@ -212,7 +212,8 @@ parquet directly.
 `dividends`, `splits`, `fundamentals`, `news` (plus their `*_state` sidecars, the
 `catalog` once reindexed, `macro` / `macro_country` / `macro_market` once
 fetched, and `finra_short_volume` / `finra_weekly_flow_symbol` /
-`finra_short_interest` once the FINRA source is fetched). Every EODHD view
+`finra_short_interest` / `finra_fails_to_deliver` once the FINRA source is fetched).
+Every EODHD view
 carries a `lane` column:
 
 ```text
@@ -303,7 +304,10 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   `published_at`. `finra fetch --dataset short_interest --run` adds the twice-monthly
   consolidated short interest (`finra_short_interest`, published seven business days
   after settlement, and `finra_short_interest_float` over EODHD shares outstanding).
-  See `docs/FINRA_SOURCE_DESIGN.md` and `docs/FINRA_CUT2_PLAN.md`.
+  `finra fetch --dataset fails_to_deliver --run` adds the SEC's CNS fails to deliver
+  per settlement date and CUSIP (`finra_fails_to_deliver`); the SEC requires a
+  declared contact in `SEC_USER_AGENT`. See `docs/FINRA_SOURCE_DESIGN.md` and
+  `docs/FINRA_CUT2_PLAN.md`.
 - **Restricted Python (opt-in)** — set `[lab].allow_python` and the `quant` persona
   can run isolated Python (subprocess + timeout + no network) for stats and plots SQL
   can't express. A *trusted-local* convenience, **not** a hardened sandbox — off by
@@ -390,7 +394,8 @@ that predate this repo). It is never written to `datacli.toml`. `config` shows
 **Other keys** (all environment variables): `FRED_API_KEY` for `macro fetch`;
 `FINRA_CLIENT_ID` + `FINRA_API_KEY` (the client secret) for the FINRA Query API,
 read from the environment or the Windows user environment and optional for the
-public short volume files; `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab.
+public short volume files; `SEC_USER_AGENT` (a declared name and contact email,
+required by the SEC's access policy) for the fails-to-deliver files; `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab.
 See `datacli.example.toml` for the full config template.
 
 ## Scheduled jobs (Windows)

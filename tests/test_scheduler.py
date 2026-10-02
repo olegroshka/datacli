@@ -1034,7 +1034,7 @@ def test_scheduler_completion_covers_registry_and_command_values() -> None:
     ) == ("fred", "eodhd", "all")
     assert schedule_completion_candidates(
         ["add", "demo", "--", "finra", "fetch", "--transport", ""]
-    ) == ("cdn", "api")
+    ) == ("cdn", "api", "sec")
     assert schedule_completion_candidates(["create", "demo", "--days", ""]) == (
         "monday",
         "tuesday",
@@ -1129,7 +1129,7 @@ def test_finra_fetch_validation_and_bindings(tmp_path: Path) -> None:
         registry.validate("finra", "fetch", ["short_volume", "--run"], context)
     with pytest.raises(CommandValidationError, match="unknown FINRA dataset"):
         registry.validate("finra", "fetch", ["--dataset", "x", "--run"], context)
-    with pytest.raises(CommandValidationError, match="cdn or api"):
+    with pytest.raises(CommandValidationError, match="cdn, api or sec"):
         registry.validate("finra", "fetch", ["--transport", "ftp", "--run"], context)
     with pytest.raises(CommandValidationError, match="ISO date"):
         registry.validate("finra", "fetch", ["--from", "2026-13-01", "--run"], context)

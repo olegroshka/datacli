@@ -135,8 +135,8 @@ CAPABILITIES = (
     Capability("sync", "status", "OPTIONAL", False, False),
 )
 
-FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest"}
-FINRA_TRANSPORTS = {"cdn", "api"}
+FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest", "fails_to_deliver"}
+FINRA_TRANSPORTS = {"cdn", "api", "sec"}
 
 
 def _read_config(path: Path | None) -> dict:
@@ -202,13 +202,21 @@ def _macro_provider(argv: Sequence[str]) -> str:
     return "all"
 
 
-def _finra_transport(argv: Sequence[str]) -> str:
+def _finra_option(argv: Sequence[str], option: str, default: str) -> str:
     for index, token in enumerate(argv):
-        if token.startswith("--transport="):
+        if token.startswith(f"{option}="):
             return token.partition("=")[2]
-        if token == "--transport" and index + 1 < len(argv):
+        if token == option and index + 1 < len(argv):
             return argv[index + 1]
-    return "cdn"
+    return default
+
+
+def _finra_transport(argv: Sequence[str]) -> str:
+    return _finra_option(argv, "--transport", "cdn")
+
+
+def _finra_dataset(argv: Sequence[str]) -> str:
+    return _finra_option(argv, "--dataset", "short_volume")
 
 
 def _finra_credentials_finding(context: ValidationContext) -> "Finding | None":
@@ -536,7 +544,7 @@ class CommandRegistry:
                 raise CommandValidationError(f"unknown FINRA dataset: {dataset}")
             transport = options.get("--transport", ["cdn"])[-1]
             if transport not in FINRA_TRANSPORTS:
-                raise CommandValidationError("finra transport must be cdn or api")
+                raise CommandValidationError("finra transport must be cdn, api or sec")
             for option in ("--from", "--to"):
                 for value in options.get(option, []):
                     try:
@@ -851,6 +859,16 @@ class CommandRegistry:
                     finding = _finra_credentials_finding(validation)
                     if finding is not None:
                         findings.append(finding)
+                if _finra_dataset(command.argv) == "fails_to_deliver":
+                    from finra.sec import user_agent as sec_user_agent
+
+                    if not sec_user_agent():
+                        findings.append(
+                            Finding(
+                                "sec_user_agent_missing",
+                                "SEC_USER_AGENT (declared name and contact) is unavailable to the scheduled user",
+                            )
+                        )
         return tuple(findings)
 
     def execute(self, command: CommandSpec, context: ExecutionContext) -> CommandResult:
