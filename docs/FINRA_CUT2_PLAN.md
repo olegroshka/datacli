@@ -110,3 +110,18 @@ daily short volume store recorded from 2018-08-01 to 2026-09-30, exactly,
 and `settlement + 7 business days` reproduces the four schedule rows
 including the New Year and MLK Day skips. `finra_short_volume` gained
 `long_volume` and `long_ratio`. Suite 639 passed.
+
+**Iteration 2, 2026-10-02: the `short_interest` dataset.**
+`finra/short_interest.py` on the existing partition store, one file per
+settlement date under `short_interest/settlement/`. The settlement calendar
+rule (the 15th and the month's last day, each moved back to the preceding
+trading day) yields exactly the 210 dates FINRA's partitions endpoint
+lists, so the planner works offline. `published_at` is set at ingest as
+settlement plus seven business days. Rows are stored for every market
+class, with `revised` and `split_adjusted` as booleans; a restatement is a
+changed digest and the state notes how many rows FINRA flagged `R`. CLI,
+scheduler and completion admit the dataset; the API transport is now built
+generically from the provider. Two live settlement dates (2026-08-31,
+2026-09-15; 45,164 rows) passed `qc`. Noted for a later iteration: three
+providers now carry near-identical refresh loops; a shared engine is the
+cleanup once the fourth dataset shows what varies.

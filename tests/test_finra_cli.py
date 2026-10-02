@@ -207,6 +207,7 @@ def test_status_live_reports_published_separately(
     assert fake.calls == [
         ("partitions", "otcMarket", "regShoDaily"),
         ("partitions", "otcMarket", "weeklySummary"),
+        ("partitions", "otcMarket", "consolidatedShortInterest"),
     ]
 
 
@@ -338,7 +339,7 @@ class _FakeTransport:
             "--to is before --from",
         ),
         (["fetch", "--transport", "ftp"], "unknown transport for short_volume 'ftp'"),
-        (["fetch", "--dataset", "short_interest"], "unknown dataset 'short_interest'"),
+        (["fetch", "--dataset", "threshold_list"], "unknown dataset 'threshold_list'"),
         (["fetch", "extra"], "takes flags only"),
         (["qc", "extra"], "takes flags only"),
     ],

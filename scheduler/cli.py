@@ -768,7 +768,7 @@ def _command_completion_candidates(words: Sequence[str]) -> tuple[str, ...]:
     if previous == "--transport":
         return ("cdn", "api")
     if previous == "--dataset":
-        return ("short_volume", "weekly_flow")
+        return ("short_volume", "weekly_flow", "short_interest")
     if previous == "--datasets":
         return tuple(sorted({*EODHD_KINDS}))
     return SCHEDULE_COMMAND_COMPLETIONS.get((family, verb), ())

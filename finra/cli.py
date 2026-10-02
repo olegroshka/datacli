@@ -29,6 +29,7 @@ from finra import config as finra_config  # noqa: E402
 from finra import registry as reg  # noqa: E402
 from finra import short_volume as sv  # noqa: E402
 from finra import weekly_flow as wf  # noqa: E402
+from finra import short_interest as si  # noqa: E402
 from finra.api import QueryApiClient  # noqa: E402
 from finra.auth import (  # noqa: E402
     CLIENT_ID_VAR,
@@ -91,7 +92,7 @@ COMMANDS: dict[str, Command] = {
             (
                 Flag(
                     "--dataset",
-                    "dataset to fetch: short_volume | weekly_flow (default: short_volume)",
+                    "dataset to fetch: short_volume | weekly_flow | short_interest (default: short_volume)",
                     metavar="<name>",
                 ),
                 Flag(
@@ -199,7 +200,7 @@ def make_client(*, timeout: float | None = None) -> QueryApiClient:
 
 
 #: dataset name -> provider module (store / refresh / qc / SPEC / DEFAULT_OVERLAP_DAYS)
-PROVIDERS: dict[str, Any] = {sv.SPEC.name: sv, wf.SPEC.name: wf}
+PROVIDERS: dict[str, Any] = {sv.SPEC.name: sv, wf.SPEC.name: wf, si.SPEC.name: si}
 
 
 def transports_for(spec: reg.DatasetSpec) -> tuple[str, ...]:
@@ -208,10 +209,9 @@ def transports_for(spec: reg.DatasetSpec) -> tuple[str, ...]:
 
 
 def make_transport(spec: reg.DatasetSpec, name: str) -> Any:
-    if spec.name == wf.SPEC.name:
-        return wf.ApiTransport(make_client())
+    """Every provider exposes ``ApiTransport``; only short volume has a CDN one."""
     if name == sv.SOURCE_API:
-        return sv.ApiTransport(make_client())
+        return PROVIDERS[spec.name].ApiTransport(make_client())
     return sv.CdnTransport(DailyFileClient(make_session()))
 
 

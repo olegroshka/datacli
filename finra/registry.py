@@ -78,6 +78,19 @@ DATASETS: dict[str, DatasetSpec] = {
             subdir="weekly",
             cadence="weekly",
         ),
+        DatasetSpec(
+            name="short_interest",
+            summary="Consolidated short interest per symbol at each settlement date, all market classes",
+            api_group="otcMarket",
+            api_name="consolidatedShortInterest",
+            partition_field="settlementDate",
+            first_date=date(2017, 12, 29),
+            key_cols=("settlement_date", "symbol"),
+            cdn_family=None,
+            entitled=True,
+            subdir="settlement",
+            cadence="semimonthly",
+        ),
     )
 }
 

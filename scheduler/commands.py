@@ -135,7 +135,7 @@ CAPABILITIES = (
     Capability("sync", "status", "OPTIONAL", False, False),
 )
 
-FINRA_DATASETS = {"short_volume", "weekly_flow"}
+FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest"}
 FINRA_TRANSPORTS = {"cdn", "api"}
 
 
