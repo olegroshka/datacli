@@ -129,8 +129,14 @@ CAPABILITIES = (
     Capability("eodhd", "qc", "OPTIONAL", False, False),
     Capability("macro", "fetch", "OPTIONAL", True, True, True),
     Capability("macro", "status", "OPTIONAL", False, False),
+    Capability("finra", "fetch", "OPTIONAL", True, True, True),
+    Capability("finra", "status", "OPTIONAL", False, False),
+    Capability("finra", "qc", "OPTIONAL", False, False),
     Capability("sync", "status", "OPTIONAL", False, False),
 )
+
+FINRA_DATASETS = {"short_volume", "weekly_flow"}
+FINRA_TRANSPORTS = {"cdn", "api"}
 
 
 def _read_config(path: Path | None) -> dict:
@@ -194,6 +200,42 @@ def _macro_provider(argv: Sequence[str]) -> str:
         if token == "--provider" and index + 1 < len(argv):
             return argv[index + 1]
     return "all"
+
+
+def _finra_transport(argv: Sequence[str]) -> str:
+    for index, token in enumerate(argv):
+        if token.startswith("--transport="):
+            return token.partition("=")[2]
+        if token == "--transport" and index + 1 < len(argv):
+            return argv[index + 1]
+    return "cdn"
+
+
+def _finra_credentials_finding(context: ValidationContext) -> "Finding | None":
+    """A finding when the Query API transport has no usable credential pair."""
+    try:
+        from finra.auth import Credentials, CredentialsError
+    except ImportError:  # pragma: no cover - the package ships with the repo
+        return None
+    try:
+        credentials = Credentials.from_env(context.environment)
+    except CredentialsError as exc:
+        return Finding("finra_credentials_invalid", str(exc))
+    if credentials is None:
+        return Finding(
+            "finra_credentials_missing",
+            "FINRA_CLIENT_ID / FINRA_API_KEY are unavailable to the scheduled user",
+        )
+    return None
+
+
+def _sibling_root(config: dict, section: str, eodhd_root: Path) -> tuple[Path, str]:
+    """``[section].data_root`` from the config, else ``<eodhd root>/../<section>``."""
+    values = config.get(section, {}) if isinstance(config.get(section), dict) else {}
+    value = values.get("data_root")
+    if value:
+        return Path(str(value)).expanduser().resolve(), "config"
+    return (eodhd_root.parent / section).resolve(), "derived"
 
 
 def _binding(
@@ -474,6 +516,56 @@ class CommandRegistry:
             if argv:
                 raise CommandValidationError("macro status takes no arguments")
             options = {}
+        elif identity == "finra fetch":
+            positionals, options = _parse_known_options(
+                argv,
+                boolean={"--run", "--full", "--retry-absent"},
+                scalar={
+                    "--dataset",
+                    "--from",
+                    "--to",
+                    "--limit-days",
+                    "--overlap-days",
+                    "--transport",
+                },
+            )
+            if positionals:
+                raise CommandValidationError("finra fetch takes flags only")
+            dataset = options.get("--dataset", ["short_volume"])[-1]
+            if dataset not in FINRA_DATASETS:
+                raise CommandValidationError(f"unknown FINRA dataset: {dataset}")
+            transport = options.get("--transport", ["cdn"])[-1]
+            if transport not in FINRA_TRANSPORTS:
+                raise CommandValidationError("finra transport must be cdn or api")
+            for option in ("--from", "--to"):
+                for value in options.get(option, []):
+                    try:
+                        date.fromisoformat(value)
+                    except ValueError as exc:
+                        raise CommandValidationError(
+                            f"{option} must be an ISO date"
+                        ) from exc
+            for option in ("--limit-days", "--overlap-days"):
+                for value in options.get(option, []):
+                    if not value.isdigit():
+                        raise CommandValidationError(
+                            f"{option} must be a non-negative integer"
+                        )
+        elif identity == "finra status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("finra status takes flags only")
+        elif identity == "finra qc":
+            positionals, options = _parse_known_options(
+                argv, boolean=set(), scalar={"--dataset"}
+            )
+            if positionals:
+                raise CommandValidationError("finra qc takes flags only")
+            dataset = options.get("--dataset", ["short_volume"])[-1]
+            if dataset not in FINRA_DATASETS:
+                raise CommandValidationError(f"unknown FINRA dataset: {dataset}")
         elif identity in {"sync push", "sync status"}:
             allowed_boolean = {"--with-caches"}
             if identity == "sync push":
@@ -550,6 +642,17 @@ class CommandRegistry:
             claims.append(
                 ResourceClaim(
                     macro_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "finra":
+            finra_root, finra_source = _sibling_root(config, "finra", eodhd_root)
+            finra_binding = _binding("finra_data_root", finra_root, finra_source)
+            bindings.append(finra_binding)
+            claims.append(
+                ResourceClaim(
+                    finra_binding.resource_id,
                     "exclusive" if capability.mutation else "shared",
                 )
             )
@@ -677,7 +780,11 @@ class CommandRegistry:
                     )
                 )
             for binding in context.bindings:
-                if binding.name in {"eodhd_data_root", "macro_data_root"}:
+                if binding.name in {
+                    "eodhd_data_root",
+                    "macro_data_root",
+                    "finra_data_root",
+                }:
                     path = Path(binding.resolved_value)
                     if command.mutation:
                         parent = path if path.exists() else path.parent
@@ -737,6 +844,13 @@ class CommandRegistry:
                             "EODHD credentials are unavailable to the scheduled user",
                         )
                     )
+            if command.family == "finra" and command.verb == "fetch":
+                # the default transport reads FINRA's public files and needs no
+                # credentials; only the Query API transport does
+                if _finra_transport(command.argv) == "api":
+                    finding = _finra_credentials_finding(validation)
+                    if finding is not None:
+                        findings.append(finding)
         return tuple(findings)
 
     def execute(self, command: CommandSpec, context: ExecutionContext) -> CommandResult:
@@ -755,6 +869,10 @@ class CommandRegistry:
             env["DATACLI_MACRO_ROOT"] = context.binding(
                 "macro_data_root"
             ).resolved_value
+        with contextlib.suppress(KeyError):
+            env["DATACLI_FINRA_ROOT"] = context.binding(
+                "finra_data_root"
+            ).resolved_value
         if validation.config_path is not None:
             env["DATACLI_CONFIG_PATH"] = str(validation.config_path)
 
@@ -771,6 +889,14 @@ class CommandRegistry:
                 str(validation.interpreter),
                 "-m",
                 "macro.cli",
+                command.verb,
+                *command.argv,
+            ]
+        elif command.family == "finra":
+            args = [
+                str(validation.interpreter),
+                "-m",
+                "finra.cli",
                 command.verb,
                 *command.argv,
             ]

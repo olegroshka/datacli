@@ -121,3 +121,71 @@ def test_sleep_defaults_to_time_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     session = _Session(_Response(500), _Response(200))
     assert _http.get_with_retry(session, "u", timeout=1).status_code == 200
     assert slept == [2.0]
+
+
+# --------------------------------------------------------------------------- #
+# request_with_retry: the general form (POST + JSON + headers) the FINRA client uses
+# --------------------------------------------------------------------------- #
+class _PostSession(_Session):
+    def post(self, url, params=None, timeout=None, json=None, headers=None):
+        self.calls.append(
+            (
+                url,
+                {
+                    "params": params,
+                    "timeout": timeout,
+                    "json": json,
+                    "headers": headers,
+                },
+            )
+        )
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def test_post_passes_json_and_headers_and_retries_like_get() -> None:
+    session = _PostSession(_Response(503), _Response(200))
+    waits: list[float] = []
+
+    response = _http.request_with_retry(
+        session,
+        "POST",
+        "u",
+        json={"limit": 1},
+        headers={"Accept": "application/json"},
+        timeout=3,
+        sleep=waits.append,
+    )
+
+    assert response.status_code == 200
+    assert waits == [2.0]
+    assert (
+        session.calls
+        == [
+            (
+                "u",
+                {
+                    "params": None,
+                    "timeout": 3,
+                    "json": {"limit": 1},
+                    "headers": {"Accept": "application/json"},
+                },
+            )
+        ]
+        * 2
+    )
+
+
+def test_get_form_sends_no_extra_kwargs() -> None:
+    """A GET without json/headers must stay ``session.get(url, params=, timeout=)``
+    so the existing fetchers (and their fakes) see no new keyword arguments."""
+    session = _Session(_Response(200))
+    _http.request_with_retry(session, "GET", "u", params={"a": 1}, timeout=7)
+    assert session.calls == [("u", {"params": {"a": 1}, "timeout": 7})]
+
+
+def test_zero_attempts_is_rejected() -> None:
+    with pytest.raises(ValueError, match="attempts"):
+        _http.request_with_retry(_Session(), "GET", "u", timeout=1, attempts=0)

@@ -1,11 +1,13 @@
-"""One bounded-retry HTTP GET for the EODHD fetchers.
+"""One bounded-retry HTTP request for the data fetchers.
 
 Every per-ticker fetcher used to call ``session.get`` bare, so a single TCP
 reset (``ConnectionResetError(10054)``) or ``RemoteDisconnected`` killed the
 whole lane and, through the scheduler's fail-fast policy, the whole day.
-:func:`get_with_retry` retries the transient failures a few times with a small
-exponential backoff and then re-raises, so the caller can still decide what to
-do (the fetchers skip the ticker and carry on).
+:func:`request_with_retry` retries the transient failures a few times with a
+small exponential backoff and then re-raises, so the caller can still decide
+what to do (the fetchers skip the ticker and carry on). :func:`get_with_retry`
+is the GET-only spelling the EODHD fetchers use; the FINRA client needs POST
+with a JSON body and auth headers, hence the general form.
 
 Retried: ``requests.ConnectionError``, ``requests.Timeout``,
 ``ChunkedEncodingError`` and HTTP 429/500/502/503/504 (a 429 honours
@@ -51,11 +53,14 @@ def _retry_after(response: Any, cap: float) -> float | None:
     return min(cap, max(0.0, seconds))
 
 
-def get_with_retry(
+def request_with_retry(
     session: Any,
+    method: str,
     url: str,
     *,
     params: Mapping[str, Any] | None = None,
+    json: Any = None,
+    headers: Mapping[str, str] | None = None,
     timeout: float,
     attempts: int = DEFAULT_ATTEMPTS,
     backoff: float = DEFAULT_BACKOFF,
@@ -64,19 +69,28 @@ def get_with_retry(
     label: str = "",
     sleep: Callable[[float], None] | None = None,
 ) -> requests.Response:
-    """``session.get`` with bounded retries on transient failures.
+    """``session.<method>(url, ...)`` with bounded retries on transient failures.
 
     Returns the last response (even a 5xx/429 one) once ``attempts`` is spent
     and re-raises the last connection error, so callers keep their existing
     ``status_code`` branches and gain an ``except requests.RequestException``.
+
+    ``json`` and ``headers`` are only passed to the session when given, so a
+    plain GET is exactly ``session.get(url, params=params, timeout=timeout)``.
     """
     if attempts < 1:
         raise ValueError("attempts must be >= 1")
+    send = getattr(session, method.lower())
+    kwargs: dict[str, Any] = {"params": params, "timeout": timeout}
+    if json is not None:
+        kwargs["json"] = json
+    if headers is not None:
+        kwargs["headers"] = headers
     pause = time.sleep if sleep is None else sleep
     who = f" {label}" if label else ""
     for attempt in range(1, attempts + 1):
         try:
-            response = session.get(url, params=params, timeout=timeout)
+            response = send(url, **kwargs)
         except _RETRY_EXCEPTIONS as exc:
             if attempt == attempts:
                 raise
@@ -111,3 +125,32 @@ def get_with_retry(
             )
         pause(wait)
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def get_with_retry(
+    session: Any,
+    url: str,
+    *,
+    params: Mapping[str, Any] | None = None,
+    timeout: float,
+    attempts: int = DEFAULT_ATTEMPTS,
+    backoff: float = DEFAULT_BACKOFF,
+    max_backoff: float = MAX_BACKOFF,
+    log: logging.Logger | None = None,
+    label: str = "",
+    sleep: Callable[[float], None] | None = None,
+) -> requests.Response:
+    """``session.get`` with bounded retries; see :func:`request_with_retry`."""
+    return request_with_retry(
+        session,
+        "GET",
+        url,
+        params=params,
+        timeout=timeout,
+        attempts=attempts,
+        backoff=backoff,
+        max_backoff=max_backoff,
+        log=log,
+        label=label,
+        sleep=sleep,
+    )

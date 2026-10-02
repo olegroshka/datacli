@@ -177,6 +177,19 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("macro", "fetch"): ("--run", "--full", "--provider"),
     ("macro", "status"): (),
+    ("finra", "fetch"): (
+        "--run",
+        "--full",
+        "--retry-absent",
+        "--dataset",
+        "--from",
+        "--to",
+        "--limit-days",
+        "--overlap-days",
+        "--transport",
+    ),
+    ("finra", "status"): ("--json",),
+    ("finra", "qc"): ("--dataset",),
     ("sync", "push"): ("--run", "--keep-going", "--with-caches"),
     ("sync", "status"): ("--with-caches",),
 }
@@ -204,6 +217,18 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
     ("macro", "status"): (
         "macro status",
         "read-only local macro dataset status",
+    ),
+    ("finra", "fetch"): (
+        "finra fetch [--from DATE] [--to DATE] [--limit-days N] [--transport cdn|api] --run",
+        "daily short sale volume from FINRA's public files (no credentials); api transport needs them",
+    ),
+    ("finra", "status"): (
+        "finra status [--json]",
+        "read-only local FINRA dataset status (offline)",
+    ),
+    ("finra", "qc"): (
+        "finra qc [--dataset NAME]",
+        "read-only quality checks over the stored FINRA days",
     ),
     ("sync", "push"): (
         "sync push [--with-caches] [--keep-going] --run",
@@ -740,6 +765,10 @@ def _command_completion_candidates(words: Sequence[str]) -> tuple[str, ...]:
     previous = words[-2] if len(words) >= 2 else None
     if previous == "--provider":
         return ("fred", "eodhd", "all")
+    if previous == "--transport":
+        return ("cdn", "api")
+    if previous == "--dataset":
+        return ("short_volume", "weekly_flow")
     if previous == "--datasets":
         return tuple(sorted({*EODHD_KINDS}))
     return SCHEDULE_COMMAND_COMPLETIONS.get((family, verb), ())

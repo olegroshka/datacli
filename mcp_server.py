@@ -4,8 +4,10 @@ Lets Claude Code / Claude Desktop / Cursor query your local snapshot directly:
 guarded read-only SQL over the DuckDB views (prices, dividends, splits,
 fundamentals, news and their *_state sidecars; news_scores_<schema> and
 news_embeddings once scored; catalog once reindexed; macro,
-macro_country, macro_market once fetched), the schema, and the lane registry.
-EODHD views carry a ``lane`` column; the macro views join by date.
+macro_country, macro_market once fetched; finra_short_volume once the FINRA
+source is fetched), the schema, and the lane registry. EODHD views carry a
+``lane`` column; the macro views join by date, finra_short_volume by
+``eodhd_code`` and date.
 
 Run it (after ``uv sync --extra mcp``):
 
@@ -97,8 +99,9 @@ def build_server() -> Any:
     @server.tool()
     def sql(query: str) -> dict:
         """Run a read-only SELECT/WITH query over datacli's DuckDB views (prices,
-        dividends, splits, fundamentals, news, and macro / macro_country / catalog
-        when present). EODHD views have a `lane` column; macro views join by
+        dividends, splits, fundamentals, news, and macro / macro_country /
+        finra_short_volume / catalog when present). EODHD views have a `lane`
+        column; macro views join by date, finra_short_volume by eodhd_code and
         date. Returns {columns, rows, sql}."""
         return run_sql(query)
 

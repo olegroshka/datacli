@@ -189,3 +189,23 @@ def test_argv_parses_string_and_arg_list() -> None:
         arg_list = ["--lane", "us_etf"]
 
     assert datacli.DataCli._argv(_Stmt()) == ["--lane", "us_etf"]
+
+
+def test_finra_plugin_is_a_source() -> None:
+    # finra is a first-class, operational source (peer of eodhd and macro)
+    assert "finra" in datacli.SOURCES
+    assert "finra" not in datacli.LOAD_ONLY
+    plugin = datacli.SOURCES["finra"]
+    assert plugin.command_names() == [
+        "list",
+        "status",
+        "fetch",
+        "refresh",
+        "qc",
+        "probe",
+    ]
+    assert "finra" in _completions(
+        datacli.DataCli().complete_source("f", "source f", 7, 8)
+    )
+    # the global shortcut exists next to `macro`
+    assert hasattr(datacli.DataCli, "do_finra")

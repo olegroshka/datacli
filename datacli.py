@@ -9,7 +9,7 @@ source context and run source-scoped commands:
     eodhd> /qc
 
 The leading ``/`` is optional (``status`` and ``/status`` both work). Global
-commands (``sources``, ``source``, ``back``, ``sync``, ``macro``, ``lab``, ``ask``,
+commands (``sources``, ``source``, ``back``, ``sync``, ``macro``, ``finra``, ``lab``, ``ask``,
 ``agent``, ``investigate``, ``config``, ``help``, ``clear``, ``quit``/``exit``) work
 anywhere; source commands (``status``, ``fetch``/``refresh``, ``qc``, ``lanes``,
 ``list``, ``probe``, ``schema``, ``reindex``, ``describe``, ``find``, ``rows``,
@@ -161,7 +161,44 @@ class MacroPlugin(SourcePlugin):
             return int(exc.code or 0)
 
 
-SOURCES: dict[str, SourcePlugin] = {"eodhd": EodhdPlugin(), "macro": MacroPlugin()}
+class FinraPlugin(SourcePlugin):
+    """finra source -- FINRA Query API + public daily files (short volume first)."""
+
+    name = "finra"
+    summary = "FINRA short sale volume (daily, NMS) via public files + Query API"
+    # `refresh` is accepted as an alias of `fetch` so the shell verb and the
+    # eodhd-style verb both work.
+    COMMAND_MAP = {
+        "list": "list",
+        "status": "status",
+        "fetch": "fetch",
+        "refresh": "fetch",
+        "qc": "qc",
+        "probe": "probe",
+    }
+
+    def command_names(self) -> list[str]:
+        return list(self.COMMAND_MAP)
+
+    def detail(self) -> str:
+        from finra import registry as reg
+
+        return f"{len(reg.DATASETS)} dataset" + ("s" if len(reg.DATASETS) != 1 else "")
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import finra.cli as finra_cli
+
+        try:
+            return int(finra_cli.main([self.COMMAND_MAP[command], *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
+SOURCES: dict[str, SourcePlugin] = {
+    "eodhd": EodhdPlugin(),
+    "macro": MacroPlugin(),
+    "finra": FinraPlugin(),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -354,6 +391,15 @@ class DataCli(cmd2.Cmd):
         import macro.cli as macro_cli
 
         macro_cli.main(self._argv(statement))
+
+    def do_finra(self, statement: object) -> None:
+        """Shortcut to the finra source from anywhere:  finra list | status [--live] | probe ...
+
+        `finra` is a first-class source (see `sources`); this saves a `source finra`.
+        """
+        import finra.cli as finra_cli
+
+        finra_cli.main(self._argv(statement))
 
     def do_schedule(self, statement: object) -> None:
         """Manage recurring Windows jobs through one safe datacli runner.
@@ -616,6 +662,7 @@ cmd2.categorize(
         DataCli.do_sync,
         DataCli.do_score,
         DataCli.do_macro,
+        DataCli.do_finra,
         DataCli.do_schedule,
         DataCli.do_clear,
         DataCli.do_exit,

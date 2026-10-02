@@ -16,6 +16,12 @@ Commands:
 Config lives in the git-ignored ``datacli.toml`` (see ``storage/backends.py``
 for the [sync] keys) and is editable via ``config set sync-*``.
 
+Roots (since 2026-10-01): the eodhd data root is always synced; the ``macro``
+and ``finra`` roots are synced too when they exist, each as its own unit with
+its own manifest and its own remote folder next to ``remote_root`` (so
+``datacli/eodhd`` is joined by ``datacli/macro`` and ``datacli/finra``; the
+``local`` backend uses sibling directories of ``local_dest`` the same way).
+
 Push semantics (after the 2026-09-11 incident):
 
 * An unreadable manifest fails the push loudly and is kept aside as
@@ -36,7 +42,8 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +91,69 @@ def _context() -> tuple[Path, dict, Path]:
     backend_name = str(settings.get("backend") or "gdrive")
     manifest_path = root / ".sync" / f"{backend_name}.json"
     return root, settings, manifest_path
+
+
+@dataclass(frozen=True)
+class SyncUnit:
+    """One root synced on its own: its manifest, its settings, its remote folder."""
+
+    name: str
+    root: Path
+    settings: dict
+    manifest_path: Path
+
+
+SIBLING_SOURCES = ("macro", "finra")
+
+
+def _sibling_settings(settings: dict, name: str) -> dict:
+    """The eodhd [sync] settings re-pointed at a sibling folder for ``name``."""
+    out = dict(settings)
+    remote = str(settings.get("remote_root") or "datacli/eodhd").strip("/")
+    out["remote_root"] = str(PurePosixPath(remote).parent / name)
+    if settings.get("local_dest"):
+        out["local_dest"] = str(Path(str(settings["local_dest"])).parent / name)
+    return out
+
+
+def _sibling_root(name: str) -> Path | None:
+    """The configured root of a sibling source, or ``None`` if it cannot be resolved."""
+    try:
+        if name == "macro":
+            from macro.config import macro_root
+
+            return macro_root()
+        if name == "finra":
+            from finra.config import finra_root
+
+            return finra_root()
+    except Exception:  # an optional source must never break the backup
+        return None
+    return None
+
+
+def _units() -> list[SyncUnit]:
+    """The eodhd unit first, then every sibling source whose root exists."""
+    root, settings, manifest_path = _context()
+    backend_name = str(settings.get("backend") or "gdrive")
+    units = [SyncUnit("eodhd", root, dict(settings), manifest_path)]
+    for name in SIBLING_SOURCES:
+        sibling = _sibling_root(name)
+        if (
+            sibling is None
+            or not sibling.is_dir()
+            or sibling.resolve() == root.resolve()
+        ):
+            continue
+        units.append(
+            SyncUnit(
+                name,
+                sibling,
+                _sibling_settings(settings, name),
+                sibling / ".sync" / f"{backend_name}.json",
+            )
+        )
+    return units
 
 
 def _local(root: Path, *, with_caches: bool) -> dict[str, engine.FileStat]:
@@ -214,29 +284,35 @@ def cmd_status(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    root, settings, manifest_path = _context()
-    backend = make_backend(settings)
     console = _render.make_console()
     from rich.text import Text
 
-    console.print(Text(f"data root: {root}", style="dim"))
-    try:
-        manifest = engine.load_manifest(manifest_path)
-    except engine.ManifestError as exc:
-        console.print(Text(f"sync: {exc}", style="red"))
-        console.print(
-            Text("  fix with: sync reconcile --run   (rebuilds it from the backend)")
-        )
-        return EXIT_MANIFEST_UNREADABLE
-    console.print(Text(_manifest_line(manifest_path, manifest), style="dim"))
-    plan = _plan(root, manifest, with_caches=args.with_caches)
-    _print_plan(console, plan, backend, run=False)
-    has_uploads = any(p.action == engine.ACTION_UPLOAD for p in plan)
-    if has_uploads and not manifest.get("files"):
-        console.print(Text(EMPTY_MANIFEST_NOTE, style="yellow"))
-    if has_uploads:
+    rc = 0
+    any_uploads = False
+    for unit in _units():
+        backend = make_backend(unit.settings)
+        console.print(Text(f"{unit.name} data root: {unit.root}", style="dim"))
+        try:
+            manifest = engine.load_manifest(unit.manifest_path)
+        except engine.ManifestError as exc:
+            console.print(Text(f"sync: {exc}", style="red"))
+            console.print(
+                Text(
+                    "  fix with: sync reconcile --run   (rebuilds it from the backend)"
+                )
+            )
+            rc = max(rc, EXIT_MANIFEST_UNREADABLE)
+            continue
+        console.print(Text(_manifest_line(unit.manifest_path, manifest), style="dim"))
+        plan = _plan(unit.root, manifest, with_caches=args.with_caches)
+        _print_plan(console, plan, backend, run=False)
+        has_uploads = any(p.action == engine.ACTION_UPLOAD for p in plan)
+        if has_uploads and not manifest.get("files"):
+            console.print(Text(EMPTY_MANIFEST_NOTE, style="yellow"))
+        any_uploads = any_uploads or has_uploads
+    if any_uploads:
         console.print(Text("push with:  sync push --run", style="dim"))
-    return 0
+    return rc
 
 
 def _upload_with_retry(
@@ -426,16 +502,61 @@ def cmd_push(argv: list[str]) -> int:
     if args.keep_going and args.fail_fast:
         parser.error("--keep-going and --fail-fast are mutually exclusive")
 
-    root, settings, manifest_path = _context()
-    backend = make_backend(settings)
-    return execute_push(
-        root,
-        backend,
-        manifest_path,
+    return push_units(
+        _units(),
         run=args.run,
         with_caches=args.with_caches,
         keep_going=not args.fail_fast,
     )
+
+
+NOOP_SENTINEL = "Everything in sync."  # the scheduler maps this stdout line to no_op
+
+
+def push_units(
+    units: list[SyncUnit],
+    *,
+    run: bool,
+    with_caches: bool = False,
+    keep_going: bool = True,
+    echo=print,
+) -> int:
+    """``execute_push`` for every unit; the exit code is the worst of them.
+
+    Each unit prints its own ``<name>: nothing to push`` when it is current;
+    the bare :data:`NOOP_SENTINEL` line is printed once, only when *every*
+    unit was current, because the scheduler reads that exact line as the
+    no-op outcome and it must mean all roots, not one of them.
+    """
+    rc = 0
+    all_noop = True
+    for unit in units:
+        backend = make_backend(unit.settings)
+        echo(f"== {unit.name}: {unit.root} -> {backend.describe()}")
+        noop = False
+
+        def _echo(line: object, _unit: SyncUnit = unit) -> None:
+            nonlocal noop
+            if line == NOOP_SENTINEL:
+                noop = True
+                echo(f"{_unit.name}: nothing to push")
+                return
+            echo(line)
+
+        code = execute_push(
+            unit.root,
+            backend,
+            unit.manifest_path,
+            run=run,
+            with_caches=with_caches,
+            keep_going=keep_going,
+            echo=_echo,
+        )
+        rc = max(rc, code)
+        all_noop = all_noop and noop and code == 0
+    if all_noop and units:
+        echo(NOOP_SENTINEL)
+    return rc
 
 
 def execute_reconcile(
@@ -539,17 +660,30 @@ def cmd_reconcile(argv: list[str]) -> int:
     if args.trash_duplicates and not args.run:
         parser.error("--trash-duplicates needs --run")
 
-    root, settings, manifest_path = _context()
-    backend = make_backend(settings)
-    return execute_reconcile(
-        root,
-        backend,
-        manifest_path,
-        run=args.run,
-        trash_duplicates=args.trash_duplicates,
-        with_caches=args.with_caches,
-        report_path=args.report,
-    )
+    rc = 0
+    units = _units()
+    for unit in units:
+        backend = make_backend(unit.settings)
+        if len(units) > 1:
+            print(f"== {unit.name}: {unit.root} -> {backend.describe()}")
+        report_path = args.report
+        if report_path is not None and unit.name != "eodhd":
+            report_path = report_path.with_name(
+                f"{report_path.stem}-{unit.name}{report_path.suffix}"
+            )
+        rc = max(
+            rc,
+            execute_reconcile(
+                unit.root,
+                backend,
+                unit.manifest_path,
+                run=args.run,
+                trash_duplicates=args.trash_duplicates,
+                with_caches=args.with_caches,
+                report_path=report_path,
+            ),
+        )
+    return rc
 
 
 def cmd_login(argv: list[str]) -> int:
@@ -576,6 +710,8 @@ def top_help() -> str:
         "  push       Upload new/changed files (dry-run unless --run)\n"
         "  reconcile  Rebuild the manifest from the backend; list duplicate copies\n"
         "  login      Sign in to the configured backend / show the account\n\n"
+        "Roots: the eodhd data root, plus the macro and finra roots when present,\n"
+        "each to its own folder next to remote_root (datacli/macro, datacli/finra).\n\n"
         "Config (git-ignored datacli.toml, edit via `config set`):\n"
         "  sync-backend         gdrive | local\n"
         "  sync-remote-root     Drive folder path (default: datacli/eodhd)\n"

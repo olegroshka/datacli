@@ -25,7 +25,7 @@ def _has_view(con: Any, name: str) -> bool:
 
 
 def connect() -> Any:
-    """eodhd views + macro views (macro is best-effort; skipped if not fetched)."""
+    """eodhd views + macro + finra views (both best-effort; skipped if not fetched)."""
     import explore_eodhd  # type: ignore[import-not-found]
 
     con = explore_eodhd.connect()
@@ -35,11 +35,17 @@ def connect() -> Any:
         macro_views.register(con)
     except Exception:
         pass  # macro is optional; never break the eodhd surface over it
+    try:
+        from finra import views as finra_views
+
+        finra_views.register(con)
+    except Exception:
+        pass  # finra is optional too
     return con
 
 
 def schema_text(con: Any) -> str:
-    """The eodhd schema, plus the macro snippet for whichever macro views exist."""
+    """The eodhd schema, plus the macro / finra snippets for whichever views exist."""
     from lab.tools import schema_context
 
     text = schema_context()
@@ -52,6 +58,17 @@ def schema_text(con: Any) -> str:
 
             text += "\n\n" + macro_views.schema_snippet(
                 fred=has_fred, country=has_country, market=has_market
+            )
+        except Exception:
+            pass
+    has_sv = _has_view(con, "finra_short_volume")
+    has_flow = _has_view(con, "finra_weekly_flow")
+    if has_sv or has_flow:
+        try:
+            from finra import views as finra_views
+
+            text += "\n\n" + finra_views.schema_snippet(
+                short_volume=has_sv, weekly_flow=has_flow
             )
         except Exception:
             pass

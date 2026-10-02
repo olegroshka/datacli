@@ -66,3 +66,12 @@ strong = "anthropic/claude-opus-4-8"
 # ---------------------------------------------------------------------------
 [macro]
 # data_root = "C:/path/to/your/data/raw/macro"
+
+# ---------------------------------------------------------------------------
+# FINRA source (daily short sale volume first; see docs/FINRA_SOURCE_DESIGN.md).
+# Credentials are FINRA_CLIENT_ID and FINRA_API_KEY in the environment (or the
+# Windows user environment), never in this file; the public daily files need
+# none. Data defaults to a `finra` sibling of the eodhd data root; override here.
+# ---------------------------------------------------------------------------
+[finra]
+# data_root = "C:/path/to/your/data/raw/finra"

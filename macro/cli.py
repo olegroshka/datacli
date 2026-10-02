@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import difflib
 import sys
-from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,9 @@ from macro import registry as reg  # noqa: E402
 _EODHD = _REPO / "eodhd"
 if str(_EODHD) not in sys.path:
     sys.path.insert(0, str(_EODHD))
+import _cmdtable as ct  # type: ignore[import-not-found]  # noqa: E402
 import _render  # type: ignore[import-not-found]  # noqa: E402
+from _cmdtable import Command, Flag  # type: ignore[import-not-found]  # noqa: E402
 
 PROG = "macro"
 PROVIDERS = ("fred", "eodhd", "all")
@@ -32,38 +34,6 @@ PROVIDERS = ("fred", "eodhd", "all")
 # --------------------------------------------------------------------------- #
 # command table -- the ONE source of truth for usage strings and flags
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True)
-class Flag:
-    """A ``--flag`` a macro command accepts (``metavar`` set => takes a value)."""
-
-    name: str
-    help: str
-    metavar: str = ""
-
-
-@dataclass(frozen=True)
-class Command:
-    """One macro command: usage, one-liner, longer help, accepted flags."""
-
-    name: str
-    summary: str
-    detail: str = ""
-    flags: tuple[Flag, ...] = ()
-
-    @property
-    def synopsis(self) -> str:
-        """``fetch [--provider <p>] [--run] [--full]`` -- no program prefix."""
-        parts = [self.name] + [
-            f"[{f.name} {f.metavar}]" if f.metavar else f"[{f.name}]"
-            for f in self.flags
-        ]
-        return " ".join(parts)
-
-    @property
-    def usage(self) -> str:
-        return f"{PROG} {self.synopsis}"
-
-
 _KEYS_NOTE = (
     "Keys: FRED needs FRED_API_KEY; the EODHD side needs EODHD_API_KEY (env, the\n"
     "Windows user environment, or the eodhd key file). Both are read from the\n"
@@ -71,7 +41,7 @@ _KEYS_NOTE = (
 )
 
 COMMANDS: dict[str, Command] = {
-    c.name: c
+    c.name: replace(c, prog=PROG)
     for c in (
         Command(
             "list",
@@ -107,94 +77,16 @@ COMMANDS: dict[str, Command] = {
 }
 
 
-class _HelpRequested(Exception):
-    """``-h`` / ``--help`` seen: print the command's help and stop."""
-
-
-class _UsageError(Exception):
-    """A flag we do not know or that is malformed; message is user-facing."""
-
-
-def _parse(command: str, argv: list[str]) -> tuple[dict[str, Any], list[str]]:
-    """Split ``argv`` into ``(flags, positionals)`` for ``command``.
-
-    Boolean flags map to ``True``; value flags accept ``--name=value`` and
-    ``--name value``. ``-h`` / ``--help`` win before anything else.
-
-    Raises:
-        _HelpRequested: on ``-h`` / ``--help``.
-        _UsageError: on an unknown flag (with a did-you-mean hint), a value flag
-            without a value, or a boolean flag given a value.
-    """
-    spec = {f.name: f for f in COMMANDS[command].flags}
-    if any(tok in ("-h", "--help") for tok in argv):
-        raise _HelpRequested()
-    flags: dict[str, Any] = {}
-    rest: list[str] = []
-    i = 0
-    while i < len(argv):
-        tok = argv[i]
-        i += 1
-        if not tok.startswith("--"):
-            rest.append(tok)
-            continue
-        name, eq, value = tok.partition("=")
-        flag = spec.get(name)
-        if flag is None:
-            near = difflib.get_close_matches(name, list(spec), n=1, cutoff=0.5)
-            hint = f" -- did you mean {near[0]}?" if near else ""
-            raise _UsageError(f"unknown flag {name}{hint}")
-        if flag.metavar:
-            if not eq:
-                if i >= len(argv) or argv[i].startswith("--"):
-                    raise _UsageError(f"flag {name} needs a value ({flag.metavar})")
-                value = argv[i]
-                i += 1
-            flags[name] = value
-        else:
-            if eq:
-                raise _UsageError(f"flag {name} does not take a value")
-            flags[name] = True
-    return flags, rest
-
-
 def command_help(name: str) -> str:
     """The per-command help block (usage, description, flags)."""
-    cmd = COMMANDS[name]
-    rows = [(f"{f.name} {f.metavar}".rstrip(), f.help) for f in cmd.flags]
-    rows.append(("-h, --help", "show this help"))
-    width = max(len(label) for label, _ in rows)
-    lines = [f"usage: {cmd.usage}", "", cmd.detail or cmd.summary, "", "flags:"]
-    lines += [f"  {label:<{width}}  {text}" for label, text in rows]
-    return "\n".join(lines)
+    return ct.command_help(COMMANDS[name])
 
 
 def _args(
     command: str, argv: list[str]
 ) -> tuple[dict[str, Any], list[str], int | None]:
-    """Parse ``argv`` for ``command``; the third item is an exit code when done.
-
-    ``--help`` prints the command help and yields ``0``; a bad flag prints a
-    friendly error plus the usage line and yields ``2``. Otherwise ``None`` and
-    the caller proceeds with ``(flags, positionals)`` -- only then may any
-    network or disk work start.
-    """
-    try:
-        flags, rest = _parse(command, argv)
-    except _HelpRequested:
-        print(command_help(command))
-        return {}, [], 0
-    except _UsageError as exc:
-        from rich.text import Text
-
-        cmd = COMMANDS[command]
-        console = _render.make_console()
-        console.print(Text(str(exc), style="red"))
-        console.print(
-            Text(f"usage: {cmd.usage}   ({PROG} {cmd.name} --help)", style="dim")
-        )
-        return {}, [], 2
-    return flags, rest, None
+    """Parse ``argv`` for ``command``; the third item is an exit code when done."""
+    return ct.parse_or_exit(COMMANDS[command], argv, console=_render.make_console())
 
 
 def cmd_list(argv: list[str]) -> int:
@@ -436,23 +328,17 @@ def cmd_fetch(argv: list[str]) -> int:
 
 def top_help() -> str:
     """The top-level help, rendered from :data:`COMMANDS`."""
-    rows = [(c.synopsis, c.summary) for c in COMMANDS.values()]
-    width = max(len(u) for u, _ in rows)
     fetch = COMMANDS["fetch"].flags
-    fwidth = max(len(f"{f.name} {f.metavar}".rstrip()) for f in fetch)
     lines = [
         f"{PROG} -- FRED + EODHD macro data adapter for the Raw Data Lab",
         "",
         f"Usage:  {PROG} <command> [flags]      (bare `{PROG}` == `{PROG} status`)",
         "",
         "Commands:",
-        *[f"  {u:<{width}}  {s}" for u, s in rows],
+        *ct.commands_block(COMMANDS),
         "",
         "fetch flags:",
-        *[
-            f"  {(f.name + ' ' + f.metavar).rstrip():<{fwidth}}  {f.help}"
-            for f in fetch
-        ],
+        *ct.flags_block(fetch),
         "",
         _KEYS_NOTE,
         "",

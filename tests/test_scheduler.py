@@ -111,6 +111,9 @@ def test_registry_matches_admitted_inventory_and_rejects_forbidden(
         "eodhd qc",
         "macro fetch",
         "macro status",
+        "finra fetch",
+        "finra status",
+        "finra qc",
         "sync push",
         "sync status",
     }
@@ -1017,6 +1020,7 @@ def test_scheduler_completion_covers_registry_and_command_values() -> None:
     assert set(schedule_completion_candidates(["add", "demo", "--", ""])) == {
         "eodhd",
         "macro",
+        "finra",
         "sync",
     }
     assert set(schedule_completion_candidates(["add", "demo", "--", "eodhd", "r"])) == {
@@ -1028,6 +1032,9 @@ def test_scheduler_completion_covers_registry_and_command_values() -> None:
     assert schedule_completion_candidates(
         ["add", "demo", "--", "macro", "fetch", "--provider", ""]
     ) == ("fred", "eodhd", "all")
+    assert schedule_completion_candidates(
+        ["add", "demo", "--", "finra", "fetch", "--transport", ""]
+    ) == ("cdn", "api")
     assert schedule_completion_candidates(["create", "demo", "--days", ""]) == (
         "monday",
         "tuesday",
@@ -1078,3 +1085,87 @@ def test_scheduler_completion_reads_job_draft_and_step_ids(tmp_path: Path) -> No
     assert schedule_completion_candidates(
         ["step", "remove", "draft-job", ""], **common
     ) == ("1", "2")
+
+
+# --------------------------------------------------------------------------- #
+# finra family: validation, bindings, preflight, adapter
+# --------------------------------------------------------------------------- #
+def test_finra_fetch_validation_and_bindings(tmp_path: Path) -> None:
+    config, _ = _config(tmp_path, local_sync=True)
+    context = ValidationContext.current(
+        REPO, Path(sys.executable), config, environment={}
+    )
+    registry = default_registry()
+
+    validated = registry.validate(
+        "finra",
+        "fetch",
+        ["--from", "2026-09-01", "--limit-days", "10", "--run"],
+        context,
+    )
+    names = {binding.name: binding for binding in validated.bindings}
+    assert "finra_data_root" in names
+    finra_root = Path(names["finra_data_root"].resolved_value)
+    assert finra_root.name == "finra" and names["finra_data_root"].source == "derived"
+    assert (
+        finra_root.parent == (tmp_path / "data").parent
+    )  # a sibling of the eodhd root
+    claims = {claim.resource_id: claim.mode for claim in validated.spec.resources}
+    assert claims[names["finra_data_root"].resource_id] == "exclusive"
+    # the eodhd root is not claimed: finra fetch never touches it
+    assert set(claims) == {
+        names["config_path"].resource_id,
+        names["finra_data_root"].resource_id,
+    }
+
+    status = registry.validate("finra", "status", ["--json"], context)
+    status_claims = {c.resource_id: c.mode for c in status.spec.resources}
+    assert status_claims[names["finra_data_root"].resource_id] == "shared"
+    assert registry.validate("finra", "qc", [], context).spec.resources
+
+    with pytest.raises(CommandValidationError, match="requires its own --run"):
+        registry.validate("finra", "fetch", ["--limit-days", "5"], context)
+    with pytest.raises(CommandValidationError, match="flags only"):
+        registry.validate("finra", "fetch", ["short_volume", "--run"], context)
+    with pytest.raises(CommandValidationError, match="unknown FINRA dataset"):
+        registry.validate("finra", "fetch", ["--dataset", "x", "--run"], context)
+    with pytest.raises(CommandValidationError, match="cdn or api"):
+        registry.validate("finra", "fetch", ["--transport", "ftp", "--run"], context)
+    with pytest.raises(CommandValidationError, match="ISO date"):
+        registry.validate("finra", "fetch", ["--from", "2026-13-01", "--run"], context)
+    with pytest.raises(CommandValidationError, match="non-negative integer"):
+        registry.validate("finra", "fetch", ["--limit-days", "x", "--run"], context)
+    with pytest.raises(CommandValidationError, match="unsupported option"):
+        registry.validate("finra", "status", ["--live"], context)  # network stays off
+    with pytest.raises(CommandValidationError, match="flags only"):
+        registry.validate("finra", "qc", ["short_volume"], context)
+
+
+def test_finra_fetch_preflight_credentials_only_for_api_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _config(tmp_path, local_sync=True)
+    registry = default_registry()
+
+    # keep the credential lookup off this machine's Windows user environment
+    monkeypatch.setattr("finra.auth.read_windows_user_env", lambda name: "")
+
+    def _findings(argv: list[str], environment: dict[str, str]) -> set[str]:
+        context = ValidationContext.current(
+            REPO, Path(sys.executable), config, environment=environment
+        )
+        validated = registry.validate("finra", "fetch", argv, context)
+        execution = ExecutionContext(context, validated.bindings)
+        return {
+            f.code for f in registry.preflight(validated.spec, "readiness", execution)
+        }
+
+    assert "finra_credentials_missing" not in _findings(["--run"], {})
+    assert "finra_credentials_missing" in _findings(["--transport", "api", "--run"], {})
+    assert "finra_credentials_invalid" in _findings(
+        ["--transport", "api", "--run"], {"FINRA_CLIENT_ID": "only-id"}
+    )
+    assert "finra_credentials_missing" not in _findings(
+        ["--transport", "api", "--run"],
+        {"FINRA_CLIENT_ID": "id", "FINRA_API_KEY": "secret"},
+    )

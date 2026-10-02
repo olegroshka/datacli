@@ -27,6 +27,7 @@ Run any command with `--help` for its full options.
 | `config [set <key> <value>]` | Show / edit configuration (`data-root`, `sync-*`) | `eodhd/cli.py config` |
 | `sync [status \| push --run \| login]` | One-way backup of the data root (Google Drive or local dir; dry-run unless `--run`) | `python -m storage.cli` |
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
+| `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
 **Hits a provider — spends EODHD units (`$`) or needs a provider key:**
@@ -36,6 +37,8 @@ Run any command with `--help` for its full options.
 | `fetch` / `refresh [lanes] [--fast] [--run]` `$` | Download / top up data (dry-run unless `--run`) | `eodhd/cli.py refresh` |
 | `probe TICKER…` `$` | Ad-hoc availability probe; caches raw payloads under `<data-root>/probe_cache/`, never touches lane outputs | `eodhd/cli.py probe` |
 | `macro fetch [--run]` | Pull FRED (needs `FRED_API_KEY`) + EODHD macro series (`$`) | `python -m macro.cli fetch` |
+| `finra fetch [--dataset short_volume\|weekly_flow] [--from D] [--to D] [--limit-days N] [--run]` | Daily short sale volume from FINRA's public files (free, no key; `--transport api` uses the Query API), or the weekly ATS/OTC flow (Query API, needs credentials) | `python -m finra.cli fetch` |
+| `finra probe auth \| metadata \| partitions <dataset>` | Read-only calls against the FINRA Query API (credentials optional for public datasets) | `python -m finra.cli probe` |
 
 **Agentic — the [Raw Data Lab](#raw-data-lab-optional-llm-backed)** ✦ *(needs a model — see note below):*
 
@@ -207,8 +210,9 @@ parquet directly.
 
 `sql` is the raw escape hatch, running DuckDB against views named `prices`,
 `dividends`, `splits`, `fundamentals`, `news` (plus their `*_state` sidecars, the
-`catalog` once reindexed, and `macro` / `macro_country` / `macro_market` once
-fetched). Every EODHD view carries a `lane` column:
+`catalog` once reindexed, `macro` / `macro_country` / `macro_market` once
+fetched, and `finra_short_volume` / `finra_weekly_flow_symbol` once the FINRA
+source is fetched). Every EODHD view carries a `lane` column:
 
 ```text
 eodhd> sql "SELECT lane, count(*) AS n, min(ex_date) AS earliest
@@ -287,6 +291,15 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   (`macro_country`), and index & FX levels (`macro_market`) into read-only views, so
   the macro personas can join real macro data to the equity tape by date instead of
   guessing.
+- **Positioning join (FINRA)** — `finra fetch --run` pulls Reg SHO daily short sale
+  volume (consolidated NMS, one row per symbol per trade date) into
+  `finra_short_volume`, with `eodhd_code` mapping FINRA's SIP spelling to EODHD
+  tickers (`BRK/B` → `BRK-B`) and `short_ratio` ready to join to `prices` on
+  `eodhd_code = ticker AND date`. Public files, no key. `finra fetch --dataset
+  weekly_flow --run` adds the weekly ATS (dark pool) and OTC market-maker flow
+  per symbol and venue (`finra_weekly_flow`, `finra_weekly_flow_symbol`), published
+  by FINRA three (Tier 1) or five (Tier 2) weeks after the week, so join it on
+  `published_at`. See `docs/FINRA_SOURCE_DESIGN.md`.
 - **Restricted Python (opt-in)** — set `[lab].allow_python` and the `quant` persona
   can run isolated Python (subprocess + timeout + no network) for stats and plots SQL
   can't express. A *trusted-local* convenience, **not** a hardened sandbox — off by
@@ -306,8 +319,8 @@ claude mcp add datacli -- uv run --extra mcp python mcp_server.py
 ```
 
 Tools: `sql` (read-only `SELECT`/`WITH`, same guard as the lab), `describe_schema`,
-`list_lanes`. The connection includes `news` when crawled and the macro views when
-fetched.
+`list_lanes`. The connection includes `news` when crawled, the macro views when
+fetched, and `finra_short_volume` when the FINRA source is fetched.
 
 ## Backup (`sync`)
 
@@ -315,6 +328,12 @@ fetched.
 Two backends: **Google Drive** (needs the `sync` extra and a one-time OAuth
 client, see [`storage/GDRIVE_SETUP.md`](../storage/GDRIVE_SETUP.md)) or a **local
 directory** (no setup).
+
+It covers the eodhd data root and, when they exist, the `macro` and `finra`
+roots as separate units: each keeps its own manifest under its `.sync/` and
+goes to its own folder next to `remote_root` (`datacli/macro`, `datacli/finra`;
+the `local` backend uses siblings of `local_dest`). `status`, `push` and
+`reconcile` report every unit; the exit code is the worst of them.
 
 ```powershell
 uv sync --extra sync                                   # Drive backend only
@@ -365,8 +384,10 @@ that predate this repo). It is never written to `datacli.toml`. `config` shows
 `NOT SET` if nothing resolves.
 
 **Other keys** (all environment variables): `FRED_API_KEY` for `macro fetch`;
-`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab. See `datacli.example.toml` for
-the full config template.
+`FINRA_CLIENT_ID` + `FINRA_API_KEY` (the client secret) for the FINRA Query API,
+read from the environment or the Windows user environment and optional for the
+public short volume files; `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab.
+See `datacli.example.toml` for the full config template.
 
 ## Scheduled jobs (Windows)
 
@@ -444,6 +465,7 @@ datacli/
 │  ├─ config.py          data-root resolution + datacli.toml
 │  └─ _render.py         shared console + palette (one look for every command)
 ├─ macro/                the macro source (FRED + EODHD series, DuckDB views)
+├─ finra/                the FINRA source (Query API client, public daily files, short volume store, views)
 ├─ llm/                  shared model layer (LiteLLM behind one interface, budget, cache, tiers)
 ├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI
 ├─ lab/                  the Raw Data Lab (personas, skills, grounded agent, pipeline)

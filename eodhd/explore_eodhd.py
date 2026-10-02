@@ -233,6 +233,13 @@ def connect() -> Any:
         macro_views.register(con)
     except Exception:
         pass
+    # Same for the FINRA views (finra_short_volume + its state sidecar).
+    try:
+        from finra import views as finra_views  # type: ignore[import-not-found]
+
+        finra_views.register(con)
+    except Exception:
+        pass
     return con
 
 
