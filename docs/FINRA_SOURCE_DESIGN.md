@@ -767,3 +767,10 @@ hypothesis actually names, and the credentials are entitled to it); a
 longer scored window, since 60 days bounds the power here; and the short
 ratio's own change around the news day as an *outcome* rather than a
 conditioner.
+
+**Follow-up (cut 2, 2026-10-02, `FINRA_CUT2_PLAN.md` iteration 5).** With
+consolidated short interest on disk and joined point-in-time by publication
+date, short interest over shares outstanding orders the size of the next
+move strongly (corr 0.153, t 10.9) and jointly with materiality, but does
+not interact with it; days to cover adds nothing. The answer to the phase 5
+question stays no; the by-product is a two-factor magnitude model.

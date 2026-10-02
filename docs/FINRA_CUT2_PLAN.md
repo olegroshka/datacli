@@ -56,8 +56,12 @@ month) and `...b.zip` (second half), each a pipe-delimited text file with no
 header: settlement date, CUSIP, symbol, fails quantity, description, price.
 History from February 2004. The first half appears at the end of the month,
 the second half about the 15th of the next month, so the point-in-time lag
-is two to four weeks. The SEC's fair-access policy expects a descriptive
-`User-Agent`; to confirm on first fetch.
+is two to four weeks. **Confirmed on 2026-10-02:** a request with a plain
+descriptive `User-Agent` is refused with the SEC's "Request Rate Threshold
+Exceeded" page. The SEC's automated-access policy requires the user agent to
+declare a company name and a contact email address. Iteration 6 therefore
+needs an owner-provided contact string, held in the config under `[finra]
+sec_user_agent` (not in code, not in this doc), before any file is fetched.
 
 **Market holidays**: the daily short volume store already records every
 NYSE holiday since 2018 as an `absent` weekday (79 of them, plus the
@@ -137,3 +141,47 @@ shares outstanding taken as known 45 days after the quarter end
 (point-in-time) and, separately labelled, by today's float snapshot (not
 point-in-time): GME 6.6 percent of outstanding on 2026-09-15, AAPL 0.87.
 Lab snippet, MCP surface and REFERENCE updated. Suite 647 passed.
+
+**Iteration 4, 2026-10-02: short interest backfill.** All 210 settlement
+dates from 2017-12-29 to 2026-09-15 in one unattended run of about an hour,
+no absences, no errors, `qc` clean. The store holds 3,971,752 rows, the
+exact `record-total` FINRA reports for the whole dataset; 54.8 percent of
+rows are exchange-listed classes.
+
+**Iteration 5, 2026-10-02: the evaluation with short interest.**
+`finra/panel.py` gained `short_interest_features`: for each panel row the
+latest report with `published_at` strictly before the trading day (FINRA
+disseminates after the close, so a report published on T is not known at
+T's close), via an ASOF join on `finra_short_interest_float`; a test pins
+the strict inequality. On the 60-day `event@5` panel the report was known
+on 7,655 of 7,663 rows with a median age of 10 days.
+
+Result, next-session horizon, per-day rank correlation with the size of the
+market-adjusted move, t over days:
+
+| variable | corr | t |
+|---|---|---|
+| materiality (baseline, same rows) | 0.095 | 8.3 |
+| short interest over shares outstanding | 0.153 | 10.9 |
+| days to cover | -0.045 | -3.0 |
+| trailing 5-day short volume ratio (phase 5) | -0.024 | -1.7 |
+
+Short interest over outstanding is the strongest single ordering of move
+size in the panel, and it holds **jointly** with materiality: in the per-day
+rank regression both coefficients keep their size (materiality 0.096, t
+7.1; short interest 0.152, t 10.6). It is **additive, not an amplifier**: the
+interaction term is flat (t -1.05 at one day, -0.86 at five), materiality's
+correlation is the same inside every short-interest tercile (0.096, 0.073,
+0.075; high minus low t -0.68), and the tercile gradient of move size is the
+same at every materiality level (mat 0: 142 to 210 bps; mat 1: 165 to 279;
+mat 2: 202 to 320). Days to cover carries nothing the two do not. Twenty-six
+tests in the family; the stand-alone and joint short-interest statistics
+clear Bonferroni by a wide margin; no interaction does.
+
+Reading: heavily shorted names move more after news, and move more without
+it; that is the long-known volatility of crowded shorts, now measured
+point-in-time on this panel. The practical product is a two-factor
+magnitude model, materiality plus short interest over outstanding, which
+beats either alone. The hypothesis as stated in phase 5, that positioning
+*changes* the effect of material news, is not supported by any of the three
+positioning measures now on disk.

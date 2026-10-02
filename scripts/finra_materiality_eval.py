@@ -35,7 +35,15 @@ from scoring import panel_eval as pev  # noqa: E402
 from scoring import positioning_eval as pos  # noqa: E402
 from scoring.cli import score_view_name  # noqa: E402
 
-POS_FIELDS = ("sr5_known", "sr20_known", "sr_abn_known", "sr1_known", "sr5_t")
+POS_FIELDS = (
+    "sr5_known",
+    "sr20_known",
+    "sr_abn_known",
+    "sr1_known",
+    "sr5_t",
+    "dtc_known",
+    "si_out_known",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -74,6 +82,20 @@ def main(argv: list[str] | None = None) -> int:
     data, jrep = fpanel.attach_positioning(
         joined, features, min_history=args.min_history
     )
+    tables = {
+        r[0]
+        for r in con.execute(
+            "SELECT table_name FROM information_schema.tables"
+        ).fetchall()
+    }
+    if "finra_short_interest_float" in tables:
+        si_feats = fpanel.short_interest_features(con, data)
+        data = data.merge(si_feats, on=["eodhd_code", "trade_date"], how="left")
+        known = int(data["dtc_known"].notna().sum())
+        console.print(
+            f"[dim]short interest known on {known:,} of {len(data):,} rows "
+            f"(median report age {data['si_age_known'].median():.0f} days)[/dim]"
+        )
     out["join"] = jrep
     console.print(
         f"[dim]positioning joined {jrep['rows']:,} rows ({jrep['match_share']:.0%} of the panel; "

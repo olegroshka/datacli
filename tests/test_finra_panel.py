@@ -166,3 +166,44 @@ def test_interaction_tests_are_flat_without_an_effect() -> None:
 
 def test_bonferroni_note() -> None:
     assert "p < 0.0100" in pos.bonferroni_note(5)
+
+
+def test_short_interest_features_use_only_reports_published_before_the_day() -> None:
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    si = pd.DataFrame(
+        {
+            "eodhd_code": ["AAPL", "AAPL", "AAPL"],
+            "settlement_date": pd.to_datetime(
+                ["2026-08-14", "2026-08-31", "2026-09-15"]
+            ).date,
+            "published_at": pd.to_datetime(
+                ["2026-08-25", "2026-09-10", "2026-09-24"]
+            ).date,
+            "days_to_cover": [2.0, 3.0, 4.0],
+            "short_over_outstanding": [0.01, 0.02, 0.03],
+            "short_position": [100, 200, 300],
+        }
+    )
+    con.register("_si", si)
+    con.execute("CREATE VIEW finra_short_interest_float AS SELECT * FROM _si")
+    panel = pd.DataFrame(
+        {
+            "symbol": ["AAPL.US"] * 4 + ["ZZZ.US"],
+            "trade_date": pd.to_datetime(
+                ["2026-08-20", "2026-09-10", "2026-09-11", "2026-09-25", "2026-09-25"]
+            ),
+        }
+    )
+    out = fpanel.short_interest_features(con, panel).set_index(
+        ["eodhd_code", "trade_date"]
+    )
+    assert pd.isna(
+        out.loc[("AAPL", pd.Timestamp("2026-08-20")), "dtc_known"]
+    )  # nothing published yet
+    # published ON the trading day is not yet known at its close: 09-10 still sees the 08-14 report
+    assert out.loc[("AAPL", pd.Timestamp("2026-09-10")), "dtc_known"] == 2.0
+    assert out.loc[("AAPL", pd.Timestamp("2026-09-11")), "dtc_known"] == 3.0
+    assert out.loc[("AAPL", pd.Timestamp("2026-09-11")), "si_age_known"] == 1
+    assert out.loc[("AAPL", pd.Timestamp("2026-09-25")), "si_out_known"] == 0.03
+    assert pd.isna(out.loc[("ZZZ", pd.Timestamp("2026-09-25")), "dtc_known"])

@@ -145,3 +145,41 @@ def attach_positioning(
         "match_share": round((len(merged) + thin) / max(len(panel), 1), 3),
         "n_days": int(merged["trade_date"].nunique()) if not merged.empty else 0,
     }
+
+
+# --------------------------------------------------------------------------- #
+# short interest (twice a month, published seven business days after settlement)
+# --------------------------------------------------------------------------- #
+SI_VIEW = "finra_short_interest_float"
+
+
+def short_interest_features(
+    con: Any, panel: pd.DataFrame, *, view: str = SI_VIEW
+) -> pd.DataFrame:
+    """The latest short interest report each panel row could know, per ``(eodhd_code, trade_date)``.
+
+    ``*_known`` columns come from the report with ``published_at`` strictly
+    before the trading day (FINRA disseminates after the close, so a report
+    published on T is not observable at the close of T); ``si_age_known`` is
+    the number of days since that publication, for screening stale reports.
+    Rows whose symbol has no report yet come back with NULLs.
+    """
+    keys = panel[["symbol", "trade_date"]].drop_duplicates().copy()
+    keys["eodhd_code"] = keys["symbol"].astype(str).str.split(".").str[0].str.upper()
+    keys["trade_date"] = pd.to_datetime(keys["trade_date"]).dt.date
+    con.register("_si_keys", keys[["eodhd_code", "trade_date"]].drop_duplicates())
+    out = con.execute(f"""
+        SELECT k.eodhd_code, k.trade_date,
+               s.days_to_cover AS dtc_known,
+               s.short_over_outstanding AS si_out_known,
+               s.short_position AS si_position_known,
+               s.settlement_date AS si_settlement_known,
+               s.published_at AS si_published_known,
+               CAST(k.trade_date AS DATE) - CAST(s.published_at AS DATE) AS si_age_known
+        FROM _si_keys k
+        ASOF LEFT JOIN {view} s
+          ON s.eodhd_code = k.eodhd_code AND s.published_at < k.trade_date
+        """).df()
+    con.unregister("_si_keys")
+    out["trade_date"] = pd.to_datetime(out["trade_date"])
+    return out
