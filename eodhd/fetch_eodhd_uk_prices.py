@@ -29,11 +29,22 @@ PRICES_PATH = RAW_DIR / "prices_daily.parquet"
 PRICES_STATE_PATH = RAW_DIR / "prices_fetch_state.csv"
 
 
+#: The lane's own flags, taken off ``sys.argv`` before the shared parser sees it.
+INCLUDE_DELISTED = False
+REGISTER_ONLY = False
+
+
 def _take_flag(flag: str) -> bool:
     if flag in sys.argv:
         sys.argv.remove(flag)
         return True
     return False
+
+
+def take_flags() -> None:
+    global INCLUDE_DELISTED, REGISTER_ONLY
+    INCLUDE_DELISTED = _take_flag("--include-delisted") or INCLUDE_DELISTED
+    REGISTER_ONLY = _take_flag("--register-only") or REGISTER_ONLY
 
 
 def load_target_tickers(*, explicit_specs: list[str], limit: int = 0, **_ignored) -> list[tuple[str, str]]:
@@ -44,12 +55,11 @@ def load_target_tickers(*, explicit_specs: list[str], limit: int = 0, **_ignored
         return [parse_ticker_spec(value) for value in explicit_specs][: limit or None]
     import pandas as pd
 
-    include_delisted = _take_flag("--include-delisted")
-    register_only = _take_flag("--register-only")
+    take_flags()
     universe = pd.read_parquet(TICKERS_PATH)
-    if not include_delisted and "delisted" in universe.columns:
+    if not INCLUDE_DELISTED and "delisted" in universe.columns:
         universe = universe[~universe["delisted"].astype(bool)]
-    if register_only and "in_register" in universe.columns:
+    if REGISTER_ONLY and "in_register" in universe.columns:
         universe = universe[universe["in_register"].astype(bool)]
     tickers = [(str(code).strip(), EODHD_EXCHANGE) for code in universe["Code"] if str(code).strip()]
     return tickers[: limit or None]
@@ -66,6 +76,7 @@ def configure() -> None:
 
 def main() -> None:
     configure()
+    take_flags()  # before the shared parser rejects them
     if not any(arg == "--from" or arg.startswith("--from=") for arg in sys.argv[1:]):
         sys.argv += ["--from", DEFAULT_FROM]
     base.main()

@@ -64,9 +64,12 @@ def test_wrapper_points_the_shared_fetcher_at_this_lane_and_filters_targets(tmp_
     frame = pd.DataFrame({"Code": ["BA", "DEAD", "OTHER"], "delisted": [False, True, False], "in_register": [True, True, False]})
     frame.to_parquet(tmp_path / "u.parquet")
     monkeypatch.setattr(prices, "TICKERS_PATH", tmp_path / "u.parquet")
+    monkeypatch.setattr(prices, "INCLUDE_DELISTED", False)
+    monkeypatch.setattr(prices, "REGISTER_ONLY", False)
     monkeypatch.setattr(sys, "argv", ["x"])
     assert prices.load_target_tickers(explicit_specs=[]) == [("BA", "LSE"), ("OTHER", "LSE")]
-    monkeypatch.setattr(sys, "argv", ["x", "--include-delisted", "--register-only"])
+    monkeypatch.setattr(sys, "argv", ["x", "--include-delisted", "--register-only", "--from", "2012-01-01"])
+    prices.take_flags()  # what main() does before the shared parser runs
+    assert sys.argv == ["x", "--from", "2012-01-01"]
     assert prices.load_target_tickers(explicit_specs=[]) == [("BA", "LSE"), ("DEAD", "LSE")]
-    assert sys.argv == ["x"]
     assert prices.load_target_tickers(explicit_specs=["BA.LSE"]) == [("BA", "LSE")]
