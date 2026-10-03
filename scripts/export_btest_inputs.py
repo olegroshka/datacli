@@ -29,13 +29,20 @@ def main() -> int:
     parser.add_argument("--start", default=export.DEFAULT_START)
     parser.add_argument("--min-dollar-adv", type=float, default=export.DEFAULT_MIN_DOLLAR_ADV)
     parser.add_argument("--second", action="store_true", help="write the second iteration's files")
+    parser.add_argument("--memory-limit", default="8GB", help="DuckDB memory budget for the joins (spills beyond it)")
+    parser.add_argument("--threads", type=int, default=8, help="DuckDB threads")
     args = parser.parse_args()
 
     import explore_eodhd
 
     t0 = time.time()
+    con = explore_eodhd.connect()
+    # The ASOF joins over the full price table would otherwise take DuckDB's default
+    # budget (80 percent of RAM, 25 GiB here); spilling to disk is cheaper than a kill.
+    con.execute(f"SET memory_limit = '{args.memory_limit}'")
+    con.execute(f"SET threads = {args.threads}")
     if args.second:
-        second = export.export_second(explore_eodhd.connect(), positioning_root(), start=args.start, min_dollar_adv=args.min_dollar_adv)
+        second = export.export_second(con, positioning_root(), start=args.start, min_dollar_adv=args.min_dollar_adv)
         print(
             f"wrote {second.directory}: short size-residual ranks for {second.short_size_symbols:,} symbols; "
             f"long side {second.long_symbols:,} symbols, {second.long_price_rows:,} price rows, "
