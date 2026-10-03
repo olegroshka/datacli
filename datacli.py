@@ -204,7 +204,7 @@ class PositioningPlugin(SourcePlugin):
         return ["status", "build", "qc"]
 
     def detail(self) -> str:
-        return "2 datasets"
+        return "3 datasets"
 
     def run(self, command: str, argv: list[str]) -> int:
         import positioning.cli as positioning_cli

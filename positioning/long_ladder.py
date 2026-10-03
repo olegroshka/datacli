@@ -89,45 +89,18 @@ def _quarter_end_sql(col: str) -> str:
     return f"(month({col}) IN (3, 6, 9, 12) AND {col} = last_day({col}))"
 
 
-def aggregate_sql(late_days: int | None = LATE_DAYS) -> str:
-    """SQL for the per-period aggregates: one row per ``(cusip, period, aggregate)``.
+def panel_ctes(late_days: int | None = LATE_DAYS) -> str:
+    """The CTEs every 13F panel query starts from (no leading ``WITH``).
 
-    Columns: ``level_raw`` (sum of shares over the aggregate's managers),
-    ``in_flow`` (shares at this period held by managers who also filed the
-    previous period), ``out_flow`` (shares at the previous period held by
-    managers who also filed this period), ``n_managers`` (holders in the
-    aggregate), ``n_cohort_managers`` (holders in the cohort), ``published_at``.
-    ``in_flow - out_flow`` is the flow once both are on one share basis.
+    ``_eff``: the effective filings under the lateness cutoff; ``_sched``: the
+    calendar quarter ends with their index ``k`` and ``published_at``;
+    ``_filers``: one row per ``(cik, period)`` with the cohort flag;
+    ``_present``: whether the manager also filed the previous and next
+    quarter, for the panel-drift rule; ``_hold``: shares and value per
+    manager, period and CUSIP (``SH`` rows, no puts or calls, positive
+    shares); ``_joined``: ``_hold`` with the manager's presence columns.
     """
-    member = {"all": "TRUE", "cohort": "cohort IS TRUE"}
-    prev = {"all": "prev_all", "cohort": "prev_cohort"}
-    nxt = {"all": "next_all", "cohort": "next_cohort"}
-    parts = []
-    for agg in AGGREGATES:
-        parts.append(
-            f"SELECT '{agg}' AS aggregate, cusip, period, "
-            f"sum(shares) AS level_raw, count(*) AS n_managers, "
-            f"count(*) FILTER (WHERE cohort IS TRUE) AS n_cohort_managers "
-            f"FROM _joined WHERE {member[agg]} GROUP BY cusip, period"
-        )
-    levels = " UNION ALL ".join(parts)
-    parts = []
-    for agg in AGGREGATES:
-        parts.append(
-            f"SELECT '{agg}' AS aggregate, cusip, period, sum(shares) AS in_flow "
-            f"FROM _joined WHERE {member[agg]} AND {prev[agg]} GROUP BY cusip, period"
-        )
-    inflows = " UNION ALL ".join(parts)
-    parts = []
-    for agg in AGGREGATES:
-        parts.append(
-            f"SELECT '{agg}' AS aggregate, j.cusip, s.period, sum(j.shares) AS out_flow "
-            f"FROM _joined j JOIN _sched s ON s.k = j.k + 1 "
-            f"WHERE {member[agg]} AND {nxt[agg]} GROUP BY j.cusip, s.period"
-        )
-    outflows = " UNION ALL ".join(parts)
-    return f"""
-WITH _eff AS ({effective_filings_sql(late_days)}),
+    return f"""_eff AS ({effective_filings_sql(late_days)}),
 _sched AS (
   SELECT period, row_number() OVER (ORDER BY period) AS k,
          greatest(period + {DEADLINE_DAYS}, max(filing_date)) AS published_at
@@ -146,15 +119,53 @@ _present AS (
   LEFT JOIN _filers p ON p.cik = f.cik AND p.k = f.k - 1
   LEFT JOIN _filers n ON n.cik = f.cik AND n.k = f.k + 1),
 _hold AS (
-  SELECT h.cik, h.period, h.cusip, sum(h.shares) AS shares
+  SELECT h.cik, h.period, h.cusip, sum(h.shares) AS shares, sum(h.value_usd) AS value_usd
   FROM {HOLDINGS_VIEW} h JOIN _eff e USING (accession_number)
   WHERE h.share_type = 'SH' AND h.put_call IS NULL AND h.shares > 0
     AND h.cusip IS NOT NULL AND h.cusip <> ''
   GROUP BY h.cik, h.period, h.cusip),
 _joined AS (
-  SELECT h.cik, h.period, h.cusip, h.shares, p.k, p.cohort,
+  SELECT h.cik, h.period, h.cusip, h.shares, h.value_usd, p.k, p.cohort,
          p.prev_all, p.prev_cohort, p.next_all, p.next_cohort
-  FROM _hold h JOIN _present p USING (cik, period)),
+  FROM _hold h JOIN _present p USING (cik, period))"""
+
+
+#: SQL predicates per aggregate over ``_joined`` / ``_present`` columns.
+MEMBER = {"all": "TRUE", "cohort": "cohort IS TRUE"}
+
+
+def aggregate_sql(late_days: int | None = LATE_DAYS) -> str:
+    """SQL for the per-period aggregates: one row per ``(cusip, period, aggregate)``.
+
+    Columns: ``level_raw`` (sum of shares over the aggregate's managers),
+    ``in_flow`` (shares at this period held by managers who also filed the
+    previous period), ``out_flow`` (shares at the previous period held by
+    managers who also filed this period), ``n_managers`` (holders in the
+    aggregate), ``n_cohort_managers`` (holders in the cohort), ``published_at``.
+    ``in_flow - out_flow`` is the flow once both are on one share basis.
+    """
+    prev = {"all": "prev_all", "cohort": "prev_cohort"}
+    nxt = {"all": "next_all", "cohort": "next_cohort"}
+    levels = " UNION ALL ".join(
+        f"SELECT '{agg}' AS aggregate, cusip, period, "
+        f"sum(shares) AS level_raw, count(*) AS n_managers, "
+        f"count(*) FILTER (WHERE cohort IS TRUE) AS n_cohort_managers "
+        f"FROM _joined WHERE {MEMBER[agg]} GROUP BY cusip, period"
+        for agg in AGGREGATES
+    )
+    inflows = " UNION ALL ".join(
+        f"SELECT '{agg}' AS aggregate, cusip, period, sum(shares) AS in_flow "
+        f"FROM _joined WHERE {MEMBER[agg]} AND {prev[agg]} GROUP BY cusip, period"
+        for agg in AGGREGATES
+    )
+    outflows = " UNION ALL ".join(
+        f"SELECT '{agg}' AS aggregate, j.cusip, s.period, sum(j.shares) AS out_flow "
+        f"FROM _joined j JOIN _sched s ON s.k = j.k + 1 "
+        f"WHERE {MEMBER[agg]} AND {nxt[agg]} GROUP BY j.cusip, s.period"
+        for agg in AGGREGATES
+    )
+    return f"""
+WITH {panel_ctes(late_days)},
 _levels AS ({levels}),
 _in AS ({inflows}),
 _out AS ({outflows}),

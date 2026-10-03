@@ -143,7 +143,7 @@ CAPABILITIES = (
 )
 
 FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest", "fails_to_deliver"}
-POSITIONING_DATASETS: tuple[str, ...] = ("short_ladder", "long_ladder")
+POSITIONING_DATASETS: tuple[str, ...] = ("short_ladder", "long_ladder", "holdings_inputs")
 FINRA_TRANSPORTS = {"cdn", "api", "sec"}
 SEC_DATASETS = {"form13f", "adv"}
 

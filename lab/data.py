@@ -98,14 +98,16 @@ def schema_text(con: Any) -> str:
             pass
     has_ladder = _has_view(con, "positioning_short_ladder")
     has_long = _has_view(con, "positioning_long_ladder")
+    has_inputs = _has_view(con, "positioning_holdings_inputs")
     has_factors = _has_view(con, "positioning_factors")
     has_map = _has_view(con, "positioning_cusip_map")
-    if has_ladder or has_long or has_factors or has_map:
+    if has_ladder or has_long or has_inputs or has_factors or has_map:
         try:
             from positioning import views as positioning_views
 
             text += "\n\n" + positioning_views.schema_snippet(
-                ladder=has_ladder, factor_view=has_factors, cusip_map=has_map, long_ladder=has_long
+                ladder=has_ladder, factor_view=has_factors, cusip_map=has_map, long_ladder=has_long,
+                holdings_inputs=has_inputs,
             )
         except Exception:
             pass

@@ -11,8 +11,10 @@
   by quarter (DD-002 WP9). ``flow`` is the trading of managers present in both
   quarters, ``drift_shares`` what entered or left with a manager. ASOF-join on
   ``published_at``. ``long_profit_log`` is ``log(mark / cost_basis)``.
-- ``positioning_short_ladder_state`` / ``positioning_long_ladder_state`` --
-  the build-state sidecars.
+- ``positioning_holdings_inputs`` -- one row per ``(cusip, period, aggregate)``:
+  SPEC's G1 members from the same 13F panel (DD-002 WP10): ``long_fund_weight``,
+  ``long_conc``, ``best_ideas`` (L1-normalised per period), ``n_holders``.
+- ``positioning_*_state`` -- the build-state sidecars.
 - ``positioning_factors`` -- style exposures and specific risk, see ``factors``.
 - ``positioning_cusip_map`` -- dated CUSIP to ticker pairs, see ``master``.
 
@@ -31,6 +33,8 @@ VIEW = "positioning_short_ladder"
 STATE_VIEW = "positioning_short_ladder_state"
 LONG_VIEW = "positioning_long_ladder"
 LONG_STATE_VIEW = "positioning_long_ladder_state"
+INPUTS_VIEW = "positioning_holdings_inputs"
+INPUTS_STATE_VIEW = "positioning_holdings_inputs_state"
 _HEADER = "Positioning views (derived; join to equities by eodhd_code = ticker):"
 
 
@@ -47,6 +51,9 @@ def register(
         LONG_VIEW: _register_ladder(
             con, base, dataset.LONG_LADDER, LONG_VIEW, LONG_STATE_VIEW,
             "CASE WHEN profit_pct > -1 THEN ln(1 + profit_pct) END AS long_profit_log",
+        ),
+        INPUTS_VIEW: _register_ladder(
+            con, base, dataset.HOLDINGS_INPUTS, INPUTS_VIEW, INPUTS_STATE_VIEW, "NULL AS _",
         ),
     }
     try:
@@ -71,9 +78,8 @@ def _register_ladder(
     if not target.days_on_disk():
         return False
     glob = (target.daily_dir / "*.parquet").as_posix()
-    con.execute(
-        f"CREATE OR REPLACE VIEW {view} AS SELECT *, {extra} FROM read_parquet('{glob}')"
-    )
+    select = "*" if extra == "NULL AS _" else f"*, {extra}"
+    con.execute(f"CREATE OR REPLACE VIEW {view} AS SELECT {select} FROM read_parquet('{glob}')")
     if target.state_path.exists():
         con.execute(
             f"CREATE OR REPLACE VIEW {state_view} AS SELECT * FROM "
@@ -88,6 +94,7 @@ def schema_snippet(
     factor_view: bool = True,
     cusip_map: bool = True,
     long_ladder: bool = True,
+    holdings_inputs: bool = True,
 ) -> str:
     lines = [_HEADER]
     if ladder:
@@ -118,6 +125,16 @@ def schema_snippet(
             "  unrealised return on cost; filings later than 60 days after the period are left out;",
             "  point-in-time: ASOF-join on published_at (45 to 60 days after period)]",
             f"- {LONG_STATE_VIEW}(date, status, source, rows, short_sum, total_sum, sha256, fetched_at, detail, part)",
+        ]
+    if holdings_inputs:
+        lines += [
+            f"- {INPUTS_VIEW}(cusip, period, published_at, aggregate, n_holders, level_raw, value_usd, "
+            "long_fund_weight, long_conc, best_ideas_count, best_ideas)",
+            "  [the cross-manager distribution of each 13F position per quarter end and aggregate",
+            "  ('all' / 'cohort'): long_fund_weight = sum over holders of the position's weight in the",
+            "  holder's 13F book, long_conc = Herfindahl of shares across holders (1 = one holder),",
+            "  best_ideas = holders for whom it is a top-10 weight, normalised to sum to 1 per period;",
+            "  same filings and published_at as positioning_long_ladder; no prices needed]",
         ]
     if factor_view:
         lines.append(factors.schema_snippet())

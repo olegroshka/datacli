@@ -1,9 +1,10 @@
-"""The stored ladders (DD-001 section 7, DD-002 WP9): one parquet file per date.
+"""The stored derived datasets (DD-001 section 7, DD-002 WP9 and WP10): one parquet file per date.
 
-Two datasets share one build: the short ladder (one file per settlement date)
-and the long ladder (one file per 13F period). ``build`` recomputes the whole
-ladder from the source views (seconds for the short ladder, minutes for the
-long) and replaces only the partitions whose content changed. A row of a date
+Three datasets share one build: the short ladder (one file per settlement
+date), the long ladder and the holdings inputs (one file per 13F period).
+``build`` recomputes the whole dataset from the source views (seconds for the
+short ladder, minutes for the 13F ones) and replaces only the partitions
+whose content changed. A row of a date
 depends on reports up to that date alone, so a changed digest for an already
 stored date means an input was restated (FINRA revised a report, the vendor
 changed a price or a split, a 13F amendment arrived inside the window) and is
@@ -24,7 +25,7 @@ import pandas as pd
 import pyarrow as pa
 
 from finra.store import STATUS_OK, DayState, DayStore
-from positioning import long_ladder, short_ladder
+from positioning import holdings, long_ladder, short_ladder
 
 SOURCE = "derived"
 
@@ -43,10 +44,19 @@ class Spec:
     source_latest: Callable[[Any], dt.date | None]
     build_hint: str
     source_hint: str
+    #: dataset-specific invariants over the stored frame (and the source when ``con`` is given)
+    checks: Callable[[pd.DataFrame, Any | None], list["Finding"]]
 
     @property
     def columns(self) -> list[str]:
         return list(self.schema.names)
+
+
+@dataclass(frozen=True)
+class Finding:
+    severity: str  # error | warn
+    check: str
+    detail: str
 
 
 def _si_latest(con: Any) -> dt.date | None:
@@ -85,6 +95,7 @@ SHORT_LADDER = Spec(
     source_latest=_si_latest,
     build_hint="positioning build --run",
     source_hint="short interest",
+    checks=lambda frame, con: _ladder_checks(frame, SHORT_LADDER),
 )
 LONG_LADDER = Spec(
     name=long_ladder.NAME,
@@ -97,8 +108,22 @@ LONG_LADDER = Spec(
     source_latest=long_ladder.source_latest,
     build_hint="positioning build --dataset long_ladder --run",
     source_hint="13F holdings",
+    checks=lambda frame, con: _ladder_checks(frame, LONG_LADDER) + (_qc_long(frame, con) if con is not None else []),
 )
-SPECS: dict[str, Spec] = {s.name: s for s in (SHORT_LADDER, LONG_LADDER)}
+HOLDINGS_INPUTS = Spec(
+    name=holdings.NAME,
+    subdir="period",
+    schema=holdings.SCHEMA,
+    partition="period",
+    key=holdings.KEY,
+    symbol="cusip",
+    compute=holdings.compute,
+    source_latest=holdings.latest,
+    build_hint="positioning build --dataset holdings_inputs --run",
+    source_hint="13F holdings",
+    checks=lambda frame, con: [Finding(*f) for f in holdings.checks(frame)],
+)
+SPECS: dict[str, Spec] = {s.name: s for s in (SHORT_LADDER, LONG_LADDER, HOLDINGS_INPUTS)}
 DATASETS: tuple[str, ...] = tuple(SPECS)
 
 # the short ladder's names, kept for its callers
@@ -224,13 +249,6 @@ def build(
     )
 
 
-@dataclass(frozen=True)
-class Finding:
-    severity: str  # error | warn
-    check: str
-    detail: str
-
-
 def qc(root: Path, con: Any | None = None, dataset: str | Spec = SHORT_LADDER) -> list[Finding]:
     """Checks over a stored ladder; with ``con`` also against the source views."""
     spec = spec_of(dataset)
@@ -254,34 +272,10 @@ def qc(root: Path, con: Any | None = None, dataset: str | Spec = SHORT_LADDER) -
     dupes = int(frame.duplicated(list(spec.key)).sum())
     if dupes:
         findings.append(Finding("error", "duplicate_key", f"{dupes} duplicate {spec.key} rows"))
-    held = frame[frame["inventory"] > 0]
-    null_state = int(held[["wavg_age_days", "cost_basis", "profit_pct"]].isna().any(axis=1).sum())
-    if null_state:
-        findings.append(Finding("error", "null_with_inventory", f"{null_state} held rows lack age, cost or profit"))
-    empty = frame[frame["inventory"] <= 0]
-    filled = int(empty[["wavg_age_days", "cost_basis", "profit_pct"]].notna().any(axis=1).sum())
-    if filled:
-        findings.append(Finding("error", "filled_without_inventory", f"{filled} empty rows carry age, cost or profit"))
     early = int((pd.to_datetime(frame["published_at"]) <= pd.to_datetime(frame[spec.partition])).sum())
     if early:
         findings.append(Finding("error", f"published_before_{spec.partition}", f"{early} rows"))
-    negative_age = int((frame["wavg_age_days"] < 0).sum())
-    if negative_age:
-        findings.append(Finding("error", "negative_age", f"{negative_age} rows"))
-    mismatch = frame[frame["quantity_factor"] != frame["price_factor"]]
-    if len(mismatch):
-        findings.append(
-            Finding(
-                "warn",
-                "price_only_adjustments",
-                f"{mismatch[spec.symbol].nunique()} symbols carry a vendor split entry "
-                "not applied to share counts (spin-off or merger adjustment)",
-            )
-        )
-    series = frame[list(spec.key[:-1])].drop_duplicates() if spec is LONG_LADDER else frame[[spec.symbol]].drop_duplicates()
-    resets = int(frame["reset"].sum()) - int(len(series))
-    if resets > 0:
-        findings.append(Finding("warn", "resets", f"{resets} ladders restarted after a long absence"))
+    findings.extend(spec.checks(frame, con))
     restated = [s for s in state.values() if s.detail.startswith("restated")]
     if restated:
         findings.append(Finding("warn", "restated", f"{len(restated)} partitions were restated; latest {max(s.date for s in restated)}"))
@@ -299,8 +293,37 @@ def qc(root: Path, con: Any | None = None, dataset: str | Spec = SHORT_LADDER) -
                     f"run `{spec.build_hint}`",
                 )
             )
-        if spec is LONG_LADDER:
-            findings.extend(_qc_long(frame, con))
+    return findings
+
+
+def _ladder_checks(frame: pd.DataFrame, spec: Spec) -> list[Finding]:
+    """The kernel's invariants over a stored ladder (both sides)."""
+    findings: list[Finding] = []
+    held = frame[frame["inventory"] > 0]
+    null_state = int(held[["wavg_age_days", "cost_basis", "profit_pct"]].isna().any(axis=1).sum())
+    if null_state:
+        findings.append(Finding("error", "null_with_inventory", f"{null_state} held rows lack age, cost or profit"))
+    empty = frame[frame["inventory"] <= 0]
+    filled = int(empty[["wavg_age_days", "cost_basis", "profit_pct"]].notna().any(axis=1).sum())
+    if filled:
+        findings.append(Finding("error", "filled_without_inventory", f"{filled} empty rows carry age, cost or profit"))
+    negative_age = int((frame["wavg_age_days"] < 0).sum())
+    if negative_age:
+        findings.append(Finding("error", "negative_age", f"{negative_age} rows"))
+    mismatch = frame[frame["quantity_factor"] != frame["price_factor"]]
+    if len(mismatch):
+        findings.append(
+            Finding(
+                "warn",
+                "price_only_adjustments",
+                f"{mismatch[spec.symbol].nunique()} symbols carry a vendor split entry "
+                "not applied to share counts (spin-off or merger adjustment)",
+            )
+        )
+    series = frame[list(spec.key[:-1])].drop_duplicates() if spec is LONG_LADDER else frame[[spec.symbol]].drop_duplicates()
+    resets = int(frame["reset"].sum()) - int(len(series))
+    if resets > 0:
+        findings.append(Finding("warn", "resets", f"{resets} ladders restarted after a long absence"))
     return findings
 
 

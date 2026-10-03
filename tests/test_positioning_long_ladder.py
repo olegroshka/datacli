@@ -128,6 +128,11 @@ def build_panel(seed: int = 5) -> Panel:
     return panel
 
 
+def value(s: int, shares: int) -> float:
+    """Market value as filed: true shares at a per-security price, so a split leaves it unchanged."""
+    return float(shares * (10 + s))
+
+
 def _reported(shares: int, s: int, period: date) -> int:
     """Raw shares as filed: post-split for the split security from the ex date."""
     return int(shares * SPLIT_RATIO) if s == SPLIT_SECURITY and period >= SPLIT_EX else shares
@@ -146,10 +151,10 @@ def _filings(panel: Panel, rng: random.Random) -> None:
         subs.append((acc, filed, "13F-HR/A" if kind else "13F-HR", cik(m), period))
         covers.append((acc, f"MANAGER {m}", kind is not None, kind))
         for s, shares in sorted(book.items()):
-            rows.append((acc, cusip(s), float(_reported(shares, s, period)), "SH", None))
+            rows.append((acc, cusip(s), float(_reported(shares, s, period)), value(s, shares), "SH", None))
             if s % 17 == 0:  # noise the rule must ignore: a put on the same name, a bond
-                rows.append((acc, cusip(s), 999.0, "SH", "Put"))
-                rows.append((acc, "BOND" + cusip(s)[4:], 5000.0, "PRN", None))
+                rows.append((acc, cusip(s), 999.0, 999.0, "SH", "Put"))
+                rows.append((acc, "BOND" + cusip(s)[4:], 5000.0, 5000.0, "PRN", None))
         hf, pf = FLAGS[m]
         cohort.append((acc, cik(m), hf, pf))
 
@@ -174,7 +179,7 @@ def _filings(panel: Panel, rng: random.Random) -> None:
             file(m, q, book, days=days, kind=None)
     panel.submissions = pd.DataFrame(subs, columns=["accession_number", "filing_date", "submission_type", "cik", "period"])
     panel.covers = pd.DataFrame(covers, columns=["accession_number", "manager_name", "is_amendment", "amendment_type"])
-    panel.rows = pd.DataFrame(rows, columns=["accession_number", "cusip", "shares", "share_type", "put_call"])
+    panel.rows = pd.DataFrame(rows, columns=["accession_number", "cusip", "shares", "value_usd", "share_type", "put_call"])
     panel.cohort = pd.DataFrame(cohort, columns=["accession_number", "cik", "any_hedge_funds", "advises_private_funds"]).astype(
         {"any_hedge_funds": "boolean", "advises_private_funds": "boolean"}
     )

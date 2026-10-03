@@ -49,9 +49,11 @@ COMMANDS: dict[str, Command] = {
             "splits, one file per settlement date (seconds).\n"
             "long_ladder: over SEC 13F holdings (amendments resolved, the\n"
             "hedge-fund cohort from Form ADV, flows over managers present in both\n"
-            "quarters), one file per quarter end (minutes).",
+            "quarters), one file per quarter end (minutes).\n"
+            "holdings_inputs: the cross-manager distribution of each 13F position\n"
+            "(weight in holders' books, concentration, best ideas), same panel.",
             (
-                Flag("--dataset", "short_ladder (default) or long_ladder", metavar="<name>"),
+                Flag("--dataset", "short_ladder (default), long_ladder or holdings_inputs", metavar="<name>"),
                 Flag("--run", "write the changed partitions (default is a dry run)"),
             ),
         ),
@@ -61,7 +63,7 @@ COMMANDS: dict[str, Command] = {
             "Check the store against its state sidecar and its own invariants, and\n"
             "report whether the source is ahead of it. For the long ladder every\n"
             "stored level is reconciled with the sum of effective 13F holdings.",
-            (Flag("--dataset", "short_ladder (default) or long_ladder", metavar="<name>"),),
+            (Flag("--dataset", "short_ladder (default), long_ladder or holdings_inputs", metavar="<name>"),),
         ),
     )
 }
@@ -74,7 +76,7 @@ def command_help(name: str) -> str:
 def top_help() -> str:
     return "\n".join(
         [
-            f"{PROG} -- derived point-in-time positioning datasets (short and long ladders)",
+            f"{PROG} -- derived point-in-time positioning datasets (ladders, holdings inputs)",
             "",
             f"Usage:  {PROG} <command> [flags]      (bare `{PROG}` == `{PROG} status`)",
             "",

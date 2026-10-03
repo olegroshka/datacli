@@ -240,7 +240,7 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
         "read-only quality checks over the stored FINRA days",
     ),
     ("positioning", "build"): (
-        "positioning build [--dataset short_ladder|long_ladder] --run",
+        "positioning build [--dataset short_ladder|long_ladder|holdings_inputs] --run",
         "rebuild a derived ladder from local short interest or 13F holdings and prices (offline)",
     ),
     ("positioning", "status"): (
@@ -248,7 +248,7 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
         "read-only status of the derived positioning datasets",
     ),
     ("positioning", "qc"): (
-        "positioning qc [--dataset short_ladder|long_ladder]",
+        "positioning qc [--dataset short_ladder|long_ladder|holdings_inputs]",
         "read-only quality checks over a stored ladder",
     ),
     ("sec", "fetch"): (

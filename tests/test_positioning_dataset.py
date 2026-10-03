@@ -234,14 +234,16 @@ def test_long_ladder_build_qc_views_and_restatement(tmp_path: Path) -> None:
     ).fetchone()
     assert log_profit == pytest.approx(__import__("math").log(1 + profit))
     assert con.execute(f"SELECT count(*) FROM {views.LONG_STATE_VIEW}").fetchone()[0] == len(QUARTERS)
-    assert views.LONG_VIEW in views.schema_snippet() and views.LONG_VIEW not in views.schema_snippet(long_ladder=False)
+    assert views.LONG_VIEW in views.schema_snippet()
+    assert f"- {views.LONG_VIEW}(" not in views.schema_snippet(long_ladder=False)
+    assert registered[views.INPUTS_VIEW] is False
     # a late-arriving amendment inside the window restates that period and the ones after
     con.execute("CREATE OR REPLACE VIEW _rows2 AS SELECT * FROM _rows")
     con.execute(
         "CREATE OR REPLACE VIEW sec_13f_holdings AS "
         "SELECT r.*, s.cik, s.filing_date, s.period, s.submission_type, c.is_amendment, c.amendment_type "
         "FROM (SELECT accession_number, cusip, CASE WHEN cusip = 'CUS000000' THEN shares + 1 ELSE shares END AS shares, "
-        "share_type, put_call FROM _rows) r JOIN _subs s USING (accession_number) JOIN _covers c USING (accession_number)"
+        "value_usd, share_type, put_call FROM _rows) r JOIN _subs s USING (accession_number) JOIN _covers c USING (accession_number)"
     )
     plan = dataset.build(con, tmp_path, run=False, dataset=spec)
     assert not plan.new and plan.restated and plan.restated[0] == QUARTERS[0]
@@ -264,7 +266,7 @@ def test_cli_long_ladder_dataset_flag(tmp_path: Path, monkeypatch, capsys) -> No
     capsys.readouterr()
     assert cli.main(["status", "--json"]) == 0
     payload = __import__("json").loads(capsys.readouterr().out)
-    assert [d["dataset"] for d in payload["datasets"]] == ["short_ladder", "long_ladder"]
+    assert [d["dataset"] for d in payload["datasets"]] == ["short_ladder", "long_ladder", "holdings_inputs"]
     assert payload["datasets"][1]["partitions"] == 12 and payload["datasets"][0]["present"] is False
     assert cli.main(["qc", "--dataset", "long_ladder"]) == 0
     assert "long_ladder: no findings" in capsys.readouterr().out
@@ -293,3 +295,48 @@ def test_scheduler_admits_the_dataset_flag_and_claims_the_sec_root(tmp_path: Pat
         registry.validate("positioning", "build", ["--dataset", "mid_ladder", "--run"], context)
     with pytest.raises(CommandValidationError, match="unknown positioning dataset"):
         registry.validate("positioning", "qc", ["--dataset", "x"], context)
+
+
+def test_holdings_inputs_store_views_cli_and_scheduler(tmp_path: Path, monkeypatch, capsys) -> None:
+    from scheduler.commands import ValidationContext, default_registry
+    from test_positioning_long_ladder import QUARTERS
+
+    con = duckdb.connect()
+    _long_source(con)
+    spec = dataset.HOLDINGS_INPUTS
+    report = dataset.build(con, tmp_path, run=True, dataset="holdings_inputs")
+    assert report.partitions == len(QUARTERS) and report.symbols == 50 and report.stats["periods"] == 12
+    assert dataset.build(con, tmp_path, run=True, dataset=spec).unchanged == len(QUARTERS)
+    assert dataset.qc(tmp_path, con, spec) == [] and dataset.qc(tmp_path, None, spec) == []
+    registered = views.register(con, root=tmp_path)
+    assert registered[views.INPUTS_VIEW] is True
+    n, sums = con.execute(
+        f"SELECT count(*), count(DISTINCT round(s, 9)) FROM (SELECT sum(best_ideas) s FROM {views.INPUTS_VIEW} GROUP BY aggregate, period)"
+    ).fetchone()
+    assert n == 2 * len(QUARTERS) and sums == 1
+    assert con.execute(f"SELECT count(*) FROM {views.INPUTS_STATE_VIEW}").fetchone()[0] == len(QUARTERS)
+    assert f"- {views.INPUTS_VIEW}(" in views.schema_snippet()
+    assert f"- {views.INPUTS_VIEW}(" not in views.schema_snippet(holdings_inputs=False)
+    # a tampered partition fails the dataset's own checks
+    frame = dataset.store(tmp_path, spec).read_day(QUARTERS[0])
+    tampered = frame.copy()
+    tampered.loc[tampered.index[0], "best_ideas"] += 0.5
+    dataset.store(tmp_path, spec).write_day(QUARTERS[0], tampered)
+    assert {f.check for f in dataset.qc(tmp_path, None, spec)} == {"best_ideas_not_normalised"}
+    dataset.store(tmp_path, spec).write_day(QUARTERS[0], frame)
+
+    monkeypatch.setenv(ENV_ROOT, str(tmp_path))
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("DATACLI_LOCKS_HELD", "1")
+    monkeypatch.setattr(cli, "_connect", lambda: con)
+    assert cli.main(["build", "--dataset", "holdings_inputs", "--run"]) == 0
+    assert "holdings_inputs built" in capsys.readouterr().out
+    assert cli.main(["qc", "--dataset", "holdings_inputs"]) == 0
+    assert "holdings_inputs: no findings" in capsys.readouterr().out
+
+    data = tmp_path / "data"
+    data.mkdir()
+    config = tmp_path / "datacli.toml"
+    config.write_text(f'[eodhd]\ndata_root = "{data.as_posix()}"\n', encoding="utf-8")
+    context = ValidationContext.current(_REPO_ROOT, Path(sys.executable), config, environment={})
+    assert default_registry().validate("positioning", "build", ["--dataset", "holdings_inputs", "--run"], context).spec.resources
