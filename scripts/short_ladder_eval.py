@@ -34,6 +34,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=None, help="write the report here (markdown)")
     parser.add_argument("--max-seed-share", type=float, default=0.5)
+    parser.add_argument(
+        "--price-quality",
+        action="store_true",
+        help="drop rows whose positioning_factors.price_quality_flag is set (DD-002 WP14)",
+    )
     args = parser.parse_args()
 
     import explore_eodhd
@@ -45,6 +50,10 @@ def main() -> int:
     usable = panel[(panel["seed_share"] < args.max_seed_share)]
     usable = usable[usable["entry_date"].notna()]
     print(f"after seed and entry filters: rows {len(usable):,} symbols {usable['symbol'].nunique():,}")
+    if args.price_quality:
+        flagged = usable["price_quality_flag"].fillna(False).astype(bool)
+        usable = usable[~flagged]
+        print(f"after the price-quality flag: rows {len(usable):,} symbols {usable['symbol'].nunique():,} ({int(flagged.sum()):,} dropped)")
     frame = ev.add_features(usable)
     by_lane = frame.groupby("lane").agg(
         rows=("symbol", "size"),

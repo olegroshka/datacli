@@ -25,7 +25,7 @@ import pandas as pd
 import pyarrow as pa
 
 from finra.store import STATUS_OK, DayState, DayStore
-from positioning import holdings, long_ladder, short_ladder
+from positioning import factors, holdings, long_ladder, short_ladder
 
 SOURCE = "derived"
 
@@ -95,7 +95,7 @@ SHORT_LADDER = Spec(
     source_latest=_si_latest,
     build_hint="positioning build --run",
     source_hint="short interest",
-    checks=lambda frame, con: _ladder_checks(frame, SHORT_LADDER),
+    checks=lambda frame, con: _ladder_checks(frame, SHORT_LADDER) + (_price_quality(frame, con, "eodhd_code") if con is not None else []),
 )
 LONG_LADDER = Spec(
     name=long_ladder.NAME,
@@ -294,6 +294,29 @@ def qc(root: Path, con: Any | None = None, dataset: str | Spec = SHORT_LADDER) -
                 )
             )
     return findings
+
+
+def _price_quality(frame: pd.DataFrame, con: Any, column: str) -> list[Finding]:
+    """Symbols in the ladder whose vendor bars fail the quality rules (DD-002 WP14): a warning, the rows stay."""
+    try:
+        bad = factors.bad_symbols(con, lanes=short_ladder.PRICE_LANES)
+    except Exception as exc:
+        return [Finding("warn", "price_quality_skipped", f"could not scan the vendor bars: {exc}")]
+    if bad.empty:
+        return []
+    present = bad[bad["ticker"].isin(set(frame[column]))]
+    if present.empty:
+        return []
+    sample = ", ".join(present["ticker"].head(8))
+    return [
+        Finding(
+            "warn",
+            "price_quality",
+            f"{len(present)} symbols in the ladder have vendor bars that fail the quality rules "
+            f"({int(present['bad_bars'].sum())} bad bars, {int(present['wild_returns'].sum())} one-day moves above "
+            f"{int(factors.MAX_ABS_RETURN * 100)} percent); filter positioning_factors.price_quality_flag; e.g. {sample}",
+        )
+    ]
 
 
 def _ladder_checks(frame: pd.DataFrame, spec: Spec) -> list[Finding]:

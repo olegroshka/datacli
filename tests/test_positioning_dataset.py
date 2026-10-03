@@ -340,3 +340,38 @@ def test_holdings_inputs_store_views_cli_and_scheduler(tmp_path: Path, monkeypat
     config.write_text(f'[eodhd]\ndata_root = "{data.as_posix()}"\n', encoding="utf-8")
     context = ValidationContext.current(_REPO_ROOT, Path(sys.executable), config, environment={})
     assert default_registry().validate("positioning", "build", ["--dataset", "holdings_inputs", "--run"], context).spec.resources
+
+
+def test_a_renamed_symbol_is_priced_from_its_successor(tmp_path: Path) -> None:
+    """DD-002 WP13: reports under the old spelling, prices under the new one, joined by CUSIP."""
+    from positioning import master, short_ladder
+
+    con = duckdb.connect()
+    reports = _reports()
+    old = reports[reports.eodhd_code == "AAA"].copy()
+    old["eodhd_code"] = "OLD"  # a symbol the vendor never priced under this spelling
+    _source(con, pd.concat([reports, old]), split=False)
+    con.register(
+        "_ftd",
+        pd.DataFrame(
+            {
+                "settlement_date": [date(2023, 1, 3), date(2023, 12, 1), date(2024, 1, 3), date(2024, 6, 3)],
+                "cusip": ["111", "111", "111", "111"],
+                "symbol": ["OLD", "OLD", "AAA", "AAA"],
+                "eodhd_code": ["OLD", "OLD", "AAA", "AAA"],
+                "description": ["CO", "CO", "CO NEW", "CO NEW"],
+            }
+        ),
+    )
+    con.execute("CREATE VIEW finra_fails_to_deliver AS SELECT * FROM _ftd")
+    assert master.register(con) is True and master.aliases(con) == {"OLD": "AAA"}
+    frame = short_ladder.compute(con)
+    assert set(frame["eodhd_code"]) == {"AAA", "BBB", "OLD"}
+    old_rows = frame[frame.eodhd_code == "OLD"].sort_values("settlement_date")
+    aaa_rows = frame[frame.eodhd_code == "AAA"].sort_values("settlement_date")
+    assert (old_rows["priced_as"] == "AAA").all() and (aaa_rows["priced_as"] == "AAA").all()
+    assert old_rows["cost_basis"].tolist() == pytest.approx(aaa_rows["cost_basis"].tolist())
+    assert (old_rows["lane"] == "us_common").all()
+    # without the alias view the old spelling has no prices and is left out
+    con.execute(f"DROP VIEW {master.ALIAS_VIEW}")
+    assert set(short_ladder.compute(con)["eodhd_code"]) == {"AAA", "BBB"}

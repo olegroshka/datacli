@@ -9,6 +9,12 @@ The vendor's splits table mixes share splits with price adjustments for
 spin-offs and mergers (KB-003). Prices use every entry, so the basis price is
 continuous across all of them; quantities use only the entries the short
 interest reports themselves confirm (``confirm_quantity_splits``).
+
+A symbol without prices of its own but with a successor in
+``positioning_symbol_alias`` (a rename: the vendor keeps the history under
+the new ticker, DD-002 WP13) is priced from the successor's closes and
+splits; ``eodhd_code`` stays the reported spelling and ``priced_as`` names
+the successor.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from typing import Any, Sequence
 
 import pandas as pd
 
+from positioning import master
 from positioning.basis import PricePath, SplitFactor, dedupe_splits
 from positioning.ladder import DEFAULT_MAX_GAP, SHORT, Observation, run_ladder
 
@@ -174,7 +181,11 @@ def compute(
     if reports.empty:
         return pd.DataFrame()
     first = reports["settlement_date"].min()
-    con.register("_ladder_si_codes", reports[["eodhd_code"]].drop_duplicates())
+    alias_of = master.aliases(con)
+    wanted = pd.concat(
+        [reports[["eodhd_code"]].drop_duplicates(), pd.DataFrame({"eodhd_code": list(alias_of.values())})]
+    ).drop_duplicates()
+    con.register("_ladder_si_codes", wanted)
     closes = con.execute(f"""
         SELECT ticker, lane, CAST(date AS DATE) AS date, close
         FROM prices
@@ -195,11 +206,15 @@ def compute(
     splits_by = {k: g for k, g in splits.groupby("ticker", sort=False)}
     out: list[dict[str, Any]] = []
     for code, group in reports.groupby("eodhd_code", sort=False):
+        priced_as = code
         px = closes_by.get(code)
+        if px is None and code in alias_of:
+            priced_as = alias_of[code]
+            px = closes_by.get(priced_as)
         if px is None:
             continue
         lane = str(px["lane"].iloc[0])
-        sp = splits_by.get(code)
+        sp = splits_by.get(priced_as)
         events = dedupe_splits(
             [] if sp is None else zip(_dates(sp["ex_date"]), sp["split_ratio"])
         )
@@ -225,6 +240,7 @@ def compute(
             record["settlement_date"] = record.pop("obs_date")
             record["published_at"] = published[row.obs_date]
             record["lane"] = lane
+            record["priced_as"] = priced_as
             record["quantity_factor"] = quantity_factor.at(row.obs_date)
             record["price_factor"] = price_factor.at(row.obs_date)
             out.append(record)

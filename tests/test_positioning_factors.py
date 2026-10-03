@@ -171,3 +171,48 @@ def test_cusip_map_groups_pairs_with_their_dates() -> None:
         ("222", "OLD", date(2021, 5, 4), date(2021, 5, 4), 1),
     ]
     assert master.VIEW in master.schema_snippet()
+    # the rename: OLD's CUSIP 111 lives on under NEW, which starts after OLD's last sighting;
+    # OLD's reuse under CUSIP 222 is a different issuer and creates no alias
+    assert master.aliases(con) == {"OLD": "NEW"}
+    assert con.execute(f"SELECT code, alias, cusip FROM {master.ALIAS_VIEW}").fetchall() == [("OLD", "NEW", "111")]
+    assert master.ALIAS_VIEW in master.schema_snippet()
+    assert master.aliases(duckdb.connect()) == {}
+
+
+def test_price_quality_flag_marks_bad_bars_and_the_year_after_them() -> None:
+    """DD-002 WP14: a vendor tick taints the day and every trailing window that contains it."""
+    con = duckdb.connect()
+    frame = _prices(con)
+    frame["open"] = frame["close"]
+    frame["high"] = frame["close"] * 1.01
+    frame["low"] = frame["close"] * 0.99
+    bad_day, spike_day, ohlc_day = DAYS[300], DAYS[320], DAYS[340]
+    frame.loc[(frame.ticker == "T1") & (frame.date == bad_day.isoformat()), ["close", "adjusted_close"]] = 0.0
+    spike = (frame.ticker == "T2") & (frame.date == spike_day.isoformat())
+    frame.loc[spike, ["open", "high", "low", "close", "adjusted_close"]] *= 150  # a clean bar, 150 times too high
+    frame.loc[(frame.ticker == "T4") & (frame.date == ohlc_day.isoformat()), "high"] = 1.0  # below the close
+    con.unregister("_px")
+    con.register("_px", frame)
+    con.execute("CREATE OR REPLACE VIEW prices AS SELECT * FROM _px")  # the view binds its columns at creation
+    assert factors.register(con) is True
+    flagged = con.execute(
+        f"SELECT ticker, min(date), max(date), count(*) FROM {factors.VIEW} WHERE price_quality_flag GROUP BY ticker ORDER BY ticker"
+    ).fetchall()
+    by = {t: (first, last, n) for t, first, last, n in flagged}
+    assert set(by) == {"T1", "T2", "T4"}
+    # the zero close is dropped from the return path, so the day after it is the first flagged row
+    assert by["T1"][0] == DAYS[301] and by["T1"][1] == DAYS[-1]
+    assert by["T2"][0] == spike_day and by["T2"][1] == DAYS[-1]  # the spike, then a year of taint
+    assert by["T4"][0] == ohlc_day and by["T4"][1] == DAYS[-1]
+    assert con.execute(
+        f"SELECT count(*) FROM {factors.VIEW} WHERE ticker = 'T1' AND date < DATE '{DAYS[300]}' AND price_quality_flag"
+    ).fetchone()[0] == 0
+    assert con.execute(f"SELECT bool_or(price_quality_flag) FROM {factors.VIEW} WHERE ticker = 'T0'").fetchone()[0] is False
+    bad = factors.bad_symbols(con)
+    assert bad["ticker"].tolist() == ["T1", "T2", "T4"]
+    rows = {r.ticker: r for r in bad.itertuples(index=False)}
+    assert rows["T1"].bad_bars == 1 and rows["T1"].wild_returns == 0
+    assert rows["T2"].bad_bars == 0 and rows["T2"].wild_returns == 1  # up 150x; the 99 percent fall is under the bar
+    assert rows["T4"].bad_bars == 1 and pd.Timestamp(rows["T4"].first_bad).date() == ohlc_day
+    assert factors.bad_symbols(duckdb.connect()).empty
+    assert "price_quality_flag" in factors.schema_snippet()

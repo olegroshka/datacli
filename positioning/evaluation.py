@@ -282,6 +282,7 @@ def load_panel(con: Any, *, horizons: Sequence[int] = HORIZONS) -> pd.DataFrame:
     )
     SELECT l.*, e.entry_date, {exits},
            f.reversal_21d, f.momentum_12_1, f.short_interest_ratio AS level,
+           coalesce(f.price_quality_flag, false) AS price_quality_flag,
            si.days_to_cover AS level_dtc
     FROM ladder l
     LEFT JOIN finra_short_interest si
