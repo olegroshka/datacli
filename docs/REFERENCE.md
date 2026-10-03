@@ -329,8 +329,10 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   `sec_13f_coverpage`. The archives are large: always filter. `sec fetch --dataset
   adv --run` adds the monthly Form ADV adviser reports (`sec_adv_advisers`: CRD,
   names, regulatory assets, whether the adviser runs hedge funds) and
-  `sec_13f_manager_cohort`, each 13F filing joined by CRD to the latest ADV
-  snapshot dated before its filing date.
+  `sec_13f_manager_cohort`, each 13F filing joined to the latest ADV snapshot
+  dated before its filing date, by the cover page's CRD (filings from 2023) or,
+  through `sec_13f_manager_match`, by the ADV adviser's CIK or a unique
+  normalised name (`match_kind` says which; ambiguous names match nothing).
 - **CUSIP map (derived)** — `positioning_cusip_map` gives dated `(cusip, eodhd_code)` pairs
   from the fails-to-deliver files, the bridge from `sec_13f_holdings.cusip` to `prices`.
 - **Short ladder (derived)** — `positioning build --run` runs a FIFO lot ladder over
