@@ -40,12 +40,19 @@ def test_select_universe_keeps_sterling_common_stocks_and_register_names_of_any_
     assert plain["Code"].tolist() == ["YYY", "ZZZ"] and not plain["in_register"].any()
 
 
-def test_lane_is_registered_like_the_extended_lane() -> None:
-    lane = reg.LANES["uk_domestic"]
-    assert lane.universe_fetcher == "fetch_eodhd_uk_universe.py"
-    assert lane.universe_path is not None and lane.universe_path.name == "tickers_UK.parquet"
-    assert [d.kind for d in lane.datasets] == ["prices"]
-    assert lane.default_exchange == "LSE" and lane.universe_code_column == "Code"
+def test_lanes_are_registered_like_the_extended_lane() -> None:
+    for name, fetcher, tickers, exchange in (
+        ("uk_domestic", "fetch_eodhd_uk_universe.py", "tickers_UK.parquet", "LSE"),
+        ("fr_domestic", "fetch_eodhd_fr_universe.py", "tickers_FR.parquet", "PA"),
+    ):
+        lane = reg.LANES[name]
+        assert lane.universe_fetcher == fetcher
+        assert lane.universe_path is not None and lane.universe_path.name == tickers
+        assert [d.kind for d in lane.datasets] == ["prices"]
+        assert lane.default_exchange == exchange and lane.universe_code_column == "Code"
+    import fetch_eodhd_fr_universe as fr
+
+    assert fr.SPEC.market == "fr" and fr.SPEC.currencies == frozenset({"EUR"})
 
 
 def test_wrapper_points_the_shared_fetcher_at_this_lane_and_filters_targets(tmp_path: Path, monkeypatch) -> None:
@@ -63,9 +70,9 @@ def test_wrapper_points_the_shared_fetcher_at_this_lane_and_filters_targets(tmp_
 
     frame = pd.DataFrame({"Code": ["BA", "DEAD", "OTHER"], "delisted": [False, True, False], "in_register": [True, True, False]})
     frame.to_parquet(tmp_path / "u.parquet")
-    monkeypatch.setattr(prices, "TICKERS_PATH", tmp_path / "u.parquet")
-    monkeypatch.setattr(prices, "INCLUDE_DELISTED", False)
-    monkeypatch.setattr(prices, "REGISTER_ONLY", False)
+    monkeypatch.setattr(prices.LOADER, "tickers_path", tmp_path / "u.parquet")
+    monkeypatch.setattr(prices.LOADER, "include_delisted", False)
+    monkeypatch.setattr(prices.LOADER, "register_only", False)
     monkeypatch.setattr(sys, "argv", ["x"])
     assert prices.load_target_tickers(explicit_specs=[]) == [("BA", "LSE"), ("OTHER", "LSE")]
     monkeypatch.setattr(sys, "argv", ["x", "--include-delisted", "--register-only", "--from", "2012-01-01"])

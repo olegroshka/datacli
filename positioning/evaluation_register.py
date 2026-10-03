@@ -39,6 +39,8 @@ MIN_HISTORY_DAYS = 63
 FLOW_WINDOW = 21
 #: The UK register's last position date (the FCA publishes aggregates since).
 SAMPLE_END = date(2026, 7, 9)
+#: Per market: the UK sample is frozen; a live register (France) runs to its latest return.
+SAMPLE_ENDS: dict[str, date | None] = {"uk": SAMPLE_END, "fr": None}
 FACTOR_SETS = {
     "none": (),
     "factors": ("reversal_21d", "momentum_12_1"),
@@ -92,13 +94,18 @@ def observations(
     frame: pd.DataFrame,
     *,
     horizons: Sequence[int] = HORIZONS,
-    sample_end: date = SAMPLE_END,
+    sample_end: date | None = SAMPLE_END,
     min_holders: int = MIN_HOLDERS,
 ) -> pd.DataFrame:
-    """Weekly rows with a visible holder and an adjusted close, market-adjusted returns added."""
+    """Weekly rows with a visible holder and an adjusted close, market-adjusted returns added.
+
+    ``sample_end`` cuts a frozen register (the UK); ``None`` keeps every week.
+    """
     ends = week_ends(pd.DatetimeIndex(frame["date"].unique()))
     rows = frame[frame["date"].isin(ends) & (frame["n_holders"] >= min_holders) & frame["adjusted_close"].notna()]
-    rows = rows[rows["date"] <= pd.Timestamp(sample_end)].copy()
+    if sample_end is not None:
+        rows = rows[rows["date"] <= pd.Timestamp(sample_end)]
+    rows = rows.copy()
     for h in horizons:
         rows[f"ret_adj_{h}"] = rows[f"ret_{h}"] - rows.groupby("date")[f"ret_{h}"].transform("median")
     return rows
@@ -143,6 +150,7 @@ def run_family(
     features: Sequence[str] = FEATURES,
     cleanings: Sequence[str] = CLEANINGS,
     family_size: int | None = None,
+    min_names: int = MIN_NAMES,
 ) -> list[ev.TestResult]:
     size = family_size or len(features) * len(cleanings) * len(horizons)
     results: list[ev.TestResult] = []
@@ -151,10 +159,10 @@ def run_family(
             factors = tuple(f for f in FACTOR_SETS[cleaning] if f != feature)
             column = feature
             if factors:
-                column = f"_{feature}_{cleaning}"
-                frame[column] = residualise(frame, feature, factors)
+                column = f"_{feature}_{cleaning}_{min_names}"
+                frame[column] = residualise(frame, feature, factors, min_names=min_names)
             for horizon in horizons:
-                ics = daily_ic(frame, column, f"ret_adj_{horizon}")
+                ics = daily_ic(frame, column, f"ret_adj_{horizon}", min_names=min_names)
                 mean, t = ev.newey_west_t(ics, lag=nw_lag(horizon))
                 results.append(
                     ev.TestResult(

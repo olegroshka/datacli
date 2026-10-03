@@ -44,7 +44,7 @@ def main() -> int:
     funds = pd.read_parquet(directory / "funds.parquet")
     panel["date"] = pd.to_datetime(panel["date"])
     frame = er.add_features(panel)
-    obs = er.observations(frame)
+    obs = er.observations(frame, sample_end=er.SAMPLE_ENDS.get(args.market, None))
     print(f"panel {len(panel):,} issuer-days, {panel['isin'].nunique():,} issuers; observations {len(obs):,} over {obs['date'].nunique()} weeks "
           f"{obs['date'].min().date()} to {obs['date'].max().date()} ({time.time() - t0:.0f}s)")
     coverage = pd.DataFrame({
@@ -59,7 +59,10 @@ def main() -> int:
     pd.set_option("display.width", 220)
     pd.set_option("display.max_rows", 200)
     sections: list[tuple[str, str]] = []
-    for label, kwargs in (("pre-registered family", {}), ("post-hoc extension: six-month momentum in the cleaning", {"cleanings": er.EXTENDED_CLEANINGS})):
+    runs = [("pre-registered family", {}), ("post-hoc extension: six-month momentum in the cleaning", {"cleanings": er.EXTENDED_CLEANINGS})]
+    if int(obs.groupby("date").size().median()) < er.MIN_NAMES:
+        runs.append((f"post-hoc extension: dates with at least {er.MIN_NAMES // 2} names (the cross-section is thin)", {"min_names": er.MIN_NAMES // 2}))
+    for label, kwargs in runs:
         results = er.run_family(obs, **kwargs)
         table = ev.results_table(results)
         table["p"] = table["p"].map(lambda v: f"{v:.2e}")

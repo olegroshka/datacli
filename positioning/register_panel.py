@@ -22,7 +22,7 @@ from positioning import register_ladder as rl
 
 SUBDIR = Path("registers")
 #: Which EODHD lane prices each market, and the universe parquet that maps ISIN to code.
-MARKET_LANES: dict[str, tuple[str, str]] = {"uk": ("uk_domestic", "tickers_UK.parquet")}
+MARKET_LANES: dict[str, tuple[str, str]] = {"uk": ("uk_domestic", "tickers_UK.parquet"), "fr": ("fr_domestic", "tickers_FR.parquet")}
 MIN_CLOSE = 0.0001
 MAX_CLOSE = 999999.0
 

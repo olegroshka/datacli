@@ -446,6 +446,15 @@ LANES: dict[str, LaneConfig] = {
         universe_fetcher="fetch_eodhd_uk_universe.py",
         default_exchange="LSE",
     ),
+    "fr_domestic": _lane(
+        "fr_domestic",
+        "FR",
+        "common_ext",
+        "tickers_FR.parquet",
+        [prices_spec("fetch_eodhd_fr_prices.py")],
+        universe_fetcher="fetch_eodhd_fr_universe.py",
+        default_exchange="PA",
+    ),
     "index_ref": _lane(
         "index_ref",
         "US",

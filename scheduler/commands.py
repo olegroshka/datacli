@@ -107,6 +107,7 @@ EODHD_LANES = {
     "us_etf",
     "us_extended",
     "uk_domestic",
+    "fr_domestic",
     "index_ref",
     "uk_eu_etf",
     "uk_eu_index_ref",
