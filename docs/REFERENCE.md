@@ -353,6 +353,14 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   file_date)`: one row per published position change, percent of the share capital, `0.0`
   where a position fell below the 0.5 percent threshold; a reader on day `d` uses
   `published_from <= d`; a holder's row stands until the holder's next row for the ISIN.
+- **Register ladders (derived, by hand)** — `scripts/register_panel.py --market uk` runs the
+  FIFO kernel per holder and ISIN on the register's percent of share capital (lots priced at
+  the close on the position date) and writes `<positioning root>/registers/<market>/funds.parquet`
+  (one row per visible register row with its ladder state) and `issuers.parquet` (the daily
+  point-in-time issuer panel: visible holders, summed percent, flow, entries, exits, the
+  percent-weighted FIFO age and short profit, the price factors). `scripts/register_eval.py`
+  runs EVAL-004 on it. Prices come from the `uk_domestic` lane
+  (`eodhd/fetch_eodhd_uk_universe.py`, `fetch_eodhd_uk_prices.py --register-only --include-delisted`).
 - **CUSIP map (derived)** — `positioning_cusip_map` gives dated `(cusip, eodhd_code)` pairs
   from the fails-to-deliver files, the bridge from `sec_13f_holdings.cusip` to `prices`.
 - **Short ladder (derived)** — `positioning build --run` runs a FIFO lot ladder over
