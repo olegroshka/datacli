@@ -103,10 +103,19 @@ def run_family(
     horizons: Sequence[int] = HORIZONS,
     features: Sequence[str] = FEATURES,
     cleanings: Sequence[str] = CLEANINGS,
+    orientation: dict[str, float] | None = None,
+    family_size: int | None = None,
 ) -> list[ev.TestResult]:
-    """Every test of the family on a prepared frame (one aggregate)."""
+    """Every test of the family on a prepared frame (one aggregate).
+
+    ``orientation`` defaults to SPEC's long-side reading; ``family_size`` to
+    the number of tests run here (EVAL-003 pools aggregates into one family
+    and passes the pooled size).
+    """
+    orientation = ORIENTATION if orientation is None else orientation
     results: list[ev.TestResult] = []
-    family_size = len(features) * len(cleanings) * len(horizons)
+    if family_size is None:
+        family_size = len(features) * len(cleanings) * len(horizons)
     factor_sets = {
         "none": (),
         "factors": ("reversal_21d", "momentum_12_1"),
@@ -133,7 +142,7 @@ def run_family(
                         mean_ic=float(mean),
                         t_stat=float(t),
                         p_value=ev.p_value(t, len(ics)),
-                        expected_sign=ORIENTATION[feature],
+                        expected_sign=orientation[feature],
                         family_size=family_size,
                     )
                 )
@@ -187,11 +196,21 @@ def load_panel(con: Any, *, horizons: Sequence[int] = HORIZONS) -> pd.DataFrame:
     return panel
 
 
-def usable(panel: pd.DataFrame, aggregate: str, *, max_seed_share: float = MAX_SEED_SHARE) -> pd.DataFrame:
-    """The pre-registered filters for one aggregate."""
+def usable(
+    panel: pd.DataFrame,
+    aggregate: str,
+    *,
+    max_seed_share: float = MAX_SEED_SHARE,
+    cohort_last_period: date | None = COHORT_LAST_PERIOD,
+) -> pd.DataFrame:
+    """The pre-registered filters for one aggregate.
+
+    EVAL-002 cuts the cohort at ``COHORT_LAST_PERIOD``; EVAL-003 passes
+    ``None`` and handles the break on the flow feature instead.
+    """
     frame = panel[panel["aggregate"] == aggregate]
     frame = frame[(frame["seed_share"] < max_seed_share) & frame["entry_date"].notna()]
     frame = frame[~frame["price_quality_flag"].fillna(False).astype(bool)]
-    if aggregate == "cohort":
-        frame = frame[frame["date"] <= pd.Timestamp(COHORT_LAST_PERIOD)]
+    if aggregate == "cohort" and cohort_last_period is not None:
+        frame = frame[frame["date"] <= pd.Timestamp(cohort_last_period)]
     return frame.copy()
