@@ -139,6 +139,9 @@ CAPABILITIES = (
     Capability("sec", "fetch", "OPTIONAL", True, True, True),
     Capability("sec", "status", "OPTIONAL", False, False),
     Capability("sec", "qc", "OPTIONAL", False, False),
+    Capability("borrow", "fetch", "OPTIONAL", True, True, True),
+    Capability("borrow", "status", "OPTIONAL", False, False),
+    Capability("borrow", "qc", "OPTIONAL", False, False),
     Capability("sync", "status", "OPTIONAL", False, False),
 )
 
@@ -629,6 +632,22 @@ class CommandRegistry:
             if argv:
                 raise CommandValidationError("sec qc takes no arguments")
             options = {}
+        elif identity == "borrow fetch":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--run"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("borrow fetch takes flags only")
+        elif identity == "borrow status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("borrow status takes flags only")
+        elif identity == "borrow qc":
+            if argv:
+                raise CommandValidationError("borrow qc takes no arguments")
+            options = {}
         elif identity in {"sync push", "sync status"}:
             allowed_boolean = {"--with-caches"}
             if identity == "sync push":
@@ -727,6 +746,17 @@ class CommandRegistry:
             claims.append(
                 ResourceClaim(
                     sec_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "borrow":
+            borrow_root, borrow_source = _sibling_root(config, "borrow", eodhd_root)
+            borrow_binding = _binding("borrow_data_root", borrow_root, borrow_source)
+            bindings.append(borrow_binding)
+            claims.append(
+                ResourceClaim(
+                    borrow_binding.resource_id,
                     "exclusive" if capability.mutation else "shared",
                 )
             )
@@ -1037,6 +1067,14 @@ class CommandRegistry:
                 str(validation.interpreter),
                 "-m",
                 "positioning.cli",
+                command.verb,
+                *command.argv,
+            ]
+        elif command.family == "borrow":
+            args = [
+                str(validation.interpreter),
+                "-m",
+                "borrow.cli",
                 command.verb,
                 *command.argv,
             ]

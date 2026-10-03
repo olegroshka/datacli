@@ -247,6 +247,13 @@ def connect() -> Any:
         sec_views.register(con)
     except Exception:
         pass
+    # ... the borrow snapshots, once fetched ...
+    try:
+        from borrow import views as borrow_views  # type: ignore[import-not-found]
+
+        borrow_views.register(con)
+    except Exception:
+        pass
     # ... and the derived positioning views (the short ladder), once built.
     try:
         from positioning import views as positioning_views  # type: ignore[import-not-found]

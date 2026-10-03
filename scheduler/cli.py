@@ -199,6 +199,9 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("sec", "fetch"): ("--run", "--full", "--limit", "--dataset"),
     ("sec", "status"): ("--json",),
     ("sec", "qc"): (),
+    ("borrow", "fetch"): ("--run",),
+    ("borrow", "status"): ("--json",),
+    ("borrow", "qc"): (),
     ("sync", "push"): ("--run", "--keep-going", "--with-caches"),
     ("sync", "status"): ("--with-caches",),
 }
@@ -258,6 +261,18 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
     ("sec", "status"): (
         "sec status [--json]",
         "read-only status of the stored SEC datasets",
+    ),
+    ("borrow", "fetch"): (
+        "borrow fetch --run",
+        "one snapshot of Interactive Brokers' shortable list from its anonymous FTP (no credentials)",
+    ),
+    ("borrow", "status"): (
+        "borrow status [--json]",
+        "read-only status of the stored borrow snapshots",
+    ),
+    ("borrow", "qc"): (
+        "borrow qc",
+        "read-only quality checks over the stored borrow snapshots",
     ),
     ("sec", "qc"): (
         "sec qc",

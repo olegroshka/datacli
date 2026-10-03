@@ -236,12 +236,34 @@ class SecPlugin(SourcePlugin):
             return int(exc.code or 0)
 
 
+class BorrowPlugin(SourcePlugin):
+    """borrow source -- a broker's shortable list, one snapshot a day."""
+
+    name = "borrow"
+    summary = "Interactive Brokers' shortable list: fee rate, rebate and shares available, daily snapshots"
+
+    def command_names(self) -> list[str]:
+        return ["status", "fetch", "qc"]
+
+    def detail(self) -> str:
+        return "1 dataset"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import borrow.cli as borrow_cli
+
+        try:
+            return int(borrow_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
 SOURCES: dict[str, SourcePlugin] = {
     "eodhd": EodhdPlugin(),
     "macro": MacroPlugin(),
     "finra": FinraPlugin(),
     "positioning": PositioningPlugin(),
     "sec": SecPlugin(),
+    "borrow": BorrowPlugin(),
 }
 
 

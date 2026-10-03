@@ -29,6 +29,7 @@ Run any command with `--help` for its full options.
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
+| `borrow status \| fetch [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
@@ -333,6 +334,15 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   dated before its filing date, by the cover page's CRD (filings from 2023) or,
   through `sec_13f_manager_match`, by the ADV adviser's CIK or a unique
   normalised name (`match_kind` says which; ambiguous names match nothing).
+- **Borrow (Interactive Brokers)** — `borrow fetch --run` downloads the broker's `usa.txt`
+  shortable list and its md5 companion from `ftp2.interactivebrokers.com` (anonymous
+  FTP, no credentials), verifies and parses it strictly, and stores it as the snapshot
+  of the file's own date under `<borrow root>/ib/snapshots/`. The file carries no
+  history, so each day's snapshot is irreplaceable and the root is a sync unit.
+  `borrow_us(snapshot_date, symbol, currency, name, con_id, isin, rebate_rate, fee_rate,
+  available, figi, eodhd_code)`: rates in percent a year (`NA` becomes NULL), masked
+  ISINs become NULL, `eodhd_code` for USD common symbols. The snapshot is taken after
+  the US close: a reader on day `d` uses `snapshot_date < d`.
 - **CUSIP map (derived)** — `positioning_cusip_map` gives dated `(cusip, eodhd_code)` pairs
   from the fails-to-deliver files, the bridge from `sec_13f_holdings.cusip` to `prices`.
 - **Short ladder (derived)** — `positioning build --run` runs a FIFO lot ladder over
@@ -549,6 +559,7 @@ datacli/
 ├─ macro/                the macro source (FRED + EODHD series, DuckDB views)
 ├─ finra/                the FINRA source (Query API client, public daily files, short volume store, views)
 ├─ sec/                  the SEC source (Form 13F data sets: listing, download, raw store, views)
+├─ borrow/               the borrow source (Interactive Brokers' shortable list: FTP fetch, strict parser, snapshots, view)
 ├─ positioning/          derived datasets (split-neutral basis, FIFO lot ladder, short and long ladder stores + views)
 ├─ llm/                  shared model layer (LiteLLM behind one interface, budget, cache, tiers)
 ├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI
