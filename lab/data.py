@@ -54,6 +54,12 @@ def connect() -> Any:
     except Exception:
         pass  # borrow is optional too
     try:
+        from registers import views as registers_views
+
+        registers_views.register(con)
+    except Exception:
+        pass  # registers is optional too
+    try:
         from positioning import views as positioning_views
 
         positioning_views.register(con)
@@ -107,6 +113,13 @@ def schema_text(con: Any) -> str:
             from borrow import views as borrow_views
 
             text += "\n\n" + borrow_views.schema_snippet()
+        except Exception:
+            pass
+    if _has_view(con, "short_register"):
+        try:
+            from registers import views as registers_views
+
+            text += "\n\n" + registers_views.schema_snippet()
         except Exception:
             pass
     has_ladder = _has_view(con, "positioning_short_ladder")

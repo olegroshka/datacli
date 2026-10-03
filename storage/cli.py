@@ -103,7 +103,7 @@ class SyncUnit:
     manifest_path: Path
 
 
-SIBLING_SOURCES = ("macro", "finra", "borrow")
+SIBLING_SOURCES = ("macro", "finra", "borrow", "registers")
 
 
 def _sibling_settings(settings: dict, name: str) -> dict:
@@ -131,6 +131,10 @@ def _sibling_root(name: str) -> Path | None:
             from borrow.config import borrow_root
 
             return borrow_root()
+        if name == "registers":
+            from registers.config import registers_root
+
+            return registers_root()
     except Exception:  # an optional source must never break the backup
         return None
     return None

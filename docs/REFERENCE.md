@@ -30,6 +30,7 @@ Run any command with `--help` for its full options.
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
 | `borrow status \| fetch [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
+| `registers status \| fetch [--market uk\|fr] [--run] \| qc` | The registers source: public net short position registers per holder (FCA workbook, history to 2026-07; AMF CSV, live), one history file per market replaced when the regulator's file changes | `python -m registers.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
@@ -343,6 +344,15 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   available, figi, eodhd_code)`: rates in percent a year (`NA` becomes NULL), masked
   ISINs become NULL, `eodhd_code` for USD common symbols. The snapshot is taken after
   the US close: a reader on day `d` uses `snapshot_date < d`.
+- **Registers (FCA, AMF)** — `registers fetch --run` downloads each market's published
+  history file (the FCA's `short-positions-daily-update.xlsx`, frozen since 2026-07-11;
+  the AMF's CSV named by the data.gouv.fr dataset API each day), parses it strictly and
+  replaces `<registers root>/<market>/history.parquet` when the file changed, keeping the
+  previous generation and refusing a file with fewer rows. `short_register(market, holder,
+  holder_lei, issuer, isin, net_short_pct, position_date, published_from, published_to,
+  file_date)`: one row per published position change, percent of the share capital, `0.0`
+  where a position fell below the 0.5 percent threshold; a reader on day `d` uses
+  `published_from <= d`; a holder's row stands until the holder's next row for the ISIN.
 - **CUSIP map (derived)** — `positioning_cusip_map` gives dated `(cusip, eodhd_code)` pairs
   from the fails-to-deliver files, the bridge from `sec_13f_holdings.cusip` to `prices`.
 - **Short ladder (derived)** — `positioning build --run` runs a FIFO lot ladder over
@@ -560,6 +570,7 @@ datacli/
 ├─ finra/                the FINRA source (Query API client, public daily files, short volume store, views)
 ├─ sec/                  the SEC source (Form 13F data sets: listing, download, raw store, views)
 ├─ borrow/               the borrow source (Interactive Brokers' shortable list: FTP fetch, strict parser, snapshots, view)
+├─ registers/            the registers source (public net short position registers: FCA, AMF; history store, view)
 ├─ positioning/          derived datasets (split-neutral basis, FIFO lot ladder, short and long ladder stores + views)
 ├─ llm/                  shared model layer (LiteLLM behind one interface, budget, cache, tiers)
 ├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI

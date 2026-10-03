@@ -142,6 +142,9 @@ CAPABILITIES = (
     Capability("borrow", "fetch", "OPTIONAL", True, True, True),
     Capability("borrow", "status", "OPTIONAL", False, False),
     Capability("borrow", "qc", "OPTIONAL", False, False),
+    Capability("registers", "fetch", "OPTIONAL", True, True, True),
+    Capability("registers", "status", "OPTIONAL", False, False),
+    Capability("registers", "qc", "OPTIONAL", False, False),
     Capability("sync", "status", "OPTIONAL", False, False),
 )
 
@@ -648,6 +651,25 @@ class CommandRegistry:
             if argv:
                 raise CommandValidationError("borrow qc takes no arguments")
             options = {}
+        elif identity == "registers fetch":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--run"}, scalar={"--market"}
+            )
+            if positionals:
+                raise CommandValidationError("registers fetch takes flags only")
+            market = options.get("--market")
+            if market is not None and market not in ("uk", "fr"):
+                raise CommandValidationError("registers fetch --market expects uk or fr")
+        elif identity == "registers status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("registers status takes flags only")
+        elif identity == "registers qc":
+            if argv:
+                raise CommandValidationError("registers qc takes no arguments")
+            options = {}
         elif identity in {"sync push", "sync status"}:
             allowed_boolean = {"--with-caches"}
             if identity == "sync push":
@@ -757,6 +779,17 @@ class CommandRegistry:
             claims.append(
                 ResourceClaim(
                     borrow_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "registers":
+            registers_root, registers_source = _sibling_root(config, "registers", eodhd_root)
+            registers_binding = _binding("registers_data_root", registers_root, registers_source)
+            bindings.append(registers_binding)
+            claims.append(
+                ResourceClaim(
+                    registers_binding.resource_id,
                     "exclusive" if capability.mutation else "shared",
                 )
             )
@@ -1075,6 +1108,14 @@ class CommandRegistry:
                 str(validation.interpreter),
                 "-m",
                 "borrow.cli",
+                command.verb,
+                *command.argv,
+            ]
+        elif command.family == "registers":
+            args = [
+                str(validation.interpreter),
+                "-m",
+                "registers.cli",
                 command.verb,
                 *command.argv,
             ]

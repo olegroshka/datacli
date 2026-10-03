@@ -254,6 +254,13 @@ def connect() -> Any:
         borrow_views.register(con)
     except Exception:
         pass
+    # ... the public short registers, once fetched ...
+    try:
+        from registers import views as registers_views  # type: ignore[import-not-found]
+
+        registers_views.register(con)
+    except Exception:
+        pass
     # ... and the derived positioning views (the short ladder), once built.
     try:
         from positioning import views as positioning_views  # type: ignore[import-not-found]

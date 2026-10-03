@@ -202,6 +202,9 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("borrow", "fetch"): ("--run",),
     ("borrow", "status"): ("--json",),
     ("borrow", "qc"): (),
+    ("registers", "fetch"): ("--run", "--market"),
+    ("registers", "status"): ("--json",),
+    ("registers", "qc"): (),
     ("sync", "push"): ("--run", "--keep-going", "--with-caches"),
     ("sync", "status"): ("--with-caches",),
 }
@@ -273,6 +276,18 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
     ("borrow", "qc"): (
         "borrow qc",
         "read-only quality checks over the stored borrow snapshots",
+    ),
+    ("registers", "fetch"): (
+        "registers fetch --run [--market uk|fr]",
+        "the public net short position registers, per holder (FCA workbook, AMF CSV), replaced when changed",
+    ),
+    ("registers", "status"): (
+        "registers status [--json]",
+        "read-only status of the stored register histories",
+    ),
+    ("registers", "qc"): (
+        "registers qc",
+        "read-only quality checks over the stored register histories",
     ),
     ("sec", "qc"): (
         "sec qc",

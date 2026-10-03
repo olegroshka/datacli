@@ -257,6 +257,27 @@ class BorrowPlugin(SourcePlugin):
             return int(exc.code or 0)
 
 
+class RegistersPlugin(SourcePlugin):
+    """registers source -- public net short position registers, per holder."""
+
+    name = "registers"
+    summary = "Public net short position registers, per holder: FCA (UK, history to 2026-07), AMF (France, live)"
+
+    def command_names(self) -> list[str]:
+        return ["status", "fetch", "qc"]
+
+    def detail(self) -> str:
+        return "2 markets"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import registers.cli as registers_cli
+
+        try:
+            return int(registers_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
 SOURCES: dict[str, SourcePlugin] = {
     "eodhd": EodhdPlugin(),
     "macro": MacroPlugin(),
@@ -264,6 +285,7 @@ SOURCES: dict[str, SourcePlugin] = {
     "positioning": PositioningPlugin(),
     "sec": SecPlugin(),
     "borrow": BorrowPlugin(),
+    "registers": RegistersPlugin(),
 }
 
 
