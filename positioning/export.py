@@ -210,7 +210,14 @@ def export(
 #   reversal, momentum and size), carried forward from the day after each
 #   period's ``published_at``, and the per-period size tercile of the
 #   evaluation universe (0 = smallest third), for the long-ladder symbols that
-#   clear the liquidity bar.
+#   clear the liquidity bar. The residuals are taken on the whole evaluation
+#   universe (EVAL-003's cleaning), the **ranks within the exported symbols**
+#   (so that both books of a liquid portfolio are populated: the liquid names
+#   sit in the upper part of the whole universe's ranks), and
+#   ``long_size_tercile_liquid.parquet`` is the tercile within the exported
+#   symbols, the investable reading of EVAL-003's "smallest third" (only a few
+#   percent of the liquid names fall in the evaluation universe's own smallest
+#   third).
 # - ``borrow_rates.parquet``: the latest Interactive Brokers snapshot (WP6),
 #   ``ticker`` and ``fee_rate`` as a fraction a year, for the overlay in
 #   ``positioning.btest_results`` (btest charges one flat rate).
@@ -220,6 +227,7 @@ LONG_PRICES_FILE = "prices_daily_long.parquet"
 LONG_FLOW_FILE = "long_flow_cohort.parquet"
 LONG_LEVEL_FILE = "long_level_cohort.parquet"
 LONG_TERCILE_FILE = "long_size_tercile.parquet"
+LONG_TERCILE_LIQUID_FILE = "long_size_tercile_liquid.parquet"
 BORROW_FILE = "borrow_rates.parquet"
 LONG_AGGREGATE = "cohort"
 
@@ -296,10 +304,11 @@ def short_size_observations(con: Any, symbols: Sequence[str]) -> pd.DataFrame:
 
 
 def long_observations(con: Any, symbols: Sequence[str], *, aggregate: str = LONG_AGGREGATE) -> pd.DataFrame:
-    """EVAL-003's prepared frame for one aggregate: the two headline residuals as demeaned ranks, the size tercile.
+    """EVAL-003's prepared frame for one aggregate: the two headline residuals as demeaned ranks, the size terciles.
 
-    The residuals, ranks and terciles are taken on the whole evaluation
-    universe (as in EVAL-003), then the rows are restricted to ``symbols``.
+    The residuals and ``size_tercile`` are taken on the whole evaluation
+    universe (as in EVAL-003); the ranks and ``size_tercile_liquid`` within
+    the rows restricted to ``symbols``.
     """
     from positioning import evaluation_long as evl
     from positioning import evaluation_ownership as evo
@@ -307,11 +316,12 @@ def long_observations(con: Any, symbols: Sequence[str], *, aggregate: str = LONG
     frame = evo.prepare(evl.load_panel(con), aggregate)
     frame["flow_r"] = ev.residualise(frame, "flow", ("reversal_21d", "momentum_12_1", "level", "log_mcap"))
     frame["level_r"] = ev.residualise(frame, "level", ("reversal_21d", "momentum_12_1", "log_mcap"))
+    frame["size_tercile"] = evo.size_tercile(frame)
+    frame = frame[frame["eodhd_code"].isin(set(symbols))].copy()
     frame["flow_resid"] = demeaned_rank(frame, "flow_r")
     frame["level_resid"] = demeaned_rank(frame, "level_r")
-    frame["size_tercile"] = evo.size_tercile(frame)
-    frame = frame[frame["eodhd_code"].isin(set(symbols))]
-    out = frame[["eodhd_code", "published_at", "flow_resid", "level_resid", "size_tercile"]].rename(columns={"eodhd_code": "symbol"})
+    frame["size_tercile_liquid"] = evo.size_tercile(frame)
+    out = frame[["eodhd_code", "published_at", "flow_resid", "level_resid", "size_tercile", "size_tercile_liquid"]].rename(columns={"eodhd_code": "symbol"})
     out["published_at"] = pd.to_datetime(out["published_at"])
     return out
 
@@ -354,6 +364,7 @@ def export_second(
     write_pair(flow, directory, LONG_FLOW_FILE)
     write_pair(carry_forward_wide(long_obs, value="level_resid", dates=long_dates), directory, LONG_LEVEL_FILE)
     carry_forward_wide(long_obs, value="size_tercile", dates=long_dates).to_parquet(directory / LONG_TERCILE_FILE)
+    carry_forward_wide(long_obs, value="size_tercile_liquid", dates=long_dates).to_parquet(directory / LONG_TERCILE_LIQUID_FILE)
 
     borrow = pd.DataFrame(columns=["snapshot_date", "ticker", "fee_rate"])
     if with_borrow:
