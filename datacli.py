@@ -194,10 +194,54 @@ class FinraPlugin(SourcePlugin):
             return int(exc.code or 0)
 
 
+class PositioningPlugin(SourcePlugin):
+    """positioning source -- datasets derived from the other sources (short ladder)."""
+
+    name = "positioning"
+    summary = "Derived positioning datasets: FIFO lot ladder over FINRA short interest"
+
+    def command_names(self) -> list[str]:
+        return ["status", "build", "qc"]
+
+    def detail(self) -> str:
+        return "1 dataset"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import positioning.cli as positioning_cli
+
+        try:
+            return int(positioning_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
+class SecPlugin(SourcePlugin):
+    """sec source -- SEC bulk datasets (Form 13F institutional holdings)."""
+
+    name = "sec"
+    summary = "SEC Form 13F data sets: institutional managers' quarterly holdings"
+
+    def command_names(self) -> list[str]:
+        return ["status", "fetch", "units", "qc"]
+
+    def detail(self) -> str:
+        return "1 dataset"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import sec.cli as sec_cli
+
+        try:
+            return int(sec_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
 SOURCES: dict[str, SourcePlugin] = {
     "eodhd": EodhdPlugin(),
     "macro": MacroPlugin(),
     "finra": FinraPlugin(),
+    "positioning": PositioningPlugin(),
+    "sec": SecPlugin(),
 }
 
 
@@ -400,6 +444,25 @@ class DataCli(cmd2.Cmd):
         import finra.cli as finra_cli
 
         finra_cli.main(self._argv(statement))
+
+    def do_sec(self, statement: object) -> None:
+        """Shortcut to the SEC source:  sec status | fetch [--limit N] [--run] | qc
+
+        `sec` is a first-class source (see `sources`); this saves a `source sec`.
+        """
+        import sec.cli as sec_cli
+
+        sec_cli.main(self._argv(statement))
+
+    def do_positioning(self, statement: object) -> None:
+        """Shortcut to the derived positioning datasets:  positioning status | build [--run] | qc
+
+        `positioning` is a first-class source (see `sources`); this saves a
+        `source positioning`.
+        """
+        import positioning.cli as positioning_cli
+
+        positioning_cli.main(self._argv(statement))
 
     def do_schedule(self, statement: object) -> None:
         """Manage recurring Windows jobs through one safe datacli runner.
@@ -663,6 +726,8 @@ cmd2.categorize(
         DataCli.do_score,
         DataCli.do_macro,
         DataCli.do_finra,
+        DataCli.do_positioning,
+        DataCli.do_sec,
         DataCli.do_schedule,
         DataCli.do_clear,
         DataCli.do_exit,

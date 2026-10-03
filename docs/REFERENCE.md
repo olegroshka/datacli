@@ -28,6 +28,8 @@ Run any command with `--help` for its full options.
 | `sync [status \| push --run \| login]` | One-way backup of the data root (Google Drive or local dir; dry-run unless `--run`) | `python -m storage.cli` |
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
+| `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
+| `positioning status \| build [--run] \| qc` | Derived positioning datasets: the FIFO lot ladder over FINRA short interest (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
 **Hits a provider — spends EODHD units (`$`) or needs a provider key:**
@@ -37,6 +39,7 @@ Run any command with `--help` for its full options.
 | `fetch` / `refresh [lanes] [--fast] [--run]` `$` | Download / top up data (dry-run unless `--run`) | `eodhd/cli.py refresh` |
 | `probe TICKER…` `$` | Ad-hoc availability probe; caches raw payloads under `<data-root>/probe_cache/`, never touches lane outputs | `eodhd/cli.py probe` |
 | `macro fetch [--run]` | Pull FRED (needs `FRED_API_KEY`) + EODHD macro series (`$`) | `python -m macro.cli fetch` |
+| `sec fetch [--limit N] [--full] --run` | Download the SEC's Form 13F data-set archives (public, no key, needs `SEC_USER_AGENT`; 20 to 100 MB each) | `python -m sec.cli fetch` |
 | `finra fetch [--dataset short_volume\|weekly_flow\|short_interest] [--from D] [--to D] [--limit-days N] [--run]` | Daily short sale volume from FINRA's public files (free, no key; `--transport api` uses the Query API), or the weekly ATS/OTC flow (Query API, needs credentials) | `python -m finra.cli fetch` |
 | `finra probe auth \| metadata \| partitions <dataset>` | Read-only calls against the FINRA Query API (credentials optional for public datasets) | `python -m finra.cli probe` |
 
@@ -212,7 +215,9 @@ parquet directly.
 `dividends`, `splits`, `fundamentals`, `news` (plus their `*_state` sidecars, the
 `catalog` once reindexed, `macro` / `macro_country` / `macro_market` once
 fetched, and `finra_short_volume` / `finra_weekly_flow_symbol` /
-`finra_short_interest` / `finra_fails_to_deliver` once the FINRA source is fetched).
+`finra_short_interest` / `finra_fails_to_deliver` once the FINRA source is fetched,
+`positioning_short_ladder` once `positioning build --run` has run, and
+`positioning_factors`).
 Every EODHD view
 carries a `lane` column:
 
@@ -308,6 +313,37 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   per settlement date and CUSIP (`finra_fails_to_deliver`); the SEC requires a
   declared contact in `SEC_USER_AGENT`. See `docs/FINRA_SOURCE_DESIGN.md` and
   `docs/FINRA_CUT2_PLAN.md`.
+- **13F holdings (SEC)** — `sec fetch --run` stores the SEC's Form 13F data sets as
+  published (every column a string, one parquet per archive and table) and exposes
+  `sec_13f_holdings`: one row per reported position with the filing's `filing_date`
+  (the point-in-time column), `period`, manager name and `crd_number`, `cusip`,
+  `value_usd` (the reported value in dollars: the form switched from thousands
+  to dollars for filings from 2023-01-03, and each filing is classified against
+  the other filers because some lagged; `units_evidence` says how), `shares`,
+  `put_call`. Amendments are not resolved. Plus `sec_13f_submission` and
+  `sec_13f_coverpage`. The archives are large: always filter. `sec fetch --dataset
+  adv --run` adds the monthly Form ADV adviser reports (`sec_adv_advisers`: CRD,
+  names, regulatory assets, whether the adviser runs hedge funds) and
+  `sec_13f_manager_cohort`, each 13F filing joined by CRD to the latest ADV
+  snapshot dated before its filing date.
+- **CUSIP map (derived)** — `positioning_cusip_map` gives dated `(cusip, eodhd_code)` pairs
+  from the fails-to-deliver files, the bridge from `sec_13f_holdings.cusip` to `prices`.
+- **Short ladder (derived)** — `positioning build --run` runs a FIFO lot ladder over
+  the twice-monthly short interest and writes `positioning_short_ladder`: per symbol
+  and settlement date, the short `inventory` and `flow` on a split-neutral share
+  basis, `wavg_age_days` (how long the open short has been held), `cost_basis` and
+  `profit_pct` (short sellers' unrealised return; negative = under water), with
+  `published_at` to ASOF-join on. Mask rows with `seed_share > 0.5`: the age of the
+  first observation is unknown. A rebuild replaces only changed settlement dates and
+  records a changed past date as a restatement. Contract and caveats (vendor split
+  entries that are really spin-off adjustments, survivorship in the priced universe):
+  `docs/samrt-money-flow-dataset-initiative/DD-001-ladder-contract.md`.
+- **Factor view** — `positioning_factors` gives, per US common ticker and day from
+  2018, `reversal_21d`, `momentum_12_1`, `specific_risk_63d` (annualised volatility
+  of the return in excess of the sector median) and `short_interest_ratio` (latest
+  short interest over shares outstanding published before the day). Raw values,
+  known after the close of `date`, computed on the fly: always filter by date or
+  ticker. Bad vendor ticks inflate a name's risk, so winsorise before use.
 - **Restricted Python (opt-in)** — set `[lab].allow_python` and the `quant` persona
   can run isolated Python (subprocess + timeout + no network) for stats and plots SQL
   can't express. A *trusted-local* convenience, **not** a hardened sandbox — off by
@@ -469,12 +505,15 @@ datacli/
 │  ├─ report_eodhd_raw_quality.py   the QC engine (price-bearing lanes)
 │  ├─ fetch_eodhd_*.py   per-lane fetchers  ·  fetch_eodhd_bulk.py  fast path
 │  ├─ fetch_eodhd_news.py   the news day-crawler
+│  ├─ fetch_eodhd_us_extended_*.py   the us_extended lane: shorted US names the other lanes do not price, delisted included
 │  ├─ explore_eodhd.py   DuckDB-backed describe / find / rows / coverage / sql
 │  ├─ schema.py          versioned canonical schema + projected views
 │  ├─ config.py          data-root resolution + datacli.toml
 │  └─ _render.py         shared console + palette (one look for every command)
 ├─ macro/                the macro source (FRED + EODHD series, DuckDB views)
 ├─ finra/                the FINRA source (Query API client, public daily files, short volume store, views)
+├─ sec/                  the SEC source (Form 13F data sets: listing, download, raw store, views)
+├─ positioning/          derived datasets (split-neutral basis, FIFO lot ladder, short ladder store + view)
 ├─ llm/                  shared model layer (LiteLLM behind one interface, budget, cache, tiers)
 ├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI
 ├─ lab/                  the Raw Data Lab (personas, skills, grounded agent, pipeline)

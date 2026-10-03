@@ -75,3 +75,19 @@ strong = "anthropic/claude-opus-4-8"
 # ---------------------------------------------------------------------------
 [finra]
 # data_root = "C:/path/to/your/data/raw/finra"
+
+# ---------------------------------------------------------------------------
+# Derived positioning datasets (`positioning build --run`): rebuilt from the
+# finra and eodhd roots, no network. Defaults to a `positioning` sibling of the
+# eodhd data root; override here.
+# ---------------------------------------------------------------------------
+[positioning]
+# data_root = "C:/path/to/your/data/raw/positioning"
+
+# ---------------------------------------------------------------------------
+# SEC bulk datasets (`sec fetch --run`): Form 13F data sets from sec.gov. Public,
+# no key, but the SEC requires SEC_USER_AGENT (a declared name and contact). Data
+# defaults to a `sec` sibling of the eodhd data root; override here.
+# ---------------------------------------------------------------------------
+[sec]
+# data_root = "C:/path/to/your/data/raw/sec"

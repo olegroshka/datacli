@@ -240,6 +240,20 @@ def connect() -> Any:
         finra_views.register(con)
     except Exception:
         pass
+    # ... the SEC views (Form 13F), once fetched ...
+    try:
+        from sec import views as sec_views  # type: ignore[import-not-found]
+
+        sec_views.register(con)
+    except Exception:
+        pass
+    # ... and the derived positioning views (the short ladder), once built.
+    try:
+        from positioning import views as positioning_views  # type: ignore[import-not-found]
+
+        positioning_views.register(con)
+    except Exception:
+        pass
     return con
 
 

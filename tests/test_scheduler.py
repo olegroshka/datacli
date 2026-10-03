@@ -114,6 +114,12 @@ def test_registry_matches_admitted_inventory_and_rejects_forbidden(
         "finra fetch",
         "finra status",
         "finra qc",
+        "positioning build",
+        "positioning status",
+        "positioning qc",
+        "sec fetch",
+        "sec status",
+        "sec qc",
         "sync push",
         "sync status",
     }
@@ -1021,6 +1027,8 @@ def test_scheduler_completion_covers_registry_and_command_values() -> None:
         "eodhd",
         "macro",
         "finra",
+        "positioning",
+        "sec",
         "sync",
     }
     assert set(schedule_completion_candidates(["add", "demo", "--", "eodhd", "r"])) == {

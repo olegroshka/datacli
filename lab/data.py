@@ -41,6 +41,18 @@ def connect() -> Any:
         finra_views.register(con)
     except Exception:
         pass  # finra is optional too
+    try:
+        from sec import views as sec_views
+
+        sec_views.register(con)
+    except Exception:
+        pass  # sec is optional too
+    try:
+        from positioning import views as positioning_views
+
+        positioning_views.register(con)
+    except Exception:
+        pass  # derived views are optional
     return con
 
 
@@ -74,6 +86,25 @@ def schema_text(con: Any) -> str:
                 weekly_flow=has_flow,
                 short_interest=has_si,
                 fails_to_deliver=has_ftd,
+            )
+        except Exception:
+            pass
+    if _has_view(con, "sec_13f_holdings"):
+        try:
+            from sec import views as sec_views
+
+            text += "\n\n" + sec_views.schema_snippet()
+        except Exception:
+            pass
+    has_ladder = _has_view(con, "positioning_short_ladder")
+    has_factors = _has_view(con, "positioning_factors")
+    has_map = _has_view(con, "positioning_cusip_map")
+    if has_ladder or has_factors or has_map:
+        try:
+            from positioning import views as positioning_views
+
+            text += "\n\n" + positioning_views.schema_snippet(
+                ladder=has_ladder, factor_view=has_factors, cusip_map=has_map
             )
         except Exception:
             pass

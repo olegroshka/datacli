@@ -105,6 +105,7 @@ EODHD_LANES = {
     "us_common",
     "uk_eu",
     "us_etf",
+    "us_extended",
     "index_ref",
     "uk_eu_etf",
     "uk_eu_index_ref",
@@ -132,11 +133,18 @@ CAPABILITIES = (
     Capability("finra", "fetch", "OPTIONAL", True, True, True),
     Capability("finra", "status", "OPTIONAL", False, False),
     Capability("finra", "qc", "OPTIONAL", False, False),
+    Capability("positioning", "build", "OPTIONAL", True, False, True),
+    Capability("positioning", "status", "OPTIONAL", False, False),
+    Capability("positioning", "qc", "OPTIONAL", False, False),
+    Capability("sec", "fetch", "OPTIONAL", True, True, True),
+    Capability("sec", "status", "OPTIONAL", False, False),
+    Capability("sec", "qc", "OPTIONAL", False, False),
     Capability("sync", "status", "OPTIONAL", False, False),
 )
 
 FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest", "fails_to_deliver"}
 FINRA_TRANSPORTS = {"cdn", "api", "sec"}
+SEC_DATASETS = {"form13f", "adv"}
 
 
 def _read_config(path: Path | None) -> dict:
@@ -574,6 +582,44 @@ class CommandRegistry:
             dataset = options.get("--dataset", ["short_volume"])[-1]
             if dataset not in FINRA_DATASETS:
                 raise CommandValidationError(f"unknown FINRA dataset: {dataset}")
+        elif identity == "positioning build":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--run"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("positioning build takes flags only")
+        elif identity == "positioning status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("positioning status takes flags only")
+        elif identity == "positioning qc":
+            if argv:
+                raise CommandValidationError("positioning qc takes no arguments")
+            options = {}
+        elif identity == "sec fetch":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--run", "--full"}, scalar={"--limit", "--dataset"}
+            )
+            if positionals:
+                raise CommandValidationError("sec fetch takes flags only")
+            dataset = options.get("--dataset", ["form13f"])[-1]
+            if dataset not in SEC_DATASETS:
+                raise CommandValidationError(f"unknown SEC dataset: {dataset}")
+            for value in options.get("--limit", []):
+                if not value.isdigit() or int(value) < 1:
+                    raise CommandValidationError("--limit must be a positive integer")
+        elif identity == "sec status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("sec status takes flags only")
+        elif identity == "sec qc":
+            if argv:
+                raise CommandValidationError("sec qc takes no arguments")
+            options = {}
         elif identity in {"sync push", "sync status"}:
             allowed_boolean = {"--with-caches"}
             if identity == "sync push":
@@ -661,6 +707,38 @@ class CommandRegistry:
             claims.append(
                 ResourceClaim(
                     finra_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "sec":
+            sec_root, sec_source = _sibling_root(config, "sec", eodhd_root)
+            sec_binding = _binding("sec_data_root", sec_root, sec_source)
+            bindings.append(sec_binding)
+            claims.append(
+                ResourceClaim(
+                    sec_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "positioning":
+            # derived from the eodhd and finra roots: read both, own its own
+            for name, path, source in (
+                ("eodhd_data_root", eodhd_root, root_source),
+                ("finra_data_root", *_sibling_root(config, "finra", eodhd_root)),
+            ):
+                read_binding = _binding(name, path, source)
+                bindings.append(read_binding)
+                claims.append(ResourceClaim(read_binding.resource_id, "shared"))
+            positioning_binding = _binding(
+                "positioning_data_root",
+                *_sibling_root(config, "positioning", eodhd_root),
+            )
+            bindings.append(positioning_binding)
+            claims.append(
+                ResourceClaim(
+                    positioning_binding.resource_id,
                     "exclusive" if capability.mutation else "shared",
                 )
             )
@@ -792,6 +870,8 @@ class CommandRegistry:
                     "eodhd_data_root",
                     "macro_data_root",
                     "finra_data_root",
+                    "positioning_data_root",
+                    "sec_data_root",
                 }:
                     path = Path(binding.resolved_value)
                     if command.mutation:
@@ -852,6 +932,16 @@ class CommandRegistry:
                             "EODHD credentials are unavailable to the scheduled user",
                         )
                     )
+            if command.family == "sec" and command.verb == "fetch":
+                from finra.sec import user_agent as sec_user_agent
+
+                if not sec_user_agent():
+                    findings.append(
+                        Finding(
+                            "sec_user_agent_missing",
+                            "SEC_USER_AGENT (declared name and contact) is unavailable to the scheduled user",
+                        )
+                    )
             if command.family == "finra" and command.verb == "fetch":
                 # the default transport reads FINRA's public files and needs no
                 # credentials; only the Query API transport does
@@ -891,6 +981,12 @@ class CommandRegistry:
             env["DATACLI_FINRA_ROOT"] = context.binding(
                 "finra_data_root"
             ).resolved_value
+        with contextlib.suppress(KeyError):
+            env["DATACLI_SEC_ROOT"] = context.binding("sec_data_root").resolved_value
+        with contextlib.suppress(KeyError):
+            env["DATACLI_POSITIONING_ROOT"] = context.binding(
+                "positioning_data_root"
+            ).resolved_value
         if validation.config_path is not None:
             env["DATACLI_CONFIG_PATH"] = str(validation.config_path)
 
@@ -915,6 +1011,22 @@ class CommandRegistry:
                 str(validation.interpreter),
                 "-m",
                 "finra.cli",
+                command.verb,
+                *command.argv,
+            ]
+        elif command.family == "sec":
+            args = [
+                str(validation.interpreter),
+                "-m",
+                "sec.cli",
+                command.verb,
+                *command.argv,
+            ]
+        elif command.family == "positioning":
+            args = [
+                str(validation.interpreter),
+                "-m",
+                "positioning.cli",
                 command.verb,
                 *command.argv,
             ]

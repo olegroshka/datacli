@@ -114,6 +114,7 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "us_common",
         "uk_eu",
         "us_etf",
+        "us_extended",
         "index_ref",
         "uk_eu_etf",
         "uk_eu_index_ref",
@@ -135,6 +136,7 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "us_common",
         "uk_eu",
         "us_etf",
+        "us_extended",
         "index_ref",
         "uk_eu_etf",
         "uk_eu_index_ref",
@@ -158,6 +160,7 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "us_common",
         "uk_eu",
         "us_etf",
+        "us_extended",
         "index_ref",
         "uk_eu_etf",
         "uk_eu_index_ref",
@@ -190,6 +193,12 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("finra", "status"): ("--json",),
     ("finra", "qc"): ("--dataset",),
+    ("positioning", "build"): ("--run",),
+    ("positioning", "status"): ("--json",),
+    ("positioning", "qc"): (),
+    ("sec", "fetch"): ("--run", "--full", "--limit", "--dataset"),
+    ("sec", "status"): ("--json",),
+    ("sec", "qc"): (),
     ("sync", "push"): ("--run", "--keep-going", "--with-caches"),
     ("sync", "status"): ("--with-caches",),
 }
@@ -229,6 +238,30 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
     ("finra", "qc"): (
         "finra qc [--dataset NAME]",
         "read-only quality checks over the stored FINRA days",
+    ),
+    ("positioning", "build"): (
+        "positioning build --run",
+        "rebuild the derived short ladder from local short interest and prices (offline)",
+    ),
+    ("positioning", "status"): (
+        "positioning status [--json]",
+        "read-only status of the derived positioning datasets",
+    ),
+    ("positioning", "qc"): (
+        "positioning qc",
+        "read-only quality checks over the stored short ladder",
+    ),
+    ("sec", "fetch"): (
+        "sec fetch [--dataset form13f|adv] [--limit N] [--full] --run",
+        "SEC Form 13F data sets or Form ADV adviser reports from sec.gov (needs SEC_USER_AGENT)",
+    ),
+    ("sec", "status"): (
+        "sec status [--json]",
+        "read-only status of the stored SEC datasets",
+    ),
+    ("sec", "qc"): (
+        "sec qc",
+        "read-only quality checks over the stored 13F archives",
     ),
     ("sync", "push"): (
         "sync push [--with-caches] [--keep-going] --run",
