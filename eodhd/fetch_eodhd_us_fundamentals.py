@@ -228,6 +228,27 @@ def fetch_fundamentals(
     return data if isinstance(data, dict) else None
 
 
+def _harmonise_numeric_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Object columns holding only numbers become float64 before the parquet write.
+
+    A payload can carry an integer too large for a double next to floats from
+    other firms (a delisted name's market capitalisation of 1.8e16 on
+    2026-10-03); pyarrow refuses the mixed column, so it is coerced first.
+    """
+    out = frame.copy()
+    for column in out.columns:
+        series = out[column]
+        if series.dtype != object:
+            continue
+        values = series.dropna()
+        if values.empty or not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in values
+        ):
+            continue
+        out[column] = pd.to_numeric(series, errors="coerce").astype("float64")
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fetch EODHD US common-stock fundamentals into the data root"
@@ -440,6 +461,7 @@ def main() -> None:
                 key_columns=list(SECTION_OUTPUT_SPECS[output_name]["keys"]),
             )
             output_path = Path(SECTION_OUTPUT_SPECS[output_name]["path"])
+            merged_output = _harmonise_numeric_columns(merged_output)
             _atomic.to_parquet(merged_output, output_path, index=False)
             existing_section_outputs[output_name] = merged_output
 

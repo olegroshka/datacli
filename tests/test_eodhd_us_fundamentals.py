@@ -106,3 +106,23 @@ def test_extract_quarterly_statements_handles_us_payload() -> None:
     assert set(df["statement"].tolist()) == {"BS", "CF", "IS"}
     assert set(df["exchange"].tolist()) == {"US"}
     assert "2025-03-31" in df["date"].tolist()
+
+
+def test_harmonise_numeric_columns_coerces_mixed_int_float_objects() -> None:
+    import pandas as pd
+
+    from fetch_eodhd_us_fundamentals import _harmonise_numeric_columns
+
+    frame = pd.DataFrame(
+        {
+            "ticker": ["A", "B"],
+            "market_capitalization": pd.Series([17848852216283136, 1.5], dtype=object),
+            "name": pd.Series(["x", None], dtype=object),
+        }
+    )
+    out = _harmonise_numeric_columns(frame)
+    assert str(out["market_capitalization"].dtype) == "float64"
+    assert out["name"].dtype == object and out["ticker"].tolist() == ["A", "B"]
+    import pyarrow as pa
+
+    pa.Table.from_pandas(out)  # the write that failed now succeeds
