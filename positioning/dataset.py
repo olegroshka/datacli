@@ -370,7 +370,8 @@ def _qc_long(frame: pd.DataFrame, con: Any) -> list[Finding]:
         findings.append(
             Finding("error", "published_at_window", f"published_at lags range {lag.min()}..{lag.max()} days")
         )
-    inventory_mismatch = frame[(frame["inventory"] - frame["level_raw"] / frame["quantity_factor"]).abs() > 1e-6]
+    basis_level = frame["level_raw"] / frame["quantity_factor"]
+    inventory_mismatch = frame[(frame["inventory"] - basis_level).abs() > 1e-9 * basis_level.abs().clip(lower=1.0)]
     if len(inventory_mismatch):
         findings.append(
             Finding("error", "inventory_not_level", f"{len(inventory_mismatch)} rows where inventory differs from the basis level")
