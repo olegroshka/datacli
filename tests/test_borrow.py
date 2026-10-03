@@ -74,7 +74,7 @@ def test_parse_is_strict_and_typed() -> None:
         ("#BOF|2026.10.03|10:42:07\n" + ib.HEADER + "\n", "fewer than three lines"),
         ("BOF\n" + ib.HEADER + "\nA|USD|X|1|US1|1|1|100|BBG|\n#EOF|1\n", "not a #BOF stamp"),
         ("#BOF|2026.10.03|10:42:07\n#SYM|X|\nA|USD|X|1|US1|1|1|100|BBG|\n#EOF|1\n", "unexpected header"),
-        (_file().replace("#EOF|5", "#END|5"), "not an #EOF trailer"),
+        (_file().replace("#EOF|", "#END|"), "not an #EOF trailer"),
     ):
         with pytest.raises(ib.BorrowError, match=message):
             ib.parse(bad)
