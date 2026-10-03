@@ -335,9 +335,12 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   `profit_pct` (short sellers' unrealised return; negative = under water), with
   `published_at` to ASOF-join on. Mask rows with `seed_share > 0.5`: the age of the
   first observation is unknown. A rebuild replaces only changed settlement dates and
-  records a changed past date as a restatement. Contract and caveats (vendor split
-  entries that are really spin-off adjustments, survivorship in the priced universe):
-  `docs/samrt-money-flow-dataset-initiative/DD-001-ladder-contract.md`.
+  records a changed past date as a restatement. Two caveats are built in: the
+  vendor's splits table also lists spin-off and merger price adjustments, so share
+  counts are rescaled only by the entries the short interest reports confirm
+  (`quantity_factor` vs `price_factor`); and `inventory` is on a split-neutral basis
+  (compare within a symbol, never across). The `lane` column says where a symbol's
+  prices come from (`us_extended` includes delisted names).
 - **Factor view** — `positioning_factors` gives, per US common ticker and day from
   2018, `reversal_21d`, `momentum_12_1`, `specific_risk_63d` (annualised volatility
   of the return in excess of the sector median) and `short_interest_ratio` (latest
