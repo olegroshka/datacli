@@ -432,6 +432,7 @@ LANES: dict[str, LaneConfig] = {
         [
             prices_spec("fetch_eodhd_us_extended_prices.py"),
             event_spec("splits", "fetch_eodhd_us_extended_splits.py"),
+            fundamentals_spec("fetch_eodhd_us_extended_fundamentals.py"),
         ],
         universe_fetcher="fetch_eodhd_us_extended_universe.py",
         default_exchange="US",

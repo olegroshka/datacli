@@ -70,7 +70,7 @@ def test_lane_is_registered_like_the_etf_lane() -> None:
     lane = reg.LANES["us_extended"]
     assert lane.universe_fetcher == "fetch_eodhd_us_extended_universe.py"
     assert lane.universe_path is not None and lane.universe_path.name == "tickers_US_EXT.parquet"
-    assert [d.kind for d in lane.datasets] == ["prices", "splits"]
+    assert [d.kind for d in lane.datasets] == ["prices", "splits", "fundamentals"]
     assert lane.default_exchange == "US" and lane.universe_code_column == "Code"
 
 
@@ -131,3 +131,37 @@ def test_routine_targets_skip_delisted_names(tmp_path: Path, monkeypatch) -> Non
     assert prices.load_target_tickers(explicit_specs=[]) == [("LIVE", "US"), ("DEAD", "US")]
     assert sys.argv == ["x"]
     assert prices.load_target_tickers(explicit_specs=["AAPL.US"]) == [("AAPL", "US")]
+
+
+def test_fundamentals_wrapper_universe_and_wiring(tmp_path: Path, monkeypatch) -> None:
+    import fetch_eodhd_us_extended_fundamentals as fund
+    import fetch_eodhd_us_fundamentals as base
+
+    frame = pd.DataFrame(
+        {
+            "Code": ["LIVE", "DEAD", "SPY"],
+            "Name": ["a", "b", "c"],
+            "Country": "USA",
+            "Exchange": "NYSE",
+            "Currency": "USD",
+            "Type": ["Common Stock", "Common Stock", "ETF"],
+            "Isin": "",
+            "delisted": [False, True, False],
+        }
+    )
+    frame.to_parquet(tmp_path / "u.parquet")
+    monkeypatch.setattr(fund, "TICKERS_PATH", tmp_path / "u.parquet")
+    monkeypatch.setattr(fund, "RAW_DIR", tmp_path)
+    monkeypatch.setattr(fund, "FUND_TICKERS_PATH", tmp_path / "tickers_US.parquet")
+    assert fund.write_fetch_universe(delisted=False) == 1
+    assert pd.read_parquet(tmp_path / "tickers_US.parquet")["Code"].tolist() == ["LIVE"]
+    assert fund.write_fetch_universe(delisted=True) == 2
+    saved = (base.RAW_DIR, base.RAW_CACHE_DIR, base.SECTION_OUTPUT_SPECS, base.log)
+    try:
+        fund.configure()
+        assert base.RAW_DIR == tmp_path and base.RAW_CACHE_DIR.parent.parent == tmp_path
+        assert all(Path(spec["path"]).parent == tmp_path for spec in base.SECTION_OUTPUT_SPECS.values())
+    finally:
+        base.RAW_DIR, base.RAW_CACHE_DIR, base.SECTION_OUTPUT_SPECS, base.log = saved
+    lane = reg.LANES["us_extended"]
+    assert [d.kind for d in lane.datasets] == ["prices", "splits", "fundamentals"]

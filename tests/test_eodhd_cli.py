@@ -79,7 +79,7 @@ def test_passthrough_appends_to_data_steps_not_universe() -> None:
 
 
 def test_fundamentals_only_selects_common_lanes_and_skips_universe() -> None:
-    # `--datasets fundamentals` across all lanes must hit only the two lanes that
+    # `--datasets fundamentals` across all lanes must hit only the lanes that
     # have a fundamentals dataset, and must not trigger ETF/index universe steps.
     plan = cli.build_refresh_plan(
         list(reg.LANES),
@@ -90,6 +90,8 @@ def test_fundamentals_only_selects_common_lanes_and_skips_universe() -> None:
     assert [(s.lane, s.kind) for s in plan] == [
         ("us_common", "fundamentals"),
         ("uk_eu", "fundamentals"),
+        ("us_extended", "universe"),  # its universe is derived, two cheap calls
+        ("us_extended", "fundamentals"),
     ]
 
 

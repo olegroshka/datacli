@@ -160,6 +160,10 @@ def _class_share_lookup_sql(root: Path) -> str:
     )
 
 
+#: Lanes whose fundamentals carry shares outstanding for US-listed names.
+SHARES_LANES: tuple[str, ...] = ("us_common", "us_extended")
+
+
 def _eodhd_us_common_dir() -> Path | None:
     try:
         import config as eodhd_config  # type: ignore[import-not-found]
@@ -168,6 +172,19 @@ def _eodhd_us_common_dir() -> Path | None:
         return Path(root) / "us_common"
     except Exception:
         return None
+
+
+def _shares_outstanding_files() -> list[Path]:
+    """Every lane's ``outstanding_shares_quarterly.parquet`` that exists."""
+    base = _eodhd_us_common_dir()
+    if base is None:
+        return []
+    root = base.parent
+    return [
+        root / lane / "outstanding_shares_quarterly.parquet"
+        for lane in SHARES_LANES
+        if (root / lane / "outstanding_shares_quarterly.parquet").exists()
+    ]
 
 
 def _register_short_interest(con: Any, root: Path) -> bool:
@@ -186,11 +203,10 @@ def _register_short_interest(con: Any, root: Path) -> bool:
     )
     _state_view(con, SI_STATE_VIEW, store.state_path)
     us_common = _eodhd_us_common_dir()
-    quarterly = (
-        us_common / "outstanding_shares_quarterly.parquet" if us_common else None
-    )
+    quarterly_files = _shares_outstanding_files()
     snapshot = us_common / "shares_stats_snapshot.parquet" if us_common else None
-    if quarterly is not None and quarterly.exists():
+    if quarterly_files:
+        quarterly_list = ", ".join(f"'{p.as_posix()}'" for p in quarterly_files)
         snap_sql = (
             f"SELECT ticker, shares_float FROM read_parquet('{snapshot.as_posix()}')"
             if snapshot is not None and snapshot.exists()
@@ -202,7 +218,7 @@ def _register_short_interest(con: Any, root: Path) -> bool:
             "  SELECT upper(ticker) AS ticker, CAST(date_formatted AS DATE) AS quarter_end, "
             f"         CAST(date_formatted AS DATE) + INTERVAL {SHARES_AVAILABLE_LAG_DAYS} DAY AS available_at, "
             "         shares AS shares_outstanding "
-            f"  FROM read_parquet('{quarterly.as_posix()}') WHERE shares IS NOT NULL AND shares > 0"
+            f"  FROM read_parquet([{quarterly_list}], union_by_name=true) WHERE shares IS NOT NULL AND shares > 0"
             "), snap AS (" + snap_sql + ") "
             "SELECT s.settlement_date, s.published_at, s.symbol, s.eodhd_code, s.short_position, "
             "s.days_to_cover, sh.quarter_end, sh.shares_outstanding, "
