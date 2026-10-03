@@ -1,8 +1,11 @@
 """Write the btest inputs for the short-accumulation cost-realism backtest (DD-002 WP15).
 
-    .venv\\Scripts\\python.exe scripts\\export_btest_inputs.py [--start 2018-01-01] [--min-dollar-adv 5e6]
+    .venv\\Scripts\\python.exe scripts\\export_btest_inputs.py [--start 2018-01-01] [--min-dollar-adv 5e6] [--second]
 
 Reads the datacli views; writes under <positioning root>/exports/btest/.
+``--second`` writes the second iteration's files only (size-residual short
+ranks, the long-side cohort signals and prices, the borrow rates) next to the
+first iteration's, which must exist.
 """
 
 from __future__ import annotations
@@ -25,11 +28,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--start", default=export.DEFAULT_START)
     parser.add_argument("--min-dollar-adv", type=float, default=export.DEFAULT_MIN_DOLLAR_ADV)
+    parser.add_argument("--second", action="store_true", help="write the second iteration's files")
     args = parser.parse_args()
 
     import explore_eodhd
 
     t0 = time.time()
+    if args.second:
+        second = export.export_second(explore_eodhd.connect(), positioning_root(), start=args.start, min_dollar_adv=args.min_dollar_adv)
+        print(
+            f"wrote {second.directory}: short size-residual ranks for {second.short_size_symbols:,} symbols; "
+            f"long side {second.long_symbols:,} symbols, {second.long_price_rows:,} price rows, "
+            f"{second.long_signal_dates:,} signal dates x {second.long_flow_symbols:,} symbols with flow; "
+            f"borrow rates for {second.borrow_symbols:,} symbols (snapshot {second.borrow_snapshot}) ({time.time() - t0:.0f}s)"
+        )
+        return 0
     report = export.export(explore_eodhd.connect(), positioning_root(), start=args.start, min_dollar_adv=args.min_dollar_adv)
     print(
         f"wrote {report.directory}: {report.symbols:,} symbols, {report.price_rows:,} price rows "
