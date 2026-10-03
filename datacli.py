@@ -195,16 +195,16 @@ class FinraPlugin(SourcePlugin):
 
 
 class PositioningPlugin(SourcePlugin):
-    """positioning source -- datasets derived from the other sources (short ladder)."""
+    """positioning source -- datasets derived from the other sources (short and long ladders)."""
 
     name = "positioning"
-    summary = "Derived positioning datasets: FIFO lot ladder over FINRA short interest"
+    summary = "Derived positioning datasets: FIFO lot ladders over FINRA short interest and SEC 13F holdings"
 
     def command_names(self) -> list[str]:
         return ["status", "build", "qc"]
 
     def detail(self) -> str:
-        return "1 dataset"
+        return "2 datasets"
 
     def run(self, command: str, argv: list[str]) -> int:
         import positioning.cli as positioning_cli

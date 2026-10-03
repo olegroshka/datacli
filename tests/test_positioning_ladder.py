@@ -298,3 +298,67 @@ def test_interval_mean_survives_a_vendor_spike_before_tiny_prices() -> None:
     path = PricePath(closes)
     assert path.interval_mean(days[10], days[20]) == pytest.approx(1e-9)
     assert path.interval_mean(days[10], days[20]) > 0
+
+
+# --------------------------------------------------------------------------- #
+# panel drift (DD-002 WP9 step 3): an explicit trade flow, the rest absorbed
+# --------------------------------------------------------------------------- #
+def test_drift_scales_lots_without_a_trade_and_keeps_age_cost_and_profit() -> None:
+    plain = run_ladder([_obs(0, 100, 10.0), _obs(1, 150, 12.0), _obs(2, 150, 14.0, mark=15.0)], side=LONG)
+    # a manager entered with 60 shares at the second period, another left with 30 at the third
+    drifted = run_ladder(
+        [
+            _obs(0, 100, 10.0),
+            Observation(D0 + timedelta(days=14), 210, 12.0, 12.0, flow=50.0),
+            Observation(D0 + timedelta(days=28), 180, 14.0, 15.0, flow=0.0),
+        ],
+        side=LONG,
+    )
+    assert [r.drift for r in drifted] == [0.0, pytest.approx(60.0), pytest.approx(-30.0)]
+    assert [r.flow for r in drifted] == [0.0, 50.0, 0.0]
+    assert [r.inventory for r in drifted] == [100, pytest.approx(210), pytest.approx(180)]
+    for a, b in zip(plain, drifted):
+        assert b.wavg_age_days == pytest.approx(a.wavg_age_days)
+        assert b.cost_basis == pytest.approx(a.cost_basis)
+        assert b.profit_pct == pytest.approx(a.profit_pct)
+        assert b.seed_share == pytest.approx(a.seed_share)
+        assert b.n_lots == a.n_lots and b.realised == a.realised == 0.0
+    # the trade flow still closes lots FIFO and realises profit on them
+    sold = run_ladder(
+        [_obs(0, 100, 10.0), Observation(D0 + timedelta(days=14), 230, 12.0, 12.0, flow=-40.0)],
+        side=LONG,
+    )
+    assert sold[1].realised == pytest.approx(40 * (12 - 10))
+    assert sold[1].drift == pytest.approx(170.0) and sold[1].inventory == pytest.approx(230)
+    assert sold[1].cost_basis == pytest.approx(10.0) and sold[1].seed_share == pytest.approx(1.0)
+
+
+def test_drift_onto_an_empty_ladder_opens_a_seed_lot_and_exit_can_empty_it() -> None:
+    rows = run_ladder(
+        [
+            _obs(0, 50, 10.0),
+            Observation(D0 + timedelta(days=14), 0, 11.0, 11.0, flow=-50.0),
+            Observation(D0 + timedelta(days=28), 80, 12.0, 12.0, flow=0.0),
+            Observation(D0 + timedelta(days=42), 0, 13.0, 13.0, flow=0.0),
+        ],
+        side=LONG,
+    )
+    assert rows[1].inventory == 0 and rows[1].drift == 0.0 and rows[1].realised == pytest.approx(50.0)
+    assert rows[2].drift == pytest.approx(80.0) and rows[2].seed_share == 1.0 and rows[2].wavg_age_days == 0
+    assert rows[3].inventory == 0 and rows[3].drift == pytest.approx(-80.0) and rows[3].realised == 0.0
+    assert rows[3].cost_basis is None and rows[3].n_lots == 0
+
+
+def test_explicit_flow_without_drift_matches_the_implicit_path() -> None:
+    rng = random.Random(23)
+    path = _random_path(rng, 25)
+    explicit = [
+        Observation(o.obs_date, o.quantity, o.lot_price, o.mark_price, o.missed_before,
+                    flow=None if i == 0 else o.quantity - path[i - 1].quantity)
+        for i, o in enumerate(path)
+    ]
+    assert run_ladder(explicit, side=LONG) == run_ladder(path, side=LONG)
+    with pytest.raises(ValueError, match="exceeds the inventory"):
+        run_ladder([_obs(0, 10, 1.0), Observation(D0 + timedelta(days=14), 5, 1.0, 1.0, flow=-20.0)], side=LONG)
+    with pytest.raises(ValueError, match="flow must be a number"):
+        run_ladder([_obs(0, 10, 1.0), Observation(D0 + timedelta(days=14), 5, 1.0, 1.0, flow=float("nan"))], side=LONG)

@@ -26,6 +26,13 @@ class Observation:
     ``lot_price`` prices the flow of this observation (opened and closed
     lots); ``mark_price`` values what is left. ``missed_before`` is the number
     of scheduled observations absent since the previous one.
+
+    ``flow`` is the traded quantity when the source tells it apart from the
+    change in ``quantity`` (13F: the change summed over managers present in
+    both periods, DD-002 WP9 step 3). Left ``None``, the flow is the change
+    in ``quantity``, as for an aggregate with a fixed panel. The remainder,
+    ``quantity`` minus the inventory after the trade, is panel drift: shares
+    that entered or left through a holder entering or leaving the dataset.
     """
 
     obs_date: date
@@ -33,6 +40,7 @@ class Observation:
     lot_price: float
     mark_price: float
     missed_before: int = 0
+    flow: float | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,7 @@ class LadderRow:
     seed_share: float | None
     gap: bool
     reset: bool
+    drift: float = 0.0
 
 
 @dataclass
@@ -69,6 +78,13 @@ def run_ladder(
 
     A first observation, or one after more than ``max_gap`` missed scheduled
     observations, starts from a single seed lot whose true age is unknown.
+
+    Panel drift (an observation whose ``flow`` is given and differs from the
+    change in ``quantity``) is absorbed without a trade: every open lot is
+    scaled by the same factor so that the inventory equals ``quantity``. The
+    shares that entered inherit the age and cost of the shares already held,
+    the shares that left take a pro-rata slice of every lot, and nothing is
+    realised. Drift onto an empty ladder opens a seed lot (age unknown).
     """
     if side not in (LONG, SHORT):
         raise ValueError(f"side must be {LONG} or {SHORT}, got {side}")
@@ -79,6 +95,7 @@ def run_ladder(
         _validate(obs, previous)
         reset = previous is None or obs.missed_before > max_gap
         realised = 0.0
+        drift = 0.0
         if reset:
             lots.clear()
             flow = 0.0
@@ -86,14 +103,38 @@ def run_ladder(
                 lots.append(_Lot(obs.obs_date, obs.lot_price, obs.quantity, True))
         else:
             assert previous is not None
-            flow = obs.quantity - previous.quantity
+            held = sum(lot.remaining for lot in lots)
+            flow = obs.quantity - previous.quantity if obs.flow is None else obs.flow
+            if flow < -held * (1 + 1e-9) - _EPS:  # cannot sell what the ladder never held
+                raise ValueError(
+                    f"{obs.obs_date}: flow {flow} exceeds the inventory {held}"
+                )
             if flow > _EPS:
                 lots.append(_Lot(obs.obs_date, obs.lot_price, flow, False))
             elif flow < -_EPS:
                 realised = _close(lots, -flow, obs.lot_price, side)
-        rows.append(_row(obs, lots, flow, realised, side, reset))
+            drift = _absorb_drift(lots, obs)
+        rows.append(_row(obs, lots, flow, realised, side, reset, drift))
         previous = obs
     return rows
+
+
+def _absorb_drift(lots: deque[_Lot], obs: Observation) -> float:
+    """Scale the lots so the inventory equals ``obs.quantity``; return the drift."""
+    held = sum(lot.remaining for lot in lots)
+    drift = obs.quantity - held
+    if abs(drift) <= _EPS:
+        return 0.0
+    if held <= _EPS:
+        lots.clear()
+        lots.append(_Lot(obs.obs_date, obs.lot_price, obs.quantity, True))
+        return drift
+    scale = obs.quantity / held
+    for lot in lots:
+        lot.remaining *= scale
+    while lots and lots[0].remaining <= _EPS:
+        lots.popleft()
+    return drift
 
 
 def _validate(obs: Observation, previous: Observation | None) -> None:
@@ -103,6 +144,8 @@ def _validate(obs: Observation, previous: Observation | None) -> None:
         raise ValueError(f"{obs.obs_date}: prices must be positive")
     if obs.missed_before < 0:
         raise ValueError(f"{obs.obs_date}: missed_before must not be negative")
+    if obs.flow is not None and obs.flow != obs.flow:  # NaN
+        raise ValueError(f"{obs.obs_date}: flow must be a number")
     if previous is not None and obs.obs_date <= previous.obs_date:
         raise ValueError(
             f"observations must be strictly increasing in date: "
@@ -131,12 +174,13 @@ def _row(
     realised: float,
     side: int,
     reset: bool,
+    drift: float = 0.0,
 ) -> LadderRow:
     inventory = sum(lot.remaining for lot in lots)
     gap = obs.missed_before > 0
     if inventory <= _EPS:
         return LadderRow(
-            obs.obs_date, 0.0, flow, 0, None, None, None, 0.0, realised, None, gap, reset
+            obs.obs_date, 0.0, flow, 0, None, None, None, 0.0, realised, None, gap, reset, drift
         )
     age = sum(lot.remaining * (obs.obs_date - lot.lot_date).days for lot in lots) / inventory
     cost = sum(lot.remaining * lot.price for lot in lots) / inventory
@@ -154,4 +198,5 @@ def _row(
         seed_share=seed,
         gap=gap,
         reset=reset,
+        drift=drift,
     )

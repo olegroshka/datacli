@@ -193,9 +193,9 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("finra", "status"): ("--json",),
     ("finra", "qc"): ("--dataset",),
-    ("positioning", "build"): ("--run",),
+    ("positioning", "build"): ("--run", "--dataset"),
     ("positioning", "status"): ("--json",),
-    ("positioning", "qc"): (),
+    ("positioning", "qc"): ("--dataset",),
     ("sec", "fetch"): ("--run", "--full", "--limit", "--dataset"),
     ("sec", "status"): ("--json",),
     ("sec", "qc"): (),
@@ -240,16 +240,16 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
         "read-only quality checks over the stored FINRA days",
     ),
     ("positioning", "build"): (
-        "positioning build --run",
-        "rebuild the derived short ladder from local short interest and prices (offline)",
+        "positioning build [--dataset short_ladder|long_ladder] --run",
+        "rebuild a derived ladder from local short interest or 13F holdings and prices (offline)",
     ),
     ("positioning", "status"): (
         "positioning status [--json]",
         "read-only status of the derived positioning datasets",
     ),
     ("positioning", "qc"): (
-        "positioning qc",
-        "read-only quality checks over the stored short ladder",
+        "positioning qc [--dataset short_ladder|long_ladder]",
+        "read-only quality checks over a stored ladder",
     ),
     ("sec", "fetch"): (
         "sec fetch [--dataset form13f|adv] [--limit N] [--full] --run",

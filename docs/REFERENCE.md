@@ -29,7 +29,7 @@ Run any command with `--help` for its full options.
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
-| `positioning status \| build [--run] \| qc` | Derived positioning datasets: the FIFO lot ladder over FINRA short interest (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
+| `positioning status \| build [--dataset short_ladder\|long_ladder] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
 **Hits a provider — spends EODHD units (`$`) or needs a provider key:**
@@ -216,8 +216,9 @@ parquet directly.
 `catalog` once reindexed, `macro` / `macro_country` / `macro_market` once
 fetched, and `finra_short_volume` / `finra_weekly_flow_symbol` /
 `finra_short_interest` / `finra_fails_to_deliver` once the FINRA source is fetched,
-`positioning_short_ladder` once `positioning build --run` has run, and
-`positioning_factors`).
+`positioning_short_ladder` once `positioning build --run` has run,
+`positioning_long_ladder` once `positioning build --dataset long_ladder --run`
+has run, and `positioning_factors`).
 Every EODHD view
 carries a `lane` column:
 
@@ -320,7 +321,11 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   `value_usd` (the reported value in dollars: the form switched from thousands
   to dollars for filings from 2023-01-03, and each filing is classified against
   the other filers because some lagged; `units_evidence` says how), `shares`,
-  `put_call`. Amendments are not resolved. Plus `sec_13f_submission` and
+  `put_call`. Amendments are not resolved there; `sec_13f_holdings_effective`
+  (and `sec_13f_filings_effective`) applies the rule: per manager and period the
+  latest original or `RESTATEMENT` filing is the base and `NEW HOLDINGS`
+  amendments filed on or after it are added, with `effective_filing_date` as the
+  point-in-time column of the resolved set. Plus `sec_13f_submission` and
   `sec_13f_coverpage`. The archives are large: always filter. `sec fetch --dataset
   adv --run` adds the monthly Form ADV adviser reports (`sec_adv_advisers`: CRD,
   names, regulatory assets, whether the adviser runs hedge funds) and
@@ -341,6 +346,19 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   (`quantity_factor` vs `price_factor`); and `inventory` is on a split-neutral basis
   (compare within a symbol, never across). The `lane` column says where a symbol's
   prices come from (`us_extended` includes delisted names).
+- **Long ladder (derived)** — `positioning build --dataset long_ladder --run` runs the
+  same ladder on the long side over the amendment-resolved 13F holdings and writes
+  `positioning_long_ladder`: per CUSIP, quarter end (`period`) and aggregate (`all` =
+  every 13F filer, `cohort` = filers whose Form ADV says hedge funds, else private
+  funds; the flags exist only for filings from 2023). `flow` is the quarter's trading
+  summed over managers who filed both quarters; `drift_shares` is what came or went
+  with a manager entering or leaving the panel and is absorbed into the open lots
+  without a trade, so `inventory` equals the aggregate's level on the split-neutral
+  basis. Filings later than 60 days after the period are left out, which keeps
+  `published_at` between 45 and 60 days after the period; the lot price is the
+  quarter's mean close. `qc --dataset long_ladder` reconciles every stored level with
+  the sum of effective holdings. Shared-discretion rows (`DFND`) are counted as
+  filed, so a widely held name's level can exceed its shares outstanding.
 - **Factor view** — `positioning_factors` gives, per US common ticker and day from
   2018, `reversal_21d`, `momentum_12_1`, `specific_risk_63d` (annualised volatility
   of the return in excess of the sector median) and `short_interest_ratio` (latest
@@ -516,7 +534,7 @@ datacli/
 ├─ macro/                the macro source (FRED + EODHD series, DuckDB views)
 ├─ finra/                the FINRA source (Query API client, public daily files, short volume store, views)
 ├─ sec/                  the SEC source (Form 13F data sets: listing, download, raw store, views)
-├─ positioning/          derived datasets (split-neutral basis, FIFO lot ladder, short ladder store + view)
+├─ positioning/          derived datasets (split-neutral basis, FIFO lot ladder, short and long ladder stores + views)
 ├─ llm/                  shared model layer (LiteLLM behind one interface, budget, cache, tiers)
 ├─ scoring/              news scoring: schemas (TOML), backends (vendor / llm / embed), runner, `score` CLI
 ├─ lab/                  the Raw Data Lab (personas, skills, grounded agent, pipeline)

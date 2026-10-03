@@ -191,5 +191,105 @@ def test_scheduler_admits_the_positioning_family(tmp_path: Path) -> None:
         registry.validate("positioning", "build", [], context)
     with pytest.raises(CommandValidationError):
         registry.validate("positioning", "build", ["--run", "--full"], context)
-    with pytest.raises(CommandValidationError, match="no arguments"):
+    with pytest.raises(CommandValidationError, match="flags only"):
         registry.validate("positioning", "qc", ["x"], context)
+
+
+# --------------------------------------------------------------------------- #
+# the long ladder as a stored dataset (DD-002 WP9 step 5)
+# --------------------------------------------------------------------------- #
+def _long_source(con) -> None:
+    from test_positioning_long_ladder import build_panel, register
+
+    register(con, build_panel())
+
+
+def test_long_ladder_build_qc_views_and_restatement(tmp_path: Path) -> None:
+    from test_positioning_long_ladder import QUARTERS
+
+    con = duckdb.connect()
+    _long_source(con)
+    spec = dataset.LONG_LADDER
+    plan = dataset.build(con, tmp_path, run=False, dataset="long_ladder")
+    assert plan.partitions == len(QUARTERS) and len(plan.new) == len(QUARTERS) and plan.stats["unmapped"] == 0
+    assert not dataset.store(tmp_path, spec).days_on_disk()
+    first = dataset.build(con, tmp_path, run=True, dataset=spec)
+    assert dataset.store(tmp_path, spec).days_on_disk() == QUARTERS and not first.restated
+    assert dataset.build(con, tmp_path, run=True, dataset=spec).unchanged == len(QUARTERS)
+    assert dataset.qc(tmp_path, con, "long_ladder") == []
+    assert dataset.qc(tmp_path, None, "long_ladder") == []
+    # the short ladder store is untouched and reports itself empty
+    assert dataset.qc(tmp_path)[0].check == "empty" and dataset.status(tmp_path)["present"] is False
+    status = dataset.status(tmp_path, "long_ladder")
+    assert status["dataset"] == "long_ladder" and status["partitions"] == len(QUARTERS)
+    # views
+    registered = views.register(con, root=tmp_path)
+    assert registered[views.LONG_VIEW] is True and registered[views.VIEW] is False
+    n, aggs, lag = con.execute(
+        f"SELECT count(*), count(DISTINCT aggregate), min(published_at - period) FROM {views.LONG_VIEW}"
+    ).fetchone()
+    assert n == first.rows and aggs == 2 and lag == 45
+    profit, log_profit = con.execute(
+        f"SELECT profit_pct, long_profit_log FROM {views.LONG_VIEW} WHERE inventory > 0 LIMIT 1"
+    ).fetchone()
+    assert log_profit == pytest.approx(__import__("math").log(1 + profit))
+    assert con.execute(f"SELECT count(*) FROM {views.LONG_STATE_VIEW}").fetchone()[0] == len(QUARTERS)
+    assert views.LONG_VIEW in views.schema_snippet() and views.LONG_VIEW not in views.schema_snippet(long_ladder=False)
+    # a late-arriving amendment inside the window restates that period and the ones after
+    con.execute("CREATE OR REPLACE VIEW _rows2 AS SELECT * FROM _rows")
+    con.execute(
+        "CREATE OR REPLACE VIEW sec_13f_holdings AS "
+        "SELECT r.*, s.cik, s.filing_date, s.period, s.submission_type, c.is_amendment, c.amendment_type "
+        "FROM (SELECT accession_number, cusip, CASE WHEN cusip = 'CUS000000' THEN shares + 1 ELSE shares END AS shares, "
+        "share_type, put_call FROM _rows) r JOIN _subs s USING (accession_number) JOIN _covers c USING (accession_number)"
+    )
+    plan = dataset.build(con, tmp_path, run=False, dataset=spec)
+    assert not plan.new and plan.restated and plan.restated[0] == QUARTERS[0]
+    with pytest.raises(ValueError, match="unknown positioning dataset"):
+        dataset.build(con, tmp_path, run=False, dataset="mid_ladder")
+
+
+def test_cli_long_ladder_dataset_flag(tmp_path: Path, monkeypatch, capsys) -> None:
+    con = duckdb.connect()
+    _long_source(con)
+    monkeypatch.setenv(ENV_ROOT, str(tmp_path))
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("DATACLI_LOCKS_HELD", "1")
+    monkeypatch.setattr(cli, "_connect", lambda: con)
+    assert cli.main(["build", "--dataset", "long_ladder"]) == 0
+    out = capsys.readouterr().out
+    assert "long_ladder plan (dry run)" in out and "left out" in out
+    assert cli.main(["build", "--dataset", "long_ladder", "--run"]) == 0
+    assert len(dataset.store(tmp_path, dataset.LONG_LADDER).days_on_disk()) == 12
+    capsys.readouterr()
+    assert cli.main(["status", "--json"]) == 0
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert [d["dataset"] for d in payload["datasets"]] == ["short_ladder", "long_ladder"]
+    assert payload["datasets"][1]["partitions"] == 12 and payload["datasets"][0]["present"] is False
+    assert cli.main(["qc", "--dataset", "long_ladder"]) == 0
+    assert "long_ladder: no findings" in capsys.readouterr().out
+    assert cli.main(["qc"]) == 0  # the short ladder: empty is a warning, not an error
+    assert cli.main(["build", "--dataset", "mid_ladder"]) == 2
+    assert cli.main(["qc", "extra"]) == 2
+
+
+def test_scheduler_admits_the_dataset_flag_and_claims_the_sec_root(tmp_path: Path) -> None:
+    from scheduler.commands import CommandValidationError, ValidationContext, default_registry
+
+    data = tmp_path / "data"
+    data.mkdir()
+    config = tmp_path / "datacli.toml"
+    config.write_text(f'[eodhd]\ndata_root = "{data.as_posix()}"\n', encoding="utf-8")
+    context = ValidationContext.current(_REPO_ROOT, Path(sys.executable), config, environment={})
+    registry = default_registry()
+    build = registry.validate("positioning", "build", ["--dataset", "long_ladder", "--run"], context)
+    names = {b.name: b for b in build.bindings}
+    claims = {c.resource_id: c.mode for c in build.spec.resources}
+    assert Path(names["sec_data_root"].resolved_value).name == "sec"
+    assert claims[names["sec_data_root"].resource_id] == "shared"
+    assert claims[names["positioning_data_root"].resource_id] == "exclusive"
+    assert registry.validate("positioning", "qc", ["--dataset", "long_ladder"], context).spec.resources
+    with pytest.raises(CommandValidationError, match="unknown positioning dataset"):
+        registry.validate("positioning", "build", ["--dataset", "mid_ladder", "--run"], context)
+    with pytest.raises(CommandValidationError, match="unknown positioning dataset"):
+        registry.validate("positioning", "qc", ["--dataset", "x"], context)

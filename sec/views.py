@@ -11,6 +11,17 @@
   amendments (``is_amendment``, ``amendment_type``) and must never use a row
   before its ``filing_date``.
 
+- ``sec_13f_filings_effective`` / ``sec_13f_holdings_effective`` -- the
+  amendment rule applied (DD-002 WP9 step 1): per ``(cik, period)`` the latest
+  original or ``RESTATEMENT`` filing is the base and every ``NEW HOLDINGS``
+  amendment filed on or after it is added; an untyped amendment counts as a
+  restatement, an addition with no base stands alone. ``effective_filing_date``
+  is the date of the last filing that shaped the manager's holdings for the
+  period (the point-in-time column of the resolved set); a row's own
+  ``filing_date`` can be earlier. Nothing is cut by lateness here: a
+  restatement filed years later replaces the original in this view. The long
+  ladder applies a lateness cutoff through ``effective_filings_sql``.
+
 ``value_usd`` multiplies the reported value by the filing's ``value_factor``
 from ``FILING_UNITS`` (``form13f.build_units``): the form switched from
 thousands of dollars to dollars for filings on or after 2023-01-03, but some
@@ -36,6 +47,10 @@ UNITS_VIEW = "sec_13f_filing_units"
 STATE_VIEW = "sec_13f_state"
 ADV_VIEW = "sec_adv_advisers"
 COHORT_VIEW = "sec_13f_manager_cohort"
+FILINGS_EFFECTIVE_VIEW = "sec_13f_filings_effective"
+HOLDINGS_EFFECTIVE_VIEW = "sec_13f_holdings_effective"
+#: ``filing_kind`` values of an effective filing.
+FILING_KINDS: tuple[str, ...] = ("original", "restatement", "addition")
 DOLLARS_FROM = form13f.DOLLARS_FROM.isoformat()
 
 _DATE = "CAST(strptime({col}, '%d-%b-%Y') AS DATE)"
@@ -44,6 +59,7 @@ _DATE = "CAST(strptime({col}, '%d-%b-%Y') AS DATE)"
 def register(con: Any, *, root: Path | None = None) -> dict[str, bool]:
     base = Path(root) if root is not None else sec_root()
     result = {HOLDINGS_VIEW: _register_13f(con, base)}
+    result[HOLDINGS_EFFECTIVE_VIEW] = result[HOLDINGS_VIEW] and register_effective(con)
     result[ADV_VIEW] = _register_adv(con, base)
     result[COHORT_VIEW] = result[HOLDINGS_VIEW] and result[ADV_VIEW] and _register_cohort(con)
     return result
@@ -69,6 +85,53 @@ def _register_adv(con: Any, base: Path) -> bool:
         'TRY_CAST("Total Gross Assets of Private Funds" AS DOUBLE) AS private_fund_gross_assets, '
         'TRY_CAST("5F(2)(c)" AS DOUBLE) AS raum_total '
         f"FROM read_parquet('{glob}', union_by_name=true)"
+    )
+    return True
+
+
+def effective_filings_sql(late_days: int | None = None) -> str:
+    """SQL for the filings that shape each ``(cik, period)``'s effective holdings (S20).
+
+    One row per effective filing: ``accession_number, cik, period, filing_date,
+    filing_kind``. With ``late_days`` a filing dated more than that many days
+    after its period is ignored altogether, so the result is what a reader on
+    ``period + late_days`` could have known: a late restatement then leaves
+    the original in place instead of replacing it.
+    """
+    cutoff = "" if late_days is None else f" AND s.filing_date <= s.period + {int(late_days)}"
+    return (
+        "WITH _typed AS ("
+        "SELECT s.accession_number, s.cik, s.period, s.filing_date, "
+        "CASE WHEN c.amendment_type = 'NEW HOLDINGS' THEN 'addition' "
+        "WHEN c.amendment_type = 'RESTATEMENT' OR coalesce(c.is_amendment, FALSE) "
+        "OR s.submission_type LIKE '%/A' THEN 'restatement' ELSE 'original' END AS filing_kind "
+        f"FROM {SUBMISSION_VIEW} s LEFT JOIN {COVER_VIEW} c USING (accession_number) "
+        "WHERE s.submission_type LIKE '13F-HR%' AND s.period IS NOT NULL "
+        f"AND s.filing_date IS NOT NULL{cutoff}), "
+        "_base AS (SELECT accession_number, cik, period, filing_date, filing_kind FROM ("
+        "SELECT *, row_number() OVER (PARTITION BY cik, period "
+        "ORDER BY filing_date DESC, accession_number DESC) AS _rn "
+        "FROM _typed WHERE filing_kind <> 'addition') WHERE _rn = 1), "
+        "_additions AS (SELECT t.accession_number, t.cik, t.period, t.filing_date, t.filing_kind "
+        "FROM _typed t LEFT JOIN _base b USING (cik, period) "
+        "WHERE t.filing_kind = 'addition' AND (b.accession_number IS NULL OR t.filing_date >= b.filing_date)) "
+        "SELECT * FROM _base UNION ALL SELECT * FROM _additions"
+    )
+
+
+def register_effective(con: Any) -> bool:
+    """``sec_13f_filings_effective`` and ``sec_13f_holdings_effective`` over the raw views."""
+    con.execute(
+        f"CREATE OR REPLACE VIEW {FILINGS_EFFECTIVE_VIEW} AS "
+        "SELECT e.accession_number, e.cik, e.period, e.filing_date, e.filing_kind, "
+        "max(e.filing_date) OVER (PARTITION BY e.cik, e.period) AS effective_filing_date, "
+        "count(*) OVER (PARTITION BY e.cik, e.period) AS n_effective_filings "
+        f"FROM ({effective_filings_sql()}) e"
+    )
+    con.execute(
+        f"CREATE OR REPLACE VIEW {HOLDINGS_EFFECTIVE_VIEW} AS "
+        "SELECT h.*, e.filing_kind, e.effective_filing_date, e.n_effective_filings "
+        f"FROM {HOLDINGS_VIEW} h JOIN {FILINGS_EFFECTIVE_VIEW} e USING (accession_number)"
     )
     return True
 
@@ -163,6 +226,13 @@ def schema_snippet() -> str:
             "  public (up to 45 days later, the point-in-time column); share_type SH = shares, PRN =",
             "  bond principal; put_call NULL = the security itself; amendments are NOT resolved;",
             "  very large, always filter by period, filing_date, cik or cusip]",
+            f"- {HOLDINGS_EFFECTIVE_VIEW}(... the same columns ..., filing_kind, effective_filing_date, "
+            "n_effective_filings)",
+            "  [amendments resolved: per (cik, period) the latest original or RESTATEMENT is the base",
+            "  and NEW HOLDINGS amendments filed on or after it are added; effective_filing_date =",
+            "  the last filing that shaped the manager's holdings for the period, use it ASOF]",
+            f"- {FILINGS_EFFECTIVE_VIEW}(accession_number, cik, period, filing_date, filing_kind, "
+            "effective_filing_date, n_effective_filings)",
             f"- {SUBMISSION_VIEW}(accession_number, filing_date, submission_type, cik, period)",
             f"- {COVER_VIEW}(accession_number, manager_name, crd_number, sec_file_number, "
             "form13f_file_number, report_type, is_amendment, amendment_no, amendment_type)",

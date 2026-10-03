@@ -143,6 +143,7 @@ CAPABILITIES = (
 )
 
 FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest", "fails_to_deliver"}
+POSITIONING_DATASETS: tuple[str, ...] = ("short_ladder", "long_ladder")
 FINRA_TRANSPORTS = {"cdn", "api", "sec"}
 SEC_DATASETS = {"form13f", "adv"}
 
@@ -584,10 +585,13 @@ class CommandRegistry:
                 raise CommandValidationError(f"unknown FINRA dataset: {dataset}")
         elif identity == "positioning build":
             positionals, options = _parse_known_options(
-                argv, boolean={"--run"}, scalar=set()
+                argv, boolean={"--run"}, scalar={"--dataset"}
             )
             if positionals:
                 raise CommandValidationError("positioning build takes flags only")
+            dataset = options.get("--dataset", [POSITIONING_DATASETS[0]])[-1]
+            if dataset not in POSITIONING_DATASETS:
+                raise CommandValidationError(f"unknown positioning dataset: {dataset}")
         elif identity == "positioning status":
             positionals, options = _parse_known_options(
                 argv, boolean={"--json"}, scalar=set()
@@ -595,9 +599,14 @@ class CommandRegistry:
             if positionals:
                 raise CommandValidationError("positioning status takes flags only")
         elif identity == "positioning qc":
-            if argv:
-                raise CommandValidationError("positioning qc takes no arguments")
-            options = {}
+            positionals, options = _parse_known_options(
+                argv, boolean=set(), scalar={"--dataset"}
+            )
+            if positionals:
+                raise CommandValidationError("positioning qc takes flags only")
+            dataset = options.get("--dataset", [POSITIONING_DATASETS[0]])[-1]
+            if dataset not in POSITIONING_DATASETS:
+                raise CommandValidationError(f"unknown positioning dataset: {dataset}")
         elif identity == "sec fetch":
             positionals, options = _parse_known_options(
                 argv, boolean={"--run", "--full"}, scalar={"--limit", "--dataset"}
@@ -723,10 +732,11 @@ class CommandRegistry:
             )
 
         if capability.family == "positioning":
-            # derived from the eodhd and finra roots: read both, own its own
+            # derived from the eodhd, finra and sec roots: read all three, own its own
             for name, path, source in (
                 ("eodhd_data_root", eodhd_root, root_source),
                 ("finra_data_root", *_sibling_root(config, "finra", eodhd_root)),
+                ("sec_data_root", *_sibling_root(config, "sec", eodhd_root)),
             ):
                 read_binding = _binding(name, path, source)
                 bindings.append(read_binding)

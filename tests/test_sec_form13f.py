@@ -191,6 +191,13 @@ def test_views_types_units_and_point_in_time_columns(tmp_path: Path) -> None:
     assert rows[2][7] == 10111 and rows[2][8] == 'MANAGER "111" LP' and rows[2][9] is False
     assert con.execute(f"SELECT count(*) FROM {views.SUBMISSION_VIEW}").fetchone()[0] == 3
     assert views.HOLDINGS_VIEW in views.schema_snippet()
+    # no amendments in the fixture: the effective views carry every filing as an original
+    effective = con.execute(
+        f"SELECT filing_kind, n_effective_filings, effective_filing_date = filing_date "
+        f"FROM {views.HOLDINGS_EFFECTIVE_VIEW}"
+    ).fetchall()
+    assert len(effective) == 4 and set(effective) == {("original", 1, True)}
+    assert con.execute(f"SELECT count(*) FROM {views.FILINGS_EFFECTIVE_VIEW}").fetchone()[0] == 3
     assert cli.qc(tmp_path) == []
 
 

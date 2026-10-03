@@ -1,8 +1,9 @@
 """``positioning`` command group: status / build / qc for the derived datasets.
 
-``build`` is a dry run unless ``--run``: it recomputes the short ladder from
-the local short interest, prices and splits (no network) and reports which
-settlement dates are new or restated; ``--run`` writes them.
+``build`` is a dry run unless ``--run``: it recomputes a ladder from the local
+views (no network) and reports which dates are new or restated; ``--run``
+writes them. ``--dataset`` picks the short ladder (default, over FINRA short
+interest) or the long ladder (over SEC 13F holdings).
 """
 
 from __future__ import annotations
@@ -34,24 +35,33 @@ COMMANDS: dict[str, Command] = {
         Command(
             "status",
             "What derived positioning data is on disk (bare `positioning` does this)",
-            "Show the stored short ladder: settlement dates, rows, restated\n"
-            "partitions and the last build. Reads local files only.",
+            "Show the stored ladders: dates, rows, restated partitions and the\n"
+            "last build. Reads local files only.",
             (Flag("--json", "machine-readable output"),),
         ),
         Command(
             "build",
-            "Rebuild the short ladder from local data (dry run unless --run)",
-            "Recompute the FIFO lot ladder over FINRA short interest, EODHD prices\n"
-            "and splits, and compare it with the store. WITHOUT --run nothing is\n"
-            "written: the plan lists new and restated settlement dates. With --run\n"
-            "the changed partitions are replaced atomically. No network access.",
-            (Flag("--run", "write the changed partitions (default is a dry run)"),),
+            "Rebuild a ladder from local data (dry run unless --run)",
+            "Recompute the FIFO lot ladder and compare it with the store. WITHOUT\n"
+            "--run nothing is written: the plan lists new and restated dates. With\n"
+            "--run the changed partitions are replaced atomically. No network.\n\n"
+            "short_ladder (default): over FINRA short interest, EODHD prices and\n"
+            "splits, one file per settlement date (seconds).\n"
+            "long_ladder: over SEC 13F holdings (amendments resolved, the\n"
+            "hedge-fund cohort from Form ADV, flows over managers present in both\n"
+            "quarters), one file per quarter end (minutes).",
+            (
+                Flag("--dataset", "short_ladder (default) or long_ladder", metavar="<name>"),
+                Flag("--run", "write the changed partitions (default is a dry run)"),
+            ),
         ),
         Command(
             "qc",
-            "Quality checks over the stored short ladder",
+            "Quality checks over a stored ladder",
             "Check the store against its state sidecar and its own invariants, and\n"
-            "report whether the source short interest is ahead of it.",
+            "report whether the source is ahead of it. For the long ladder every\n"
+            "stored level is reconciled with the sum of effective 13F holdings.",
+            (Flag("--dataset", "short_ladder (default) or long_ladder", metavar="<name>"),),
         ),
     )
 }
@@ -64,7 +74,7 @@ def command_help(name: str) -> str:
 def top_help() -> str:
     return "\n".join(
         [
-            f"{PROG} -- derived point-in-time positioning datasets (short ladder)",
+            f"{PROG} -- derived point-in-time positioning datasets (short and long ladders)",
             "",
             f"Usage:  {PROG} <command> [flags]      (bare `{PROG}` == `{PROG} status`)",
             "",
@@ -103,9 +113,9 @@ def cmd_status(argv: list[str]) -> int:
     if done is not None:
         return done
     root, source = pos_config.resolve_root()
-    entry = dataset.status(root)
+    entries = [dataset.status(root, name) for name in dataset.DATASETS]
     if "--json" in flags:
-        payload = {"root": str(root), "root_source": source, "datasets": [entry]}
+        payload = {"root": str(root), "root_source": source, "datasets": entries}
         print(jsonlib.dumps(payload, indent=2))
         return 0
     console = _render.make_console()
@@ -114,21 +124,31 @@ def cmd_status(argv: list[str]) -> int:
     for name in ("dataset", "dates", "first", "last", "rows", "restated", "last build"):
         table.add_column(name, no_wrap=True)
     dash = Text("-", style="dim")
-    table.add_row(
-        entry["dataset"],
-        str(entry["partitions"]) if entry["present"] else dash,
-        entry["first"] or dash,
-        entry["last"] or dash,
-        _render.fmt_int(entry["rows"]) if entry["present"] else dash,
-        str(entry["restated"]) if entry["present"] else dash,
-        (entry["last_build"] or "")[:16].replace("T", " ") or dash,
-    )
-    console.print(table)
-    if not entry["present"]:
-        console.print(
-            Text("nothing built yet -- run:  positioning build --run", style="dim")
+    for entry in entries:
+        table.add_row(
+            entry["dataset"],
+            str(entry["partitions"]) if entry["present"] else dash,
+            entry["first"] or dash,
+            entry["last"] or dash,
+            _render.fmt_int(entry["rows"]) if entry["present"] else dash,
+            str(entry["restated"]) if entry["present"] else dash,
+            (entry["last_build"] or "")[:16].replace("T", " ") or dash,
         )
+    console.print(table)
+    for entry in entries:
+        if not entry["present"]:
+            console.print(
+                Text(f"{entry['dataset']} not built yet -- run:  {dataset.spec_of(entry['dataset']).build_hint}", style="dim")
+            )
     return 0
+
+
+def _dataset_flag(flags: dict[str, Any], console: Any) -> dataset.Spec | None:
+    name = str(flags.get("--dataset", dataset.DATASETS[0]))
+    if name not in dataset.DATASETS:
+        ct.bad_choice(console, "dataset", name, dataset.DATASETS)
+        return None
+    return dataset.spec_of(name)
 
 
 def cmd_build(argv: list[str]) -> int:
@@ -141,23 +161,31 @@ def cmd_build(argv: list[str]) -> int:
     if rest:
         console.print(Text(f"build takes flags only, got {rest}", style="red"))
         return 2
+    spec = _dataset_flag(flags, console)
+    if spec is None:
+        return 2
     root, _ = pos_config.resolve_root()
     run = "--run" in flags
-    report = dataset.build(_connect(), root, run=run)
+    report = dataset.build(_connect(), root, run=run, dataset=spec)
     verb = "built" if run else "plan (dry run)"
-    console.print(Text(f"short_ladder {verb}: {root}", style="bold"))
+    console.print(Text(f"{spec.name} {verb}: {root}", style="bold"))
     if report.partitions == 0:
         console.print(
             Text(
-                "no short interest with prices found; fetch finra short_interest first",
+                f"no {spec.source_hint} with prices found; fetch the source first",
                 style="yellow",
             )
         )
         return 1
     console.print(
-        f"  computed   {report.partitions} settlement dates, "
-        f"{_render.fmt_int(report.rows)} rows, {_render.fmt_int(report.symbols)} symbols"
+        f"  computed   {report.partitions} {spec.partition.replace('_', ' ')}s, "
+        f"{_render.fmt_int(report.rows)} rows, {_render.fmt_int(report.symbols)} {spec.symbol}s"
     )
+    if report.stats:
+        console.print(
+            "  left out   "
+            + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in report.stats.items() if k not in ("securities", "periods"))
+        )
     console.print(f"  new        {_dates(report.new)}")
     console.print(f"  restated   {_dates(report.restated)}")
     console.print(f"  unchanged  {report.unchanged}")
@@ -176,21 +204,24 @@ def cmd_build(argv: list[str]) -> int:
 def cmd_qc(argv: list[str]) -> int:
     from rich.text import Text
 
-    _, rest, done = _args("qc", argv)
+    flags, rest, done = _args("qc", argv)
     if done is not None:
         return done
     console = _render.make_console()
     if rest:
-        console.print(Text(f"qc takes no arguments, got {rest}", style="red"))
+        console.print(Text(f"qc takes flags only, got {rest}", style="red"))
+        return 2
+    spec = _dataset_flag(flags, console)
+    if spec is None:
         return 2
     root, _ = pos_config.resolve_root()
     try:
         con = _connect()
     except Exception:
         con = None
-    findings = dataset.qc(root, con)
+    findings = dataset.qc(root, con, spec)
     if not findings:
-        console.print(Text("short_ladder: no findings", style="green"))
+        console.print(Text(f"{spec.name}: no findings", style="green"))
         return 0
     for finding in findings:
         style = "red" if finding.severity == "error" else "yellow"
