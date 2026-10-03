@@ -261,13 +261,13 @@ class RegistersPlugin(SourcePlugin):
     """registers source -- public net short position registers, per holder."""
 
     name = "registers"
-    summary = "Public net short position registers, per holder: FCA (UK, history to 2026-07), AMF (France, live)"
+    summary = "Public net short position registers, per holder: FCA (UK, history to 2026-07), AMF, AFM, FI, Finanstilsynet, CBI, Bundesanzeiger (live)"
 
     def command_names(self) -> list[str]:
         return ["status", "fetch", "qc"]
 
     def detail(self) -> str:
-        return "2 markets"
+        return "7 markets"
 
     def run(self, command: str, argv: list[str]) -> int:
         import registers.cli as registers_cli

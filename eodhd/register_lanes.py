@@ -35,6 +35,9 @@ class LaneSpec:
     currencies: frozenset[str]
     tickers_file: str
     default_from: str = "2012-01-01"
+    #: Further exchanges whose lists contribute the register's names only (Frankfurt for the
+    #: German register: XETRA lists 270 of its 1,042 ISINs, Frankfurt 574).
+    extra_exchanges: tuple[str, ...] = ()
 
     @property
     def raw_dir(self) -> Path:
@@ -49,6 +52,31 @@ class LaneSpec:
         return self.raw_dir / "register_unmatched.csv"
 
 
+#: The register lanes served by the generic scripts (``--lane``); the UK and France keep their own.
+LANE_SPECS: dict[str, LaneSpec] = {
+    "nl_domestic": LaneSpec(name="nl_domestic", market="nl", exchange="AS", currencies=frozenset({"EUR"}), tickers_file="tickers_NL.parquet"),
+    "se_domestic": LaneSpec(name="se_domestic", market="se", exchange="ST", currencies=frozenset({"SEK"}), tickers_file="tickers_SE.parquet", default_from="2010-01-01"),
+    "no_domestic": LaneSpec(name="no_domestic", market="no", exchange="OL", currencies=frozenset({"NOK"}), tickers_file="tickers_NO.parquet"),
+    "ie_domestic": LaneSpec(name="ie_domestic", market="ie", exchange="IR", currencies=frozenset({"EUR"}), tickers_file="tickers_IE.parquet"),
+    "de_domestic": LaneSpec(name="de_domestic", market="de", exchange="XETRA", currencies=frozenset({"EUR"}), tickers_file="tickers_DE.parquet", extra_exchanges=("F",)),
+}
+
+
+def take_lane(argv: list[str]) -> str:
+    """Remove ``--lane NAME`` from ``argv`` and return the name (a ``LANE_SPECS`` key)."""
+    if "--lane" not in argv:
+        raise SystemExit("--lane NAME is required (one of " + ", ".join(LANE_SPECS) + ")")
+    i = argv.index("--lane")
+    try:
+        name = argv[i + 1]
+    except IndexError:
+        raise SystemExit("--lane needs a name") from None
+    del argv[i : i + 2]
+    if name not in LANE_SPECS:
+        raise SystemExit(f"unknown lane {name!r}; expected one of " + ", ".join(LANE_SPECS))
+    return name
+
+
 def select_universe(
     active: Iterable[Mapping[str, Any]],
     delisted: Iterable[Mapping[str, Any]],
@@ -56,22 +84,38 @@ def select_universe(
     *,
     currencies: frozenset[str],
 ) -> tuple[pd.DataFrame, set[str]]:
-    """The lane's rows and the register ISINs no list knows. A code in both lists is taken from the active one."""
+    """The lane's rows and the register ISINs no list knows.
+
+    A code in both lists is taken from the active one. Rows of an extra
+    exchange (``extra`` is the row's ``Exchange`` not equal to the lane's)
+    are kept only for the register's names, and an ISIN already taken from
+    an earlier list is not taken again.
+    """
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
+    seen_isins: set[str] = set()
+    primary_exchange: str | None = None
     for source, is_delisted in ((active, False), (delisted, True)):
         for raw in source:
             code = str(raw.get("Code", "")).strip()
-            if not code or code in seen:
+            exchange = str(raw.get("Exchange", "")).strip()
+            if primary_exchange is None:
+                primary_exchange = exchange
+            if not code or (code, exchange) in seen:
                 continue
             if str(raw.get("Type", "")).strip().lower() not in KEEP_TYPES:
                 continue
             currency = str(raw.get("Currency", "")).strip().upper()
             isin = str(raw.get("Isin", "") or "").strip().upper()
             in_register = bool(isin) and isin in register_isins
-            if currency not in currencies and not in_register:
+            extra = exchange != primary_exchange
+            if (currency not in currencies and not in_register) or (extra and not in_register):
                 continue
-            seen.add(code)
+            if isin and isin in seen_isins:
+                continue
+            seen.add((code, exchange))
+            if isin:
+                seen_isins.add(isin)
             row = {column: raw.get(column, "") for column in COLUMNS}
             row.update(delisted=is_delisted, in_register=in_register)
             rows.append(row)
@@ -104,9 +148,15 @@ def build_universe(spec: LaneSpec, *, plan: bool, log: logging.Logger) -> None:
     log.info("Register ISINs (%s): %d", spec.market, len(wanted))
     session = requests.Session()
     session.params = {"api_token": _get_api_key()}
-    active = fetch_symbol_list(session, spec.exchange, delisted=False)
-    delisted = fetch_symbol_list(session, spec.exchange, delisted=True)
-    log.info("Provider lists: %d active, %d delisted", len(active), len(delisted))
+    active: list[dict] = []
+    delisted: list[dict] = []
+    for exchange in (spec.exchange, *spec.extra_exchanges):
+        for target, flag in ((active, False), (delisted, True)):
+            for row in fetch_symbol_list(session, exchange, delisted=flag):
+                row = dict(row)
+                row["Exchange"] = exchange  # the provider's lists carry the venue inconsistently
+                target.append(row)
+    log.info("Provider lists: %d active, %d delisted (%s)", len(active), len(delisted), ", ".join((spec.exchange, *spec.extra_exchanges)))
     universe, unmatched = select_universe(active, delisted, wanted, currencies=spec.currencies)
     log.info(
         "Universe %d (%d delisted, %d in the register); register ISINs unmatched %d",
@@ -165,7 +215,12 @@ class TargetLoader:
             universe = universe[~universe["delisted"].astype(bool)]
         if self.register_only and "in_register" in universe.columns:
             universe = universe[universe["in_register"].astype(bool)]
-        tickers = [(str(code).strip(), self.exchange) for code in universe["Code"] if str(code).strip()]
+        exchanges = universe["Exchange"].astype(str).str.strip() if "Exchange" in universe.columns else pd.Series("", index=universe.index)
+        tickers = [
+            (str(code).strip(), exchange or self.exchange)
+            for code, exchange in zip(universe["Code"], exchanges)
+            if str(code).strip()
+        ]
         return tickers[: limit or None]
 
 

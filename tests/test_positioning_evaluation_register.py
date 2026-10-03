@@ -83,3 +83,20 @@ def test_run_family_finds_a_planted_bearish_signal() -> None:
     noise = table[(table.feature == "age_days") & (table.cleaning == "none")]
     assert not noise.significant.any()
     assert all(r.n_dates >= 60 for r in results)  # 300 business days from a Friday span 61 ISO weeks
+
+
+def test_pooled_observations_adjust_within_market_and_the_ledger_starts_after_pre_registration() -> None:
+    dates = pd.bdate_range("2026-09-21", "2026-10-09")
+    rows = []
+    for market, n, drift in (("fr", 6, 0.0), ("nl", 3, 0.5)):  # nl has fewer than 5 names: left out
+        for k in range(n):
+            rows.append(pd.DataFrame({"market": market, "isin": f"{market}{k}", "date": dates, "n_holders": 1, "level": 1.0, "flow": 0.0,
+                                      "adjusted_close": 10.0 * (1 + drift) ** np.arange(len(dates)) * (1 + 0.01 * k),
+                                      "entries": 0, "exits": 0, "age_days": 1.0, "profit_pct": 0.0, "reversal_21d": 0.0, "momentum_12_1": 0.0}))
+    frame = er.add_features(pd.concat(rows, ignore_index=True))
+    obs = er.observations(frame, sample_end=None, by_market=True)
+    assert set(obs["market"]) == {"fr"} and obs["date"].nunique() == 3
+    assert obs.groupby("date")["ret_adj_5"].median().abs().max() == pytest.approx(0.0)
+    book = er.ledger(obs)
+    assert book["date"].min() > pd.Timestamp(er.LEDGER_START) and book["date"].nunique() == 1
+    assert er.EU_MARKETS == ("fr", "nl", "se", "no", "ie", "de") and er.LEDGER_MIN_DATES == 26

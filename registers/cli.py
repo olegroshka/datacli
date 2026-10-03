@@ -19,7 +19,7 @@ import _cmdtable as ct  # type: ignore[import-not-found]  # noqa: E402
 import _render  # type: ignore[import-not-found]  # noqa: E402
 from _cmdtable import Command, Flag  # type: ignore[import-not-found]  # noqa: E402
 
-from registers import amf, common, fca  # noqa: E402
+from registers import amf, common, eu, fca  # noqa: E402
 from registers import config as registers_config  # noqa: E402
 
 PROG = "registers"
@@ -36,13 +36,15 @@ COMMANDS: dict[str, Command] = {
         Command(
             "fetch",
             "Fetch the published histories (dry run unless --run)",
-            "Download each market's published file (uk: the FCA workbook, frozen since\n"
-            "2026-07-11; fr: the AMF CSV named by the data.gouv.fr API), parse it strictly,\n"
+            "Download each market's published file(s) (uk: the FCA workbook, frozen since\n"
+            "2026-07-11; fr: the AMF CSV named by the data.gouv.fr API; nl, se, no, ie, de:\n"
+            "the AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland and\n"
+            "Bundesanzeiger files), parse them strictly,\n"
             "and replace the stored history when the file changed. A file with fewer rows\n"
             "than the stored one is refused. WITHOUT --run nothing is written.",
             (
                 Flag("--run", "store the histories (default is a dry run)"),
-                Flag("--market", "one market only: uk or fr (default: all)", metavar="MARKET"),
+                Flag("--market", "one market only: uk, fr, nl, se, no, ie or de (default: all)", metavar="MARKET"),
             ),
         ),
         Command(
@@ -54,7 +56,11 @@ COMMANDS: dict[str, Command] = {
     )
 }
 
-FETCHERS = {"uk": (fca.fetch, lambda data, source: fca.parse(data)), "fr": (amf.fetch, lambda data, source: amf.parse(data, file_date=amf.file_date_of(source)))}
+FETCHERS = {
+    "uk": (fca.fetch, lambda data, source: fca.parse(data)),
+    "fr": (amf.fetch, lambda data, source: amf.parse(data, file_date=amf.file_date_of(source))),
+    **{market: (fetch, (lambda parse: (lambda data, source: parse(data)))(parse)) for market, (fetch, parse) in eu.MARKETS.items()},
+}
 
 
 def command_help(name: str) -> str:
@@ -64,7 +70,7 @@ def command_help(name: str) -> str:
 def top_help() -> str:
     return "\n".join(
         [
-            f"{PROG} -- public net short position registers, per holder (FCA, AMF)",
+            f"{PROG} -- public net short position registers, per holder (FCA, AMF, AFM, FI, Finanstilsynet, CBI, Bundesanzeiger)",
             "",
             f"Usage:  {PROG} <command> [flags]      (bare `{PROG}` == `{PROG} status`)",
             "",

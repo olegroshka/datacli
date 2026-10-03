@@ -13,6 +13,8 @@ interpretation of the referenced files.
 
 from __future__ import annotations
 
+import dataclasses
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -455,6 +457,24 @@ LANES: dict[str, LaneConfig] = {
         universe_fetcher="fetch_eodhd_fr_universe.py",
         default_exchange="PA",
     ),
+    **{
+        name: _lane(
+            name,
+            region,
+            "common_ext",
+            tickers,
+            [prices_spec("fetch_eodhd_register_prices.py", args=("--lane", name))],
+            universe_fetcher="fetch_eodhd_register_universe.py",
+            default_exchange=exchange,
+        )
+        for name, region, tickers, exchange in (
+            ("nl_domestic", "NL", "tickers_NL.parquet", "AS"),
+            ("se_domestic", "SE", "tickers_SE.parquet", "ST"),
+            ("no_domestic", "NO", "tickers_NO.parquet", "OL"),
+            ("ie_domestic", "IE", "tickers_IE.parquet", "IR"),
+            ("de_domestic", "DE", "tickers_DE.parquet", "XETRA"),
+        )
+    },
     "index_ref": _lane(
         "index_ref",
         "US",
@@ -503,6 +523,9 @@ LANES: dict[str, LaneConfig] = {
         ],
     ),
 }
+
+for _name in ("nl_domestic", "se_domestic", "no_domestic", "ie_domestic", "de_domestic"):
+    LANES[_name] = dataclasses.replace(LANES[_name], universe_fetcher_args=("--lane", _name))
 
 
 def iter_datasets(

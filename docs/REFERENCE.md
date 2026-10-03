@@ -30,7 +30,7 @@ Run any command with `--help` for its full options.
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
 | `borrow status \| fetch [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
-| `registers status \| fetch [--market uk\|fr] [--run] \| qc` | The registers source: public net short position registers per holder (FCA workbook, history to 2026-07; AMF CSV, live), one history file per market replaced when the regulator's file changes | `python -m registers.cli` |
+| `registers status \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change | `python -m registers.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
@@ -359,10 +359,13 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   (one row per visible register row with its ladder state) and `issuers.parquet` (the daily
   point-in-time issuer panel: visible holders, summed percent, flow, entries, exits, the
   percent-weighted FIFO age and short profit, the price factors). `scripts/register_eval.py`
-  runs EVAL-004 on it. Prices come from the register lanes `uk_domestic` and `fr_domestic`
-  (`eodhd/register_lanes.py`; `fetch_eodhd_{uk,fr}_universe.py`,
-  `fetch_eodhd_{uk,fr}_prices.py --register-only --include-delisted`: the exchange's domestic
-  common stocks, listed and delisted, the register's issuers first).
+  runs EVAL-004 on it, and `--market eu` EVAL-005 on the pooled live registers with the
+  out-of-sample ledger. Prices come from the register lanes (`eodhd/register_lanes.py`):
+  `uk_domestic` and `fr_domestic` through their own scripts, `nl_domestic`, `se_domestic`,
+  `no_domestic`, `ie_domestic` and `de_domestic` through
+  `fetch_eodhd_register_universe.py --lane NAME` and `fetch_eodhd_register_prices.py --lane NAME
+  --register-only --include-delisted` (the exchange's domestic common stocks, listed and
+  delisted, the register's issuers first; Germany reads XETRA and Frankfurt).
 - **CUSIP map (derived)** — `positioning_cusip_map` gives dated `(cusip, eodhd_code)` pairs
   from the fails-to-deliver files, the bridge from `sec_13f_holdings.cusip` to `prices`.
 - **Short ladder (derived)** — `positioning build --run` runs a FIFO lot ladder over

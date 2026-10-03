@@ -108,6 +108,11 @@ EODHD_LANES = {
     "us_extended",
     "uk_domestic",
     "fr_domestic",
+    "nl_domestic",
+    "se_domestic",
+    "no_domestic",
+    "ie_domestic",
+    "de_domestic",
     "index_ref",
     "uk_eu_etf",
     "uk_eu_index_ref",
@@ -660,8 +665,8 @@ class CommandRegistry:
             if positionals:
                 raise CommandValidationError("registers fetch takes flags only")
             market = options.get("--market")
-            if market is not None and market not in ("uk", "fr"):
-                raise CommandValidationError("registers fetch --market expects uk or fr")
+            if market is not None and market not in ("uk", "fr", "nl", "se", "no", "ie", "de"):
+                raise CommandValidationError("registers fetch --market expects one of uk, fr, nl, se, no, ie, de")
         elif identity == "registers status":
             positionals, options = _parse_known_options(
                 argv, boolean={"--json"}, scalar=set()

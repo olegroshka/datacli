@@ -51,7 +51,8 @@ def schema_snippet() -> str:
         [
             "Register views (public net short position registers, per holder):",
             f"- {VIEW}(market, holder, holder_lei, issuer, isin, net_short_pct, position_date, published_from, published_to, file_date)",
-            "  [market uk = FCA (history 2012-10 to 2026-07-09, frozen), fr = AMF (live); net_short_pct in percent of",
+            "  [market uk = FCA (history 2012-10 to 2026-07-09, frozen), fr = AMF, nl = AFM, se = FI (from 2010),",
+            "  no = Finanstilsynet (from 2024-10), ie = CBI, de = Bundesanzeiger (live); net_short_pct in percent of",
             "  the share capital, 0.0 = fell below the 0.5 percent publication threshold; visible from published_from;",
             "  a holder's row stands until the holder's next row for the ISIN; join isin to issuer_map for a ticker]",
             f"- {STATE_VIEW}(market, file_date, rows, fetched_at, source, detail)",

@@ -39,8 +39,14 @@ MIN_HISTORY_DAYS = 63
 FLOW_WINDOW = 21
 #: The UK register's last position date (the FCA publishes aggregates since).
 SAMPLE_END = date(2026, 7, 9)
-#: Per market: the UK sample is frozen; a live register (France) runs to its latest return.
-SAMPLE_ENDS: dict[str, date | None] = {"uk": SAMPLE_END, "fr": None}
+#: Per market: the UK sample is frozen; a live register runs to its latest return.
+SAMPLE_ENDS: dict[str, date | None] = {"uk": SAMPLE_END}
+#: EVAL-005: the registers still published per holder, pooled by date; returns adjusted within the issuer's market.
+EU_MARKETS: tuple[str, ...] = ("fr", "nl", "se", "no", "ie", "de")
+MIN_MARKET_NAMES = 5
+#: EVAL-005's out-of-sample ledger: observations after its pre-registration, read once it holds this many weeks.
+LEDGER_START = date(2026, 10, 3)
+LEDGER_MIN_DATES = 26
 FACTOR_SETS = {
     "none": (),
     "factors": ("reversal_21d", "momentum_12_1"),
@@ -96,19 +102,32 @@ def observations(
     horizons: Sequence[int] = HORIZONS,
     sample_end: date | None = SAMPLE_END,
     min_holders: int = MIN_HOLDERS,
+    by_market: bool = False,
 ) -> pd.DataFrame:
     """Weekly rows with a visible holder and an adjusted close, market-adjusted returns added.
 
     ``sample_end`` cuts a frozen register (the UK); ``None`` keeps every week.
+    With ``by_market`` (EVAL-005) the adjustment is the median of the issuer's
+    own market on the date, and a market with fewer than ``MIN_MARKET_NAMES``
+    rows on a date contributes none that date.
     """
     ends = week_ends(pd.DatetimeIndex(frame["date"].unique()))
     rows = frame[frame["date"].isin(ends) & (frame["n_holders"] >= min_holders) & frame["adjusted_close"].notna()]
     if sample_end is not None:
         rows = rows[rows["date"] <= pd.Timestamp(sample_end)]
     rows = rows.copy()
+    keys = ["market", "date"] if by_market else ["date"]
+    if by_market:
+        counts = rows.groupby(keys)["isin"].transform("size")
+        rows = rows[counts >= MIN_MARKET_NAMES].copy()
     for h in horizons:
-        rows[f"ret_adj_{h}"] = rows[f"ret_{h}"] - rows.groupby("date")[f"ret_{h}"].transform("median")
+        rows[f"ret_adj_{h}"] = rows[f"ret_{h}"] - rows.groupby(keys)[f"ret_{h}"].transform("median")
     return rows
+
+
+def ledger(frame: pd.DataFrame, *, start: date = LEDGER_START) -> pd.DataFrame:
+    """EVAL-005's out-of-sample rows: observations dated after ``start``."""
+    return frame[frame["date"] > pd.Timestamp(start)].copy()
 
 
 def halves(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

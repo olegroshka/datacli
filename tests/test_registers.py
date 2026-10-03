@@ -117,7 +117,7 @@ def test_refresh_stores_then_is_idempotent_replaces_on_change_and_refuses_a_shru
     broken = common.refresh("uk", lambda: (b"junk", "u"), fca.parse, tmp_path, run=True, now=clock)
     assert broken.outcome == "failed" and "RegisterError" in broken.detail
     with pytest.raises(common.RegisterError, match="unknown market"):
-        common.store(tmp_path, "de")
+        common.store(tmp_path, "xx")
 
 
 def test_status_qc_and_views_over_two_markets(tmp_path: Path) -> None:
@@ -129,8 +129,9 @@ def test_status_qc_and_views_over_two_markets(tmp_path: Path) -> None:
     entries = {e["market"]: e for e in common.status(tmp_path)}
     assert entries["uk"]["rows"] == 4 and entries["fr"]["rows"] == 3 and entries["fr"]["file_date"] == "2026-10-02"
     findings = common.qc(tmp_path, today=dt.date(2026, 10, 3))
-    assert [f[1] for f in findings] == ["uk_stale"]  # the frozen FCA file; the AMF file is one day old
-    assert findings[0][0] == "warn"
+    real = [f for f in findings if not f[1].endswith("_empty")]
+    assert [f[1] for f in real] == ["uk_stale"] and real[0][0] == "warn"  # the frozen FCA file; the AMF file is one day old
+    assert {f[1] for f in findings} - {"uk_stale"} == {f"{m}_empty" for m in common.MARKETS if m not in ("uk", "fr")}
     con = duckdb.connect()
     assert views.register(con, root=tmp_path) == {views.VIEW: True}
     table = con.execute(f"SELECT market, count(*) AS n FROM {views.VIEW} GROUP BY 1 ORDER BY 1").fetchall()

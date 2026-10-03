@@ -39,12 +39,20 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
     t0 = time.time()
-    directory = positioning_root() / register_panel.SUBDIR / args.market
-    panel = pd.read_parquet(directory / "issuers.parquet")
-    funds = pd.read_parquet(directory / "funds.parquet")
+    pooled = args.market == "eu"
+    markets = [m for m in er.EU_MARKETS if (positioning_root() / register_panel.SUBDIR / m / "issuers.parquet").exists()] if pooled else [args.market]
+    panels, fund_frames = [], []
+    for m in markets:
+        directory = positioning_root() / register_panel.SUBDIR / m
+        panels.append(pd.read_parquet(directory / "issuers.parquet"))
+        fund_frames.append(pd.read_parquet(directory / "funds.parquet"))
+    panel = pd.concat(panels, ignore_index=True)
+    funds = pd.concat(fund_frames, ignore_index=True)
     panel["date"] = pd.to_datetime(panel["date"])
     frame = er.add_features(panel)
-    obs = er.observations(frame, sample_end=er.SAMPLE_ENDS.get(args.market, None))
+    obs = er.observations(frame, sample_end=er.SAMPLE_ENDS.get(args.market, None), by_market=pooled)
+    if pooled:
+        print("pooled markets:", ", ".join(markets), "| rows per market:", obs.groupby("market").size().to_dict())
     print(f"panel {len(panel):,} issuer-days, {panel['isin'].nunique():,} issuers; observations {len(obs):,} over {obs['date'].nunique()} weeks "
           f"{obs['date'].min().date()} to {obs['date'].max().date()} ({time.time() - t0:.0f}s)")
     coverage = pd.DataFrame({
@@ -68,7 +76,8 @@ def main() -> int:
         table["p"] = table["p"].map(lambda v: f"{v:.2e}")
         size = results[0].family_size
         sig = [r for r in results if r.significant]
-        head = f"EVAL-004 {args.market}, {label}: {size} tests, Bonferroni p < {0.05 / size:.1e}; {len(sig)} clear it, {sum(r.sign_agrees for r in sig)} with SPEC's sign"
+        family = "EVAL-005 (pooled)" if pooled else f"EVAL-004 {args.market}"
+        head = f"{family}, {label}: {size} tests, Bonferroni p < {0.05 / size:.1e}; {len(sig)} clear it, {sum(r.sign_agrees for r in sig)} with SPEC's sign"
         print(f"\n== {head}")
         print(table.to_string(index=False))
         sections.append((head, _markdown(table)))
@@ -84,6 +93,18 @@ def main() -> int:
     print("\n== gate: split halves for level and profit_pct (no bar; sign agreement is the reading)")
     print(halves_table.to_string(index=False))
     sections.append(("gate: split halves for level and profit_pct (no bar)", _markdown(halves_table)))
+    if pooled:
+        book = er.ledger(obs)
+        weeks = int(book["date"].nunique())
+        line = f"out-of-sample ledger (after {er.LEDGER_START}): {weeks} weekly dates, {len(book):,} rows (read at {er.LEDGER_MIN_DATES})"
+        print(f"\n== {line}")
+        if weeks >= er.LEDGER_MIN_DATES:
+            table = ev.results_table(er.run_family(book))
+            table["p"] = table["p"].map(lambda v: f"{v:.2e}")
+            print(table.to_string(index=False))
+            sections.append((line, _markdown(table)))
+        else:
+            sections.append((line, "not read yet"))
     if args.out:
         lines = [f"# EVAL-004 run ({args.market}, positioning.evaluation_register)", "",
                  f"Run {time.strftime('%Y-%m-%d %H:%M')}; panel {len(panel):,} issuer-days over {panel['isin'].nunique():,} issuers; "

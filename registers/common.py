@@ -10,7 +10,8 @@ rows than the stored one is refused: a history must not shrink.
 
 Canonical columns (one row per published position change):
 
-- ``market``: ``uk`` (FCA) or ``fr`` (AMF);
+- ``market``: ``uk`` (FCA), ``fr`` (AMF), ``nl`` (AFM), ``se`` (Finansinspektionen),
+  ``no`` (Finanstilsynet), ``ie`` (Central Bank of Ireland), ``de`` (Bundesanzeiger);
 - ``holder``, ``holder_lei`` (the AMF publishes the LEI, the FCA does not);
 - ``issuer``, ``isin``;
 - ``net_short_pct``: percent of the issuer's share capital, as published
@@ -40,7 +41,9 @@ import pyarrow as pa
 
 import _atomic  # type: ignore[import-not-found]
 
-MARKETS: tuple[str, ...] = ("uk", "fr")
+MARKETS: tuple[str, ...] = ("uk", "fr", "nl", "se", "no", "ie", "de")
+#: Markets whose register is still published per holder (the UK's froze in July 2026).
+LIVE_MARKETS: tuple[str, ...] = ("fr", "nl", "se", "no", "ie", "de")
 PUBLICATION_THRESHOLD_PCT = 0.5
 
 SCHEMA = pa.schema(
@@ -70,6 +73,8 @@ class Parsed:
 
     file_date: dt.date
     rows: pd.DataFrame
+    #: Rows the parser left out (file trailers, rows without a key); reported, not stored.
+    dropped: int = 0
 
 
 def next_weekday(day: dt.date) -> dt.date:
@@ -159,28 +164,52 @@ class FetchReport:
         return self.outcome != "failed"
 
 
+Payload = bytes | dict[str, bytes]
+
+
+def _parts(payload: Payload) -> list[tuple[str, bytes]]:
+    if isinstance(payload, dict):
+        return sorted(payload.items())
+    return [("file", payload)]
+
+
+def digest(payload: Payload) -> str:
+    """sha256 over the named parts in name order (one file: its bytes)."""
+    h = hashlib.sha256()
+    for name, data in _parts(payload):
+        if isinstance(payload, dict):
+            h.update(name.encode("utf-8") + b"\0")
+        h.update(data)
+    return h.hexdigest()
+
+
+def size(payload: Payload) -> int:
+    return sum(len(data) for _, data in _parts(payload))
+
+
 def refresh(
     market: str,
-    fetch: Callable[[], tuple[bytes, str]],
-    parse: Callable[[bytes], Parsed],
+    fetch: Callable[[], tuple[Any, str]],
+    parse: Callable[[Any], Parsed],
     root: Path,
     *,
     run: bool,
     now: Callable[[], dt.datetime] | None = None,
 ) -> FetchReport:
-    """Fetch the published file; with ``run`` replace the stored history when it changed.
+    """Fetch the published file(s); with ``run`` replace the stored history when they changed.
 
-    ``fetch`` returns the raw bytes and a source label (the URL). Without
-    ``run`` the file is still downloaded and parsed but nothing is written.
+    ``fetch`` returns the raw bytes (or a dict of named parts for a register
+    published as several files) and a source label. Without ``run`` the
+    files are still downloaded and parsed but nothing is written.
     """
     clock = now or (lambda: dt.datetime.now(dt.timezone.utc))
     target = store(root, market)
     try:
         data, source = fetch()
         parsed = parse(data)
-    except (RegisterError, OSError, ValueError) as exc:
+    except (RegisterError, OSError, ValueError, KeyError) as exc:
         return FetchReport(market, run, root, None, 0, "failed", f"{type(exc).__name__}: {exc}")
-    sha = hashlib.sha256(data).hexdigest()
+    sha = digest(data)
     state = target.load_state()
     if state.get("sha256") == sha and target.exists():
         return FetchReport(market, run, root, parsed.file_date, len(parsed.rows), "unchanged")
@@ -203,7 +232,7 @@ def refresh(
             "file_date": parsed.file_date.isoformat(),
             "rows": int(len(parsed.rows)),
             "sha256": sha,
-            "bytes": int(len(data)),
+            "bytes": int(size(data)),
             "fetched_at": clock().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "source": source,
             "detail": detail,
