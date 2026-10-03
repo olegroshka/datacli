@@ -38,3 +38,14 @@ def test_carry_forward_is_visible_only_after_publication_and_until_the_next() ->
     late = pd.concat([obs, pd.DataFrame({"symbol": ["A", "A"], "published_at": pd.to_datetime(["2024-03-05", "2024-01-10"]), "value": [9.0, 1.5]})])
     wide2 = export.carry_forward_wide(late, dates=dates)
     assert wide2.loc["2024-01-11", "A"] == 1.5 and wide2.loc["2024-02-29", "A"] == 2.0
+
+
+def test_trading_days_drops_vendor_holiday_bars() -> None:
+    days = pd.bdate_range("2024-01-01", periods=10)
+    rows = [{"date": d, "ticker": t} for d in days for t in ("A", "B", "C", "D")]
+    rows.append({"date": pd.Timestamp("2024-01-13"), "ticker": "A"})  # a Saturday bar for one symbol
+    rows.append({"date": pd.Timestamp("2024-01-15"), "ticker": "B"})  # a holiday with one bar
+    frame = pd.DataFrame(rows)
+    kept = export.trading_days(frame)
+    assert set(kept["date"]) == set(days)
+    assert len(kept) == 40

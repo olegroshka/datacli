@@ -6,7 +6,10 @@ btest consumes two files written under ``<positioning root>/exports/btest/``:
   source reads (``date`` in UTC, ``ticker``, ``close``, ``open``, ``high``,
   ``low``, ``volume``, ``sector``), split-and-dividend adjusted (every price
   scaled by ``adjusted_close / close``), for the symbols of the short ladder
-  whose median dollar volume since ``start`` clears ``min_dollar_adv``.
+  whose median dollar volume since ``start`` clears ``min_dollar_adv`` and
+  whose vendor bars never fail the price-quality rules (WP14,
+  ``factors.bad_symbols``); dates with fewer than half the median number of
+  bars (vendor rows on exchange holidays) are dropped.
 - ``short_z_inventory.parquet``: a wide frame (``date`` index, one column per
   ticker) with EVAL-001's working feature, the per-symbol EWM z-score of log
   short inventory residualised per date on 21-day reversal and 12-1 momentum
@@ -29,6 +32,7 @@ from typing import Any, Sequence
 import pandas as pd
 
 from positioning import evaluation as ev
+from positioning import factors
 
 SUBDIR = Path("exports") / "btest"
 PRICES_FILE = "prices_daily.parquet"
@@ -79,8 +83,20 @@ def carry_forward_wide(
     return wide.reindex(index).ffill()
 
 
+def trading_days(frame: pd.DataFrame, *, date: str = "date", min_share: float = 0.5) -> pd.DataFrame:
+    """Keep the dates on which at least ``min_share`` of the median number of symbols have a bar.
+
+    The vendor lists a few bars on exchange holidays (14 symbols on
+    2020-09-07, Labor Day); a portfolio marked on them sees a phantom day.
+    """
+    counts = frame.groupby(date).size()
+    keep = counts[counts >= min_share * counts.median()].index
+    return frame[frame[date].isin(keep)]
+
+
 def universe(con: Any, *, start: str, min_dollar_adv: float, lanes: Sequence[str] = LANES) -> list[str]:
-    """Short-ladder symbols whose median daily dollar volume since ``start`` clears the bar."""
+    """Short-ladder symbols whose median daily dollar volume since ``start`` clears the bar
+    and whose vendor bars never fail the price-quality rules since ``start``."""
     lane_list = ", ".join(f"'{lane}'" for lane in lanes)
     rows = con.execute(f"""
         WITH u AS (SELECT DISTINCT eodhd_code FROM positioning_short_ladder WHERE lane IN ({lane_list}))
@@ -90,7 +106,11 @@ def universe(con: Any, *, start: str, min_dollar_adv: float, lanes: Sequence[str
         GROUP BY p.ticker HAVING median(p.close * p.volume) >= {float(min_dollar_adv)}
         ORDER BY p.ticker
         """).fetchall()
-    return [r[0] for r in rows]
+    bad = factors.bad_symbols(con, lanes=lanes)
+    if not bad.empty:
+        bad = bad[pd.to_datetime(bad["last_bad"]) >= pd.Timestamp(start)]
+    excluded = set(bad["ticker"]) if not bad.empty else set()
+    return [r[0] for r in rows if r[0] not in excluded]
 
 
 def price_panel(con: Any, symbols: Sequence[str], *, start: str, lanes: Sequence[str] = LANES) -> pd.DataFrame:
@@ -117,7 +137,9 @@ def price_panel(con: Any, symbols: Sequence[str], *, start: str, lanes: Sequence
             """).df()
     finally:
         con.unregister("_export_symbols")
-    frame["date"] = pd.to_datetime(frame["date"]).dt.tz_localize("UTC")
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame = trading_days(frame).reset_index(drop=True)
+    frame["date"] = frame["date"].dt.tz_localize("UTC")
     return frame
 
 
