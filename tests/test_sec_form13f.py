@@ -411,3 +411,68 @@ def test_adv_quirks_macosx_member_duplicate_header_and_placeholder(tmp_path: Pat
     state = {"a": adv.SnapshotState("a", "absent"), "b": adv.SnapshotState("b", "error")}
     listed = [adv.Snapshot("a", "u", date(2019, 1, 1)), adv.Snapshot("b", "u", date(2019, 2, 1))]
     assert [s.name for s in adv.plan(listed, state)] == ["b"]  # absent is final, error is retried
+
+
+def test_manager_match_by_crd_cik_and_unique_name() -> None:
+    """DD-002 WP16: filers without a cover-page CRD match ADV by CIK, else by a unique normalised name."""
+    con = duckdb.connect()
+    con.register(
+        "_subs",
+        pd.DataFrame(
+            {
+                "accession_number": ["a1", "a2", "a3", "a4", "a5", "a6"],
+                "filing_date": pd.to_datetime(["2019-05-14", "2024-05-14", "2019-05-14", "2019-05-14", "2019-05-14", "2019-05-14"]).date,
+                "submission_type": ["13F-HR"] * 6,
+                "cik": ["0000000111", "0000000111", "0000000222", "0000000333", "0000000444", "0000000555"],
+                "period": pd.to_datetime(["2019-03-31", "2024-03-31", "2019-03-31", "2019-03-31", "2019-03-31", "2019-03-31"]).date,
+            }
+        ),
+    )
+    con.register(
+        "_covers",
+        pd.DataFrame(
+            {
+                "accession_number": ["a1", "a2", "a3", "a4", "a5", "a6"],
+                "manager_name": ["ALPHA CAPITAL MANAGEMENT, L.P.", "Alpha Capital Management LP", "Beta Partners LLC", "Gamma & Co., Inc.", "Delta Advisors", "Omega Trust Co"],
+                "crd_number": [None, 10111, None, None, None, None],
+            }
+        ).astype({"crd_number": "Int64"}),
+    )
+    con.register(
+        "_adv",
+        pd.DataFrame(
+            {
+                "snapshot_date": pd.to_datetime(["2018-01-01", "2018-01-01", "2018-01-01", "2018-01-01", "2018-01-01", "2018-01-01"]).date,
+                "crd_number": [10111, 10222, 10333, 10334, 10444, 10555],
+                "cik": [None, 222, None, None, None, None],
+                "name": ["Alpha Capital Mgmt", "BETA PARTNERS LLC", "Gamma and Company", "Gamma & Co", "Something Else", "Omega Trust Company"],
+                "legal_name": ["ALPHA CAPITAL MANAGEMENT LLC", "Beta Partners", "Gamma & Co Inc", "Gamma and Co LLC", "Delta Advisers Inc", "Omega Trust"],
+                "advises_private_funds": [True, True, False, True, False, False],
+                "any_hedge_funds": [None] * 6,
+                "n_hedge_funds": [None] * 6,
+                "n_private_funds": [None] * 6,
+                "private_fund_gross_assets": [None] * 6,
+                "raum_total": [None] * 6,
+            }
+        ).astype({"cik": "Int64"}),
+    )
+    con.execute(f"CREATE VIEW {views.SUBMISSION_VIEW} AS SELECT * FROM _subs")
+    con.execute(f"CREATE VIEW {views.COVER_VIEW} AS SELECT * FROM _covers")
+    con.execute(f"CREATE VIEW {views.ADV_VIEW} AS SELECT * FROM _adv")
+    assert views.register_match(con) and views.register_cohort(con)
+    match = {r[0]: (r[1], r[2]) for r in con.execute(f"SELECT cik, crd_number, match_kind FROM {views.MATCH_VIEW}").fetchall()}
+    assert match["0000000111"] == (10111, "crd")  # the 2024 cover page's CRD serves the 2019 filing too
+    assert match["0000000222"] == (10222, "cik")
+    assert match["0000000333"] == (None, None)  # 'GAMMA' is two advisers: ambiguous, no match
+    assert match["0000000444"] == (None, None)  # 'DELTA ADVISORS' vs 'DELTA ADVISERS': not exact
+    assert match["0000000555"] == (10555, "name")  # 'OMEGA TRUST' via the legal name
+    cohort = {r[0]: r[1:] for r in con.execute(
+        f"SELECT accession_number, crd_number, match_kind, advises_private_funds FROM {views.COHORT_VIEW}"
+    ).fetchall()}
+    assert cohort["a1"] == (10111, "crd", True) and cohort["a2"] == (10111, "crd", True)
+    assert cohort["a3"] == (10222, "cik", True)
+    assert cohort["a4"] == (None, None, None) and cohort["a6"] == (10555, "name", False)
+    assert views.MATCH_VIEW in views.schema_snippet()
+    literal = "'The Alpha-Capital Management, L.P.'"
+    key = con.execute("SELECT " + views.name_key_sql(literal)).fetchone()[0]
+    assert key == "ALPHA CAPITAL MANAGEMENT"

@@ -11,6 +11,12 @@
   amendments (``is_amendment``, ``amendment_type``) and must never use a row
   before its ``filing_date``.
 
+- ``sec_13f_manager_match`` -- one row per 13F filer (``cik``): the Form ADV
+  ``crd_number`` it maps to and how (``match_kind``: ``crd`` from a cover
+  page since 2023, else ``cik`` when an ADV adviser carries the same CIK,
+  else ``name`` when the normalised manager name equals exactly one
+  adviser's business or legal name; ambiguous names match nothing). The
+  cohort view uses it for filings that carry no CRD (DD-002 WP16).
 - ``sec_13f_filings_effective`` / ``sec_13f_holdings_effective`` -- the
   amendment rule applied (DD-002 WP9 step 1): per ``(cik, period)`` the latest
   original or ``RESTATEMENT`` filing is the base and every ``NEW HOLDINGS``
@@ -47,7 +53,23 @@ UNITS_VIEW = "sec_13f_filing_units"
 STATE_VIEW = "sec_13f_state"
 ADV_VIEW = "sec_adv_advisers"
 COHORT_VIEW = "sec_13f_manager_cohort"
+MATCH_VIEW = "sec_13f_manager_match"
 FILINGS_EFFECTIVE_VIEW = "sec_13f_filings_effective"
+#: ``match_kind`` values, in priority order.
+MATCH_KINDS: tuple[str, ...] = ("crd", "cik", "name")
+#: Suffixes and fillers dropped from a manager name before an exact comparison.
+_NAME_NOISE = (
+    r"\b(LLC|L L C|LP|L P|INC|INCORPORATED|LTD|LIMITED|CORP|CORPORATION|CO|COMPANY|PLC|LLP|THE|AND|&)\b"
+)
+
+
+def name_key_sql(column: str) -> str:
+    """SQL for the normalised form of a manager name: upper case, letters and digits only,
+    the corporate suffixes and fillers removed, single spaces, trimmed."""
+    return (
+        "nullif(trim(regexp_replace(regexp_replace(regexp_replace(upper("
+        f"{column}), '[^A-Z0-9 ]', ' ', 'g'), '{_NAME_NOISE}', ' ', 'g'), ' +', ' ', 'g')), '')"
+    )
 HOLDINGS_EFFECTIVE_VIEW = "sec_13f_holdings_effective"
 #: ``filing_kind`` values of an effective filing.
 FILING_KINDS: tuple[str, ...] = ("original", "restatement", "addition")
@@ -61,7 +83,8 @@ def register(con: Any, *, root: Path | None = None) -> dict[str, bool]:
     result = {HOLDINGS_VIEW: _register_13f(con, base)}
     result[HOLDINGS_EFFECTIVE_VIEW] = result[HOLDINGS_VIEW] and register_effective(con)
     result[ADV_VIEW] = _register_adv(con, base)
-    result[COHORT_VIEW] = result[HOLDINGS_VIEW] and result[ADV_VIEW] and _register_cohort(con)
+    result[MATCH_VIEW] = result[HOLDINGS_VIEW] and result[ADV_VIEW] and register_match(con)
+    result[COHORT_VIEW] = result[MATCH_VIEW] and register_cohort(con)
     return result
 
 
@@ -71,10 +94,18 @@ def _register_adv(con: Any, base: Path) -> bool:
     if not store.snapshots_on_disk():
         return False
     glob = (store.snapshot_dir / "*.parquet").as_posix()
+    columns = {
+        r[0]
+        for r in con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{glob}', union_by_name=true)"
+        ).fetchall()
+    }
+    cik_sql = 'TRY_CAST(trim("CIK#") AS BIGINT)' if "CIK#" in columns else "NULL::BIGINT"
     con.execute(
         f"CREATE OR REPLACE VIEW {ADV_VIEW} AS "
         "SELECT CAST(snapshot_date AS DATE) AS snapshot_date, "
         'TRY_CAST(trim("Organization CRD#") AS BIGINT) AS crd_number, "SEC#" AS sec_number, '
+        f"{cik_sql} AS cik, "
         '"Primary Business Name" AS name, '
         '"Legal Name" AS legal_name, '
         'upper("7B") = \'Y\' AS advises_private_funds, '
@@ -136,18 +167,62 @@ def register_effective(con: Any) -> bool:
     return True
 
 
-def _register_cohort(con: Any) -> bool:
-    """``sec_13f_manager_cohort``: each filing's hedge-fund status from the latest ADV snapshot before it."""
+def register_match(con: Any) -> bool:
+    """``sec_13f_manager_match``: one ADV ``crd_number`` per 13F filer, by CRD, CIK or unique name.
+
+    The name of a filer is the one on its latest cover page; ADV names come
+    from every snapshot, so a renamed adviser still matches under either
+    name. A normalised name shared by several CRDs (affiliates, successors)
+    matches nothing: an ambiguous match is worse than none (DD-002 WP16).
+    """
+    con.execute(
+        f"CREATE OR REPLACE VIEW {MATCH_VIEW} AS "
+        "WITH filer AS ("
+        "SELECT cik, arg_max(c.crd_number, s.filing_date) FILTER (WHERE c.crd_number IS NOT NULL) AS crd_number, "
+        f"{name_key_sql('arg_max(c.manager_name, s.filing_date)')} AS name_key "
+        f"FROM {SUBMISSION_VIEW} s JOIN {COVER_VIEW} c USING (accession_number) "
+        "WHERE s.submission_type LIKE '13F-HR%' GROUP BY cik), "
+        "adv_cik AS ("
+        f"SELECT cik, crd_number FROM {ADV_VIEW} WHERE cik IS NOT NULL GROUP BY cik, crd_number), "
+        "cik_unique AS (SELECT cik, any_value(crd_number) AS crd_number FROM adv_cik GROUP BY cik HAVING count(*) = 1), "
+        "adv_names AS ("
+        f"SELECT {name_key_sql('name')} AS key, crd_number FROM {ADV_VIEW} "
+        f"UNION SELECT {name_key_sql('legal_name')} AS key, crd_number FROM {ADV_VIEW}), "
+        "name_unique AS (SELECT key, any_value(crd_number) AS crd_number FROM adv_names "
+        "WHERE key IS NOT NULL AND crd_number IS NOT NULL GROUP BY key HAVING count(*) = 1) "
+        "SELECT f.cik, coalesce(f.crd_number, k.crd_number, n.crd_number) AS crd_number, "
+        "CASE WHEN f.crd_number IS NOT NULL THEN 'crd' WHEN k.crd_number IS NOT NULL THEN 'cik' "
+        "WHEN n.crd_number IS NOT NULL THEN 'name' END AS match_kind "
+        "FROM filer f "
+        "LEFT JOIN cik_unique k ON k.cik = TRY_CAST(f.cik AS BIGINT) "
+        "LEFT JOIN name_unique n ON n.key = f.name_key"
+    )
+    return True
+
+
+def register_cohort(con: Any) -> bool:
+    """``sec_13f_manager_cohort``: each filing's hedge-fund status from the latest ADV snapshot before it.
+
+    The adviser is the cover page's CRD when the filing carries one, else
+    the filer's match (``sec_13f_manager_match``); ``match_kind`` says which.
+    """
     con.execute(
         f"CREATE OR REPLACE VIEW {COHORT_VIEW} AS "
-        "SELECT s.accession_number, s.cik, s.filing_date, s.period, c.manager_name, c.crd_number, "
+        "SELECT s.accession_number, s.cik, s.filing_date, s.period, c.manager_name, "
+        "coalesce(c.crd_number, m.crd_number) AS crd_number, "
+        "CASE WHEN c.crd_number IS NOT NULL THEN 'crd' ELSE m.match_kind END AS match_kind, "
         "a.snapshot_date AS adv_snapshot_date, a.advises_private_funds, a.any_hedge_funds, a.n_hedge_funds, "
         "a.n_private_funds, a.private_fund_gross_assets, a.raum_total "
         f"FROM {SUBMISSION_VIEW} s "
         f"LEFT JOIN {COVER_VIEW} c USING (accession_number) "
-        f"ASOF LEFT JOIN {ADV_VIEW} a ON a.crd_number = c.crd_number AND a.snapshot_date <= s.filing_date"
+        f"LEFT JOIN {MATCH_VIEW} m ON m.cik = s.cik "
+        f"ASOF LEFT JOIN {ADV_VIEW} a ON a.crd_number = coalesce(c.crd_number, m.crd_number) "
+        "AND a.snapshot_date <= s.filing_date"
     )
     return True
+
+
+_register_cohort = register_cohort
 
 
 def _register_13f(con: Any, base: Path) -> bool:
@@ -238,16 +313,18 @@ def schema_snippet() -> str:
             "form13f_file_number, report_type, is_amendment, amendment_no, amendment_type)",
             f"- {UNITS_VIEW}(accession_number, crowd_dollars, log_gap, compared, evidence, value_factor)",
             "  [per filing: are its values in dollars or thousands, judged against the other filers]",
-            f"- {ADV_VIEW}(snapshot_date, crd_number, sec_number, name, legal_name, advises_private_funds, "
+            f"- {ADV_VIEW}(snapshot_date, crd_number, sec_number, cik, name, legal_name, advises_private_funds, "
             "any_hedge_funds, n_hedge_funds, n_private_funds, private_fund_gross_assets, raum_total)",
             "  [Form ADV adviser reports, one row per adviser per monthly snapshot 2006-2023 and from",
             "  2025-12 (the SEC lists none in between); advises_private_funds (item 7B) exists in every",
             "  era, the hedge-fund split only from 2025-12]",
-            f"- {COHORT_VIEW}(accession_number, cik, filing_date, period, manager_name, crd_number, "
+            f"- {COHORT_VIEW}(accession_number, cik, filing_date, period, manager_name, crd_number, match_kind, "
             "adv_snapshot_date, advises_private_funds, any_hedge_funds, n_hedge_funds, n_private_funds, "
             "private_fund_gross_assets, raum_total)",
-            "  [each 13F filing joined to the latest ADV snapshot dated on or before its filing_date",
-            "  by CRD number; the 13F cover page carries a CRD only for filings from 2023, so earlier",
-            "  filings have NULLs here]",
+            "  [each 13F filing joined to the latest ADV snapshot dated on or before its filing_date;",
+            "  the adviser is the cover page's CRD (filings from 2023, match_kind 'crd') or the filer's",
+            "  match by CIK or unique normalised name ('cik', 'name'); NULL = unmatched or ambiguous]",
+            f"- {MATCH_VIEW}(cik, crd_number, match_kind)",
+            "  [one row per 13F filer: the ADV adviser it maps to and how]",
         ]
     )
