@@ -190,6 +190,7 @@ def test_registry_covers_all_lanes() -> None:
         "us_common",
         "uk_eu",
         "us_etf",
+        "us_extended",
         "index_ref",
         "uk_eu_etf",
         "uk_eu_index_ref",

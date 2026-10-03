@@ -109,6 +109,7 @@ def test_complete_qc_lane_then_dataset() -> None:
     assert _completions(app.complete_qc("us_", "qc us_", 3, 6)) == {
         "us_common",
         "us_etf",
+        "us_extended",
     }
     # second positional -> datasets
     assert _completions(app.complete_qc("di", "qc us_common di", 13, 15)) == {
@@ -122,6 +123,7 @@ def test_complete_routes_through_slash() -> None:
     assert _completions(app.complete("us_", "/qc us_", 4, 7)) == {
         "us_common",
         "us_etf",
+        "us_extended",
     }
 
 

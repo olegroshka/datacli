@@ -422,6 +422,20 @@ LANES: dict[str, LaneConfig] = {
         universe_fetcher="fetch_eodhd_us_etf_universe.py",
         default_exchange="US",
     ),
+    # Shorted US names the two lanes above do not price, delisted ones included:
+    # the universe is derived from FINRA short interest (see the universe fetcher).
+    "us_extended": _lane(
+        "us_extended",
+        "US",
+        "common_ext",
+        "tickers_US_EXT.parquet",
+        [
+            prices_spec("fetch_eodhd_us_extended_prices.py"),
+            event_spec("splits", "fetch_eodhd_us_extended_splits.py"),
+        ],
+        universe_fetcher="fetch_eodhd_us_extended_universe.py",
+        default_exchange="US",
+    ),
     "index_ref": _lane(
         "index_ref",
         "US",
