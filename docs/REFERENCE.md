@@ -29,7 +29,7 @@ Run any command with `--help` for its full options.
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
-| `positioning status \| build [--dataset short_ladder\|long_ladder] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
+| `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
 **Hits a provider — spends EODHD units (`$`) or needs a provider key:**
@@ -359,12 +359,25 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   quarter's mean close. `qc --dataset long_ladder` reconciles every stored level with
   the sum of effective holdings. Shared-discretion rows (`DFND`) are counted as
   filed, so a widely held name's level can exceed its shares outstanding.
+- **Holdings inputs (derived)** — `positioning build --dataset holdings_inputs --run`
+  writes `positioning_holdings_inputs` from the same 13F panel: per CUSIP, quarter end
+  and aggregate, `long_fund_weight` (the position's weight in each holder's 13F book,
+  summed over holders), `long_conc` (Herfindahl of shares across holders), `best_ideas`
+  (holders for whom it is a top-10 weight, normalised to sum to 1 per period) and
+  `n_holders`. No prices needed.
+- **Renamed tickers** — `positioning_symbol_alias` lists tickers whose CUSIP reappears in
+  the fails-to-deliver files under a later ticker (a rename; the vendor keeps the price
+  history under the new one). The short ladder prices such a symbol's reports from the
+  alias.
 - **Factor view** — `positioning_factors` gives, per US common ticker and day from
   2018, `reversal_21d`, `momentum_12_1`, `specific_risk_63d` (annualised volatility
   of the return in excess of the sector median) and `short_interest_ratio` (latest
-  short interest over shares outstanding published before the day). Raw values,
-  known after the close of `date`, computed on the fly: always filter by date or
-  ticker. Bad vendor ticks inflate a name's risk, so winsorise before use.
+  short interest over shares outstanding published before the day) and
+  `price_quality_flag` (true on a day whose vendor bar fails a quality rule, or for
+  the year after such a bar: a non-positive or inconsistent bar, a placeholder close,
+  a one-day move above 300 percent). Raw values, known after the close of `date`,
+  computed on the fly: always filter by date or ticker, and filter the flag out before
+  using the factors. `positioning qc` lists the ladder symbols with failing bars.
 - **Restricted Python (opt-in)** — set `[lab].allow_python` and the `quant` persona
   can run isolated Python (subprocess + timeout + no network) for stats and plots SQL
   can't express. A *trusted-local* convenience, **not** a hardened sandbox — off by
