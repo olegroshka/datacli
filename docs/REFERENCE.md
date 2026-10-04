@@ -358,6 +358,13 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   and `register_borrow_rates.parquet` (one broker rate per issuer from the country files).
   btest's `strategies/smf_register_profit.py` consumes them; the overlay is
   `scripts/btest_borrow_overlay.py <run> --rates .../register_borrow_rates.parquet`.
+  `scripts/register_long_leg.py [--freq W|M]` (`positioning.register_long_leg`) isolates the
+  ordering's long leg (the losing shorts, the bottom 30 percent of the ranks, rank-weighted,
+  capped, held between rebalances), regresses its gross daily return on factor portfolios
+  built inside the same universe (equal-weight market, size by dollar volume, 12-1 momentum,
+  21-day reversal; Newey-West lag 5) and on the equal-weight book of every shorted name, and
+  writes `register_long_leg_weights.parquet` for btest's `strategies/smf_register_long_leg.py`
+  (a `TargetWeights` run that prices the engine's costs on the given matrix).
 - **Registers (FCA, AMF)** — `registers fetch --run` downloads each market's published
   history file (the FCA's `short-positions-daily-update.xlsx`, frozen since 2026-07-11;
   the AMF's CSV named by the data.gouv.fr dataset API each day), parses it strictly and
