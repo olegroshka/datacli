@@ -157,6 +157,7 @@ CAPABILITIES = (
 
 FINRA_DATASETS = {"short_volume", "weekly_flow", "short_interest", "fails_to_deliver"}
 POSITIONING_DATASETS: tuple[str, ...] = ("short_ladder", "long_ladder", "holdings_inputs")
+BORROW_COUNTRIES: tuple[str, ...] = ("usa", "germany", "france", "dutch", "british", "swedish")
 FINRA_TRANSPORTS = {"cdn", "api", "sec"}
 SEC_DATASETS = {"form13f", "adv"}
 
@@ -644,10 +645,15 @@ class CommandRegistry:
             options = {}
         elif identity == "borrow fetch":
             positionals, options = _parse_known_options(
-                argv, boolean={"--run"}, scalar=set()
+                argv, boolean={"--run"}, scalar={"--country"}
             )
             if positionals:
                 raise CommandValidationError("borrow fetch takes flags only")
+            country = options["--country"][-1] if options.get("--country") else None
+            if country is not None and country != "all" and country not in BORROW_COUNTRIES:
+                raise CommandValidationError(
+                    f"borrow fetch --country must be one of {', '.join(BORROW_COUNTRIES)} or all"
+                )
         elif identity == "borrow status":
             positionals, options = _parse_known_options(
                 argv, boolean={"--json"}, scalar=set()

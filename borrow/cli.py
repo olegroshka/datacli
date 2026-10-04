@@ -41,8 +41,13 @@ COMMANDS: dict[str, Command] = {
             "(anonymous, no credentials), verify the digest, parse strictly, and store\n"
             "the file as the snapshot of its own date. A day already stored with the\n"
             "same content is left alone; a changed file replaces the day's snapshot.\n"
+            "--country picks another venue's file (germany, france, dutch, british,\n"
+            "swedish; `all` for every file), stored as its own dataset ib_<country>.\n"
             "WITHOUT --run nothing is written.",
-            (Flag("--run", "store the snapshot (default is a dry run)"),),
+            (
+                Flag("--run", "store the snapshot (default is a dry run)"),
+                Flag("--country", "which file: usa (default), a venue, or all", metavar="NAME"),
+            ),
         ),
         Command(
             "qc",
@@ -88,9 +93,10 @@ def cmd_status(argv: list[str]) -> int:
     if done is not None:
         return done
     root, source = borrow_config.resolve_root()
-    entry = ib.status(root)
+    entries = [ib.status(root, country) for country in ib.COUNTRIES]
+    entries = [e for e in entries if e["present"] or e["dataset"] == ib.NAME]
     if "--json" in flags:
-        print(jsonlib.dumps({"root": str(root), "root_source": source, "datasets": [entry]}, indent=2))
+        print(jsonlib.dumps({"root": str(root), "root_source": source, "datasets": entries}, indent=2))
         return 0
     console = _render.make_console()
     console.print(Text(f"root: {root}  ({source})", style="bold"))
@@ -98,18 +104,19 @@ def cmd_status(argv: list[str]) -> int:
     for name in ("dataset", "snapshots", "first", "last", "rows", "replaced", "last fetch"):
         table.add_column(name, no_wrap=True)
     dash = Text("-", style="dim")
-    present = entry["present"]
-    table.add_row(
-        entry["dataset"],
-        str(entry["snapshots"]) if present else dash,
-        entry["first"] or dash,
-        entry["last"] or dash,
-        _render.fmt_int(entry["rows"]) if present else dash,
-        str(entry["replaced"]) if present else dash,
-        (entry["last_fetch"] or "")[:16].replace("T", " ") or dash,
-    )
+    for entry in entries:
+        present = entry["present"]
+        table.add_row(
+            entry["dataset"],
+            str(entry["snapshots"]) if present else dash,
+            entry["first"] or dash,
+            entry["last"] or dash,
+            _render.fmt_int(entry["rows"]) if present else dash,
+            str(entry["replaced"]) if present else dash,
+            (entry["last_fetch"] or "")[:16].replace("T", " ") or dash,
+        )
     console.print(table)
-    if not present:
+    if not any(e["present"] for e in entries):
         console.print(Text("nothing stored yet -- run:  borrow fetch --run", style="dim"))
     return 0
 
@@ -126,21 +133,34 @@ def cmd_fetch(argv: list[str]) -> int:
         return 2
     root, _ = borrow_config.resolve_root()
     run = "--run" in flags
-    report = ib.refresh(_ftp, root, run=run)
+    country = flags.get("--country")
+    country = "usa" if country in (None, True) else str(country)
+    if country != "all" and country not in ib.COUNTRIES:
+        console.print(Text(f"unknown country {country!r}; expected one of {', '.join(ib.COUNTRIES)} or all", style="red"))
+        return 2
+    countries = list(ib.COUNTRIES) if country == "all" else [country]
     verb = "fetched" if run else "plan (dry run)"
     console.print(Text(f"{ib.NAME} {verb}: {root}", style="bold"))
-    if report.outcome == "failed":
-        console.print(Text(f"  failed             {report.detail}", style="red"))
+    failed = False
+    for name in countries:
+        report = ib.refresh(_ftp, root, run=run, country=name)
+        label = f"  {ib.dataset_name(name):<12}" if len(countries) > 1 else " "
+        if report.outcome == "failed":
+            console.print(Text(f"{label} failed             {report.detail}", style="red"))
+            failed = True
+            continue
+        assert report.stamp is not None
+        stamp = f"{report.stamp.isoformat(sep=' ')} (New York), {_render.fmt_int(report.rows)} rows"
+        if report.outcome == "unchanged":
+            console.print(f"{label} file stamp {stamp}: already stored with this content")
+        elif report.outcome == "planned":
+            console.print(Text(f"{label} file stamp {stamp}: nothing written -- add --run to store this snapshot", style="dim"))
+        else:
+            console.print(f"{label} file stamp {stamp}: {report.outcome} for {report.stamp.date().isoformat()}")
+    if failed:
         return 1
-    assert report.stamp is not None
-    console.print(f"  file stamp         {report.stamp.isoformat(sep=' ')} (New York), {_render.fmt_int(report.rows)} rows")
-    if report.outcome == "unchanged":
-        console.print("  snapshot           already stored with this content")
+    if run and all(True for _ in countries):
         print("Everything in sync.")
-    elif report.outcome == "planned":
-        console.print(Text("  nothing written -- add --run to store this snapshot", style="dim"))
-    else:
-        console.print(f"  snapshot           {report.outcome} for {report.stamp.date().isoformat()}")
     return 0
 
 
@@ -154,7 +174,8 @@ def cmd_qc(argv: list[str]) -> int:
     if rest:
         console.print(Text(f"qc takes no arguments, got {rest}", style="red"))
         return 2
-    findings = ib.qc(borrow_config.resolve_root()[0])
+    root = borrow_config.resolve_root()[0]
+    findings = [f for country in ib.COUNTRIES for f in ib.qc(root, country)]
     if not findings:
         console.print(Text(f"{ib.NAME}: no findings", style="green"))
         return 0

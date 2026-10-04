@@ -45,7 +45,7 @@ class _Ftp:
 
     def retrbinary(self, command: str, callback) -> None:
         name = command.split(" ", 1)[1]
-        callback(self.data if name == ib.FILE else self.md5.encode("ascii"))
+        callback(self.md5.encode("ascii") if name.endswith(".md5") else self.data)
 
     def quit(self) -> None:
         self.quit_called = True
@@ -135,6 +135,29 @@ def test_views_register_only_with_data_and_spell_eodhd_codes(tmp_path: Path) -> 
     assert views.VIEW in views.schema_snippet()
 
 
+def test_country_files_are_stored_as_their_own_datasets(tmp_path: Path) -> None:
+    clock = lambda: dt.datetime(2026, 10, 4, 8, 0, tzinfo=dt.timezone.utc)  # noqa: E731
+    assert ib.COUNTRIES["usa"] == "usa.txt" and ib.COUNTRIES["germany"] == "germany.txt"
+    assert ib.dataset_name("usa") == "ib" and ib.dataset_name("germany") == "ib_germany"
+    seen: list[str] = []
+
+    class _Recording(_Ftp):
+        def retrbinary(self, command: str, sink) -> None:
+            seen.append(command)
+            super().retrbinary(command, sink)
+
+    report = ib.refresh(lambda: _Recording(_file()), tmp_path, run=True, now=clock, country="germany")
+    assert report.outcome == "stored" and seen == ["RETR germany.txt", "RETR germany.txt.md5"]
+    assert ib.store(tmp_path, "germany").days_on_disk() == [dt.date(2026, 10, 3)]
+    assert not ib.store(tmp_path).days_on_disk()  # usa untouched
+    assert (tmp_path / "ib_germany" / "snapshots" / "2026-10-03.parquet").exists()
+    assert ib.status(tmp_path, "germany")["dataset"] == "ib_germany" and ib.status(tmp_path)["present"] is False
+    assert ib.store(tmp_path, "germany").load_state()["2026-10-03"].source == "ftp:germany.txt"
+    with pytest.raises(ib.BorrowError, match="unknown country"):
+        ib.store(tmp_path, "mars")
+    assert ib.latest_snapshots(tmp_path) == {"germany": dt.date(2026, 10, 3)}
+
+
 def test_cli_fetch_status_qc(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setenv(ENV_ROOT, str(tmp_path))
     monkeypatch.setenv("NO_COLOR", "1")
@@ -149,6 +172,14 @@ def test_cli_fetch_status_qc(tmp_path: Path, monkeypatch, capsys) -> None:
     assert cli.main(["status", "--json"]) == 0
     payload = __import__("json").loads(capsys.readouterr().out)
     assert payload["datasets"][0]["snapshots"] == 1 and payload["root_source"] == "env"
+    assert cli.main(["fetch", "--country", "all", "--run"]) == 0
+    out = " ".join(capsys.readouterr().out.split())  # the console wraps long lines
+    assert "ib_germany" in out and "ib_swedish" in out and "already stored" in out  # usa unchanged, the rest stored
+    assert cli.main(["fetch", "--country", "mars"]) == 2
+    assert "unknown country" in capsys.readouterr().out
+    assert cli.main(["status", "--json"]) == 0
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert [d["dataset"] for d in payload["datasets"]] == [ib.dataset_name(c) for c in ib.COUNTRIES]
     assert cli.main(["qc"]) in (0, 1)  # staleness depends on today's date
     monkeypatch.setattr(cli, "_ftp", lambda: _Ftp(_file(), md5="0" * 32))
     assert cli.main(["fetch", "--run"]) == 1
@@ -172,6 +203,9 @@ def test_scheduler_admits_the_borrow_family(tmp_path: Path) -> None:
     assert Path(names["borrow_data_root"].resolved_value).name == "borrow"
     assert claims[names["borrow_data_root"].resource_id] == "exclusive"
     assert fetch.spec.network and fetch.spec.mutation
+    assert registry.validate("borrow", "fetch", ["--country", "all", "--run"], context).spec.argv == ("--country", "all", "--run")
+    with pytest.raises(CommandValidationError):
+        registry.validate("borrow", "fetch", ["--country", "mars", "--run"], context)
     assert registry.validate("borrow", "status", ["--json"], context).spec.resources
     assert registry.validate("borrow", "qc", [], context).spec.resources
     with pytest.raises(CommandValidationError, match="requires its own --run"):

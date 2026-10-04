@@ -1,9 +1,9 @@
-"""Interactive Brokers' shortable list, ``usa.txt`` (DD-002 WP6, KB-003 section 4).
+"""Interactive Brokers' shortable list, ``usa.txt`` and the country files (DD-002 WP6, KB-003 section 4).
 
 Anonymous FTP on ``ftp2.interactivebrokers.com`` (user ``shortstock``) serves
-one file per country with an md5 companion. ``usa.txt`` (about 1.8 MB, 20,000
-rows) is regenerated through the day and carries no history, so each fetch is
-a snapshot that is gone the next day unless stored::
+one file per country with an md5 companion, all in one format. ``usa.txt``
+(about 1.8 MB, 20,000 rows) is regenerated through the day and carries no
+history, so each fetch is a snapshot that is gone the next day unless stored::
 
     #BOF|2026.10.03|10:42:07
     #SYM|CUR|NAME|CON|ISIN|REBATERATE|FEERATE|AVAILABLE|FIGI|
@@ -22,6 +22,12 @@ store's state sidecar (sha256 of the raw bytes, row count, the file's
 timestamp in ``detail``). A fetch on a day already stored with the same
 content is a no-op; a different content on the same day replaces the file
 (the broker's later state of the day) and the state row says so.
+
+The country files (``COUNTRIES``: the European venues the public short
+registers cover, WP21) are stored the same way as their own datasets,
+``<borrow root>/ib_<country>/snapshots/``. They overlap heavily (each lists
+the names tradable from that venue, in several currencies), so a reader
+picking one rate per ISIN takes the home file first.
 """
 
 from __future__ import annotations
@@ -46,6 +52,15 @@ USER = "shortstock"
 FILE = "usa.txt"
 MD5_FILE = "usa.txt.md5"
 SOURCE = "ftp"
+#: The files captured: the US and the venues of the captured public short registers.
+COUNTRIES: dict[str, str] = {
+    "usa": "usa.txt",
+    "germany": "germany.txt",
+    "france": "france.txt",
+    "dutch": "dutch.txt",
+    "british": "british.txt",
+    "swedish": "swedish.txt",
+}
 HEADER = "#SYM|CUR|NAME|CON|ISIN|REBATERATE|FEERATE|AVAILABLE|FIGI|"
 _BOF = re.compile(r"^#BOF\|(\d{4})\.(\d{2})\.(\d{2})\|(\d{2}):(\d{2}):(\d{2})\s*$")
 _EOF = re.compile(r"^#EOF\|(\d+)\s*$")
@@ -198,8 +213,24 @@ def download(ftp: Any, name: str = FILE, md5_name: str = MD5_FILE) -> tuple[byte
 # --------------------------------------------------------------------------- #
 # store
 # --------------------------------------------------------------------------- #
-def store(root: Path) -> DayStore:
-    return DayStore(Path(root), NAME, SCHEMA, subdir="snapshots")
+def dataset_name(country: str) -> str:
+    if country not in COUNTRIES:
+        raise BorrowError(f"unknown country {country!r}; expected one of {', '.join(COUNTRIES)}")
+    return NAME if country == "usa" else f"{NAME}_{country}"
+
+
+def store(root: Path, country: str = "usa") -> DayStore:
+    return DayStore(Path(root), dataset_name(country), SCHEMA, subdir="snapshots")
+
+
+def latest_snapshots(root: Path) -> dict[str, dt.date]:
+    """The last stored day per country, for the countries with a snapshot."""
+    out: dict[str, dt.date] = {}
+    for country in COUNTRIES:
+        days = store(root, country).days_on_disk()
+        if days:
+            out[country] = days[-1]
+    return out
 
 
 @dataclass(frozen=True)
@@ -222,18 +253,21 @@ def refresh(
     *,
     run: bool,
     now: Callable[[], dt.datetime] | None = None,
+    country: str = "usa",
 ) -> FetchReport:
     """Fetch the current file; with ``run`` store it as its ``#BOF`` date's snapshot.
 
     Without ``run`` the file is still downloaded and parsed (it is the only
-    way to know its date and size) but nothing is written.
+    way to know its date and size) but nothing is written. ``country`` picks
+    the file (``COUNTRIES``) and the dataset it is stored as.
     """
     clock = now or (lambda: dt.datetime.now(dt.timezone.utc))
-    target = store(root)
+    target = store(root, country)
+    file = COUNTRIES[country]
     try:
         ftp = ftp_factory()
         try:
-            data, companion = download(ftp)
+            data, companion = download(ftp, file, f"{file}.md5")
         finally:
             try:
                 ftp.quit()
@@ -259,7 +293,7 @@ def refresh(
             DayState(
                 date=snapshot.date.isoformat(),
                 status=STATUS_OK,
-                source=SOURCE,
+                source=SOURCE if country == "usa" else f"{SOURCE}:{file}",
                 rows=int(len(snapshot.rows)),
                 total_sum=int(len(data)),
                 sha256=sha,
@@ -271,13 +305,13 @@ def refresh(
     return FetchReport(run, root, snapshot.stamp, len(snapshot.rows), "replaced" if replaced else "stored", detail)
 
 
-def status(root: Path) -> dict[str, Any]:
-    target = store(root)
+def status(root: Path, country: str = "usa") -> dict[str, Any]:
+    target = store(root, country)
     days = target.days_on_disk()
     state = target.load_state()
     ok = [s for s in state.values() if s.status == STATUS_OK]
     return {
-        "dataset": NAME,
+        "dataset": dataset_name(country),
         "present": bool(days),
         "snapshots": len(days),
         "first": days[0].isoformat() if days else None,
@@ -289,11 +323,13 @@ def status(root: Path) -> dict[str, Any]:
     }
 
 
-def qc(root: Path) -> list[tuple[str, str, str]]:
+def qc(root: Path, country: str = "usa") -> list[tuple[str, str, str]]:
     """``(severity, check, detail)`` over the stored snapshots."""
-    target = store(root)
+    target = store(root, country)
     days = target.days_on_disk()
     if not days:
+        if country != "usa":
+            return []
         return [("warn", "empty", "no borrow snapshots stored; run `borrow fetch --run`")]
     state = target.load_state()
     findings: list[tuple[str, str, str]] = []
@@ -314,4 +350,5 @@ def qc(root: Path) -> list[tuple[str, str, str]]:
     stale = (dt.date.today() - days[-1]).days
     if stale > 4:
         findings.append(("warn", "stale", f"the last snapshot is {stale} days old; run `borrow fetch --run`"))
-    return findings
+    name = dataset_name(country)
+    return [(severity, check if country == "usa" else f"{name}.{check}", detail) for severity, check, detail in findings]

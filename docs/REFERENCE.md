@@ -29,7 +29,7 @@ Run any command with `--help` for its full options.
 | `macro status \| list` | The macro source's coverage / catalog | `python -m macro.cli` |
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
-| `borrow status \| fetch [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
+| `borrow status \| fetch [--country NAME\|all] [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
 | `registers status \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change (Norway's rolling window accumulated) | `python -m registers.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
@@ -344,6 +344,20 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   available, figi, eodhd_code)`: rates in percent a year (`NA` becomes NULL), masked
   ISINs become NULL, `eodhd_code` for USD common symbols. The snapshot is taken after
   the US close: a reader on day `d` uses `snapshot_date < d`.
+- **Borrow country files** — `borrow fetch --country all --run` also stores the broker's
+  venue files (germany, france, dutch, british, swedish; `borrow.ib.COUNTRIES`) as their own
+  datasets `<borrow root>/ib_<country>/snapshots/`, same format and rules as `usa.txt`.
+  The files overlap (each lists the names tradable from that venue), so a reader taking one
+  rate per ISIN uses the market's home file first (`positioning.register_export.HOME_FILE`).
+- **Register inputs for btest (derived, by hand)** — `scripts/export_register_inputs.py
+  [--markets de,fr,nl,ie]` writes under `<positioning root>/exports/btest/`:
+  `register_prices_daily.parquet` (the euro registers' issuers from their lanes, one ticker
+  per listing such as `SAP.XETRA`, pooled trading days), `register_profit(_raw)(_neg).parquet`
+  (the per-date demeaned rank of the issuer panel's funds' short profit residualised on
+  reversal and momentum, shown from the day after it is marked, carried at most three days)
+  and `register_borrow_rates.parquet` (one broker rate per issuer from the country files).
+  btest's `strategies/smf_register_profit.py` consumes them; the overlay is
+  `scripts/btest_borrow_overlay.py <run> --rates .../register_borrow_rates.parquet`.
 - **Registers (FCA, AMF)** — `registers fetch --run` downloads each market's published
   history file (the FCA's `short-positions-daily-update.xlsx`, frozen since 2026-07-11;
   the AMF's CSV named by the data.gouv.fr dataset API each day), parses it strictly and
