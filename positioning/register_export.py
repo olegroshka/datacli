@@ -30,7 +30,12 @@ what btest needs to size it, next to WP15's files under
 
 The default markets are the euro ones (Germany, France, the Netherlands,
 Ireland), so the pooled book is in one currency; Sweden and Norway need a
-currency conversion that this cut does not make.
+currency conversion that this cut does not make. The UK (``--markets uk``,
+written under ``exports/btest_uk/``) is one currency too once the pence
+quotes are scaled to pounds (``QUOTE_SCALE``): the vendor quotes most LSE
+names in GBX, a few in GBP, and a handful of the register's issuers in
+euros or dollars, which are dropped so that a book, a price floor and a
+volume floor mean one thing.
 """
 
 from __future__ import annotations
@@ -59,6 +64,8 @@ HOME_FILE: dict[str, str] = {"de": "germany", "fr": "france", "nl": "dutch", "ie
 FACTORS: tuple[str, ...] = ("reversal_21d", "momentum_12_1")
 DEFAULT_START = "2013-01-01"
 CARRY_DAYS = 3
+#: Per market, the factor that takes each quote currency of its lane to the book's currency; other currencies are dropped.
+QUOTE_SCALE: dict[str, dict[str, float]] = {"uk": {"GBX": 0.01, "GBP": 1.0}}
 
 
 @dataclass(frozen=True)
@@ -88,13 +95,45 @@ def load_panels(root: Path, markets: Sequence[str]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def price_panel(con: Any, panels: pd.DataFrame, *, start: str) -> pd.DataFrame:
-    """btest's long daily panel over the issuers of each market's lane, pooled and suffixed."""
+def quote_scale(universe: pd.DataFrame, scale: dict[str, float]) -> pd.Series:
+    """Per code, the factor that takes the lane's quote currency to the book's; codes in other currencies are left out."""
+    currency = universe["Currency"].astype(str).str.strip().str.upper()
+    factors = currency.map(scale)
+    return pd.Series(factors.values, index=universe["Code"].astype(str).values, dtype="float64").dropna()
+
+
+def lane_quote_scale(market: str) -> pd.Series | None:
+    """``quote_scale`` from the market's lane universe file, or None when the market's quotes need no scaling."""
+    scale = QUOTE_SCALE.get(market)
+    if scale is None:
+        return None
+    import _datadir  # type: ignore[import-not-found]
+
+    lane, universe_file = register_panel.MARKET_LANES[market]
+    universe = pd.read_parquet(_datadir.EODHD_RAW_ROOT / lane / universe_file, columns=["Code", "Currency"])
+    return quote_scale(universe, scale)
+
+
+def scale_quotes(frame: pd.DataFrame, factors: pd.Series) -> pd.DataFrame:
+    """Multiply the price columns by the code's factor; drop the codes without one (volume is in shares and stays)."""
+    factor = frame["ticker"].map(factors)
+    out = frame[factor.notna()].copy()
+    factor = factor[factor.notna()]
+    for column in ("close", "open", "high", "low"):
+        out[column] = out[column] * factor
+    return out
+
+
+def price_panel(con: Any, panels: pd.DataFrame, *, start: str, scales: dict[str, pd.Series] | None = None) -> pd.DataFrame:
+    """btest's long daily panel over the issuers of each market's lane, pooled, suffixed, in the book's currency."""
     frames = []
     for market, group in panels.groupby("market", sort=True):
         lane, _ = register_panel.MARKET_LANES[market]
         codes = sorted(group["code"].unique())
         frame = export.price_panel(con, codes, start=start, lanes=(lane,))
+        factors = (scales or {}).get(market)
+        if factors is not None:
+            frame = scale_quotes(frame, factors)
         frame["ticker"] = frame["ticker"] + "." + SUFFIX[market]
         frames.append(frame)
     pooled = pd.concat(frames, ignore_index=True)
@@ -157,6 +196,11 @@ def borrow_rates(borrow_root: Path, panels: pd.DataFrame) -> pd.DataFrame:
     return out[["snapshot_date", "ticker", "fee_rate"]].sort_values("ticker").reset_index(drop=True)
 
 
+def export_subdir(markets: Sequence[str]) -> Path:
+    """The euro default writes next to WP15's files; any other set of markets gets its own folder."""
+    return SUBDIR if tuple(markets) == EUR_MARKETS else SUBDIR.with_name(f"{SUBDIR.name}_{'_'.join(markets)}")
+
+
 def export_registers(
     con: Any,
     root: Path,
@@ -164,12 +208,14 @@ def export_registers(
     markets: Sequence[str] = EUR_MARKETS,
     start: str = DEFAULT_START,
     borrow_root: Path | None = None,
+    subdir: Path | None = None,
 ) -> RegisterExportReport:
-    directory = Path(root) / SUBDIR
+    directory = Path(root) / (subdir or export_subdir(markets))
     directory.mkdir(parents=True, exist_ok=True)
     panels = load_panels(root, markets)
     panels = panels[panels["date"] >= pd.Timestamp(start)]
-    prices = price_panel(con, panels, start=start)
+    scales = {m: s for m in markets if (s := lane_quote_scale(m)) is not None}
+    prices = price_panel(con, panels, start=start, scales=scales)
     prices.to_parquet(directory / PRICES_FILE, index=False)
     dates = prices["date"].dt.tz_localize(None).drop_duplicates().sort_values()
     observations = signal_observations(panels)

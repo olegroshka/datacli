@@ -350,8 +350,11 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   The files overlap (each lists the names tradable from that venue), so a reader taking one
   rate per ISIN uses the market's home file first (`positioning.register_export.HOME_FILE`).
 - **Register inputs for btest (derived, by hand)** — `scripts/export_register_inputs.py
-  [--markets de,fr,nl,ie]` writes under `<positioning root>/exports/btest/`:
-  `register_prices_daily.parquet` (the euro registers' issuers from their lanes, one ticker
+  [--markets de,fr,nl,ie]` writes under `<positioning root>/exports/btest/` (the euro
+  default) or `exports/btest_<markets>/` for any other set (`--markets uk`: the LSE pence
+  quotes are scaled to pounds and the few issuers quoted in other currencies dropped,
+  `positioning.register_export.QUOTE_SCALE`):
+  `register_prices_daily.parquet` (the registers' issuers from their lanes, one ticker
   per listing such as `SAP.XETRA`, pooled trading days), `register_profit(_raw)(_neg).parquet`
   (the per-date demeaned rank of the issuer panel's funds' short profit residualised on
   reversal and momentum, shown from the day after it is marked, carried at most three days)

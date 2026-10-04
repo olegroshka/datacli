@@ -49,6 +49,22 @@ def test_signal_ranks_are_demeaned_shown_next_day_and_dropped_after_the_carry() 
     assert wide["T1.XETRA"].notna().sum() == 7  # six marked days shown from the next day, carried once past the panel's end
 
 
+def test_pence_quotes_are_scaled_to_pounds_and_other_currencies_dropped() -> None:
+    universe = pd.DataFrame({"Code": ["AAA", "BBB", "CCC", "DDD"], "Currency": ["GBX", "GBP", "USD", " gbx "]})
+    factors = rx.quote_scale(universe, rx.QUOTE_SCALE["uk"])
+    assert factors.to_dict() == pytest.approx({"AAA": 0.01, "BBB": 1.0, "DDD": 0.01})
+    frame = pd.DataFrame({
+        "ticker": ["AAA", "BBB", "CCC"], "close": [250.0, 2.5, 30.0], "open": [240.0, 2.4, 29.0],
+        "high": [260.0, 2.6, 31.0], "low": [230.0, 2.3, 28.0], "volume": [1000, 2000, 3000],
+    })
+    scaled = rx.scale_quotes(frame, factors)
+    assert scaled["ticker"].tolist() == ["AAA", "BBB"]  # the dollar quote is dropped
+    assert scaled["close"].tolist() == pytest.approx([2.5, 2.5]) and scaled["low"].tolist() == pytest.approx([2.3, 2.3])
+    assert scaled["volume"].tolist() == [1000, 2000]  # shares, not scaled
+    assert rx.lane_quote_scale("de") is None
+    assert rx.export_subdir(rx.EUR_MARKETS) == Path("exports/btest") and rx.export_subdir(("uk",)) == Path("exports/btest_uk")
+
+
 def test_borrow_rates_take_the_home_file_first_then_the_lowest_fee(tmp_path: Path) -> None:
     day = dt.date(2026, 10, 4)
 

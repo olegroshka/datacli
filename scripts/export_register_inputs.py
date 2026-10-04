@@ -5,7 +5,8 @@
 Reads <positioning root>/registers/<market>/issuers.parquet (scripts/register_panel.py),
 the register lanes' prices and the broker's country files (borrow fetch --country all);
 writes register_prices_daily, register_profit(_raw)(_neg) and register_borrow_rates
-under <positioning root>/exports/btest/.
+under <positioning root>/exports/btest/ (the euro default) or exports/btest_<markets>/
+(any other set, e.g. --markets uk, whose pence quotes are scaled to pounds).
 """
 
 from __future__ import annotations
