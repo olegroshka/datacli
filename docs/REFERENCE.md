@@ -30,7 +30,7 @@ Run any command with `--help` for its full options.
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
 | `borrow status \| fetch [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
-| `registers status \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change | `python -m registers.cli` |
+| `registers status \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change (Norway's rolling window accumulated) | `python -m registers.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
@@ -348,7 +348,10 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   history file (the FCA's `short-positions-daily-update.xlsx`, frozen since 2026-07-11;
   the AMF's CSV named by the data.gouv.fr dataset API each day), parses it strictly and
   replaces `<registers root>/<market>/history.parquet` when the file changed, keeping the
-  previous generation and refusing a file with fewer rows. `short_register(market, holder,
+  previous generation and refusing a file with fewer rows. Finanstilsynet's API serves a
+  rolling two-year window, so the Norwegian store accumulates instead: each fetch adds the
+  rows it has not seen and keeps those that fell out of the window (`WINDOWED_MARKETS`;
+  `state.json` records `window_rows`). `short_register(market, holder,
   holder_lei, issuer, isin, net_short_pct, position_date, published_from, published_to,
   file_date)`: one row per published position change, percent of the share capital, `0.0`
   where a position fell below the 0.5 percent threshold; a reader on day `d` uses

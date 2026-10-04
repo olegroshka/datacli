@@ -60,6 +60,7 @@ IE_URL = (
     "short-selling-regulation/public-net-short-positions/table-of-significant-net-short-positions-in-shares.xlsx"
 )
 IE_COLUMNS = ("Position Holder:", "Name of the Issuer:", "ISIN:", "Net short position %:", "Position Date:")
+IE_PUBLICATION_FRACTION = 0.005  # the 0.5 percent publication threshold as the workbook writes it
 DE_PAGE_URL = "https://www.bundesanzeiger.de/pub/en/nlp?0"
 DE_COLUMNS = ("Positionsinhaber", "Emittent", "ISIN", "Position", "Datum")
 
@@ -225,7 +226,12 @@ def parse_ie(payload: Payload) -> Parsed:
         body.columns = ["holder", "issuer", "isin", "net_short_pct", "position_date"]
         frames.append(body[body["holder"].notna() & body["isin"].notna()])
     frame = pd.concat(frames, ignore_index=True)
-    frame["net_short_pct"] = pd.to_numeric(frame["net_short_pct"], errors="coerce")
+    fraction = pd.to_numeric(frame["net_short_pct"], errors="coerce")
+    # the workbook formats the column as an Excel percentage: 0.0105 is 1.05 percent (a
+    # published position is at least 0.5 percent, so a value at or above 0.5 is already percent)
+    if (fraction >= IE_PUBLICATION_FRACTION * 100).any():
+        raise RegisterError(f"net short position column is no longer a fraction of one (max {fraction.max()})")
+    frame["net_short_pct"] = fraction * 100
     frame["holder_lei"] = None
     return _finish(frame, market="ie")
 

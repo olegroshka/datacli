@@ -6,7 +6,11 @@ the regulator. The store therefore keeps one ``history.parquet`` per market,
 replaced atomically when the published file changes, with the previous
 version kept one generation back and a ``state.json`` sidecar (file date,
 rows, sha256 of the raw bytes, fetch time, source). A new file with fewer
-rows than the stored one is refused: a history must not shrink.
+rows than the stored one is refused: a history must not shrink. The one
+exception is a register published as a **rolling window** (Finanstilsynet's
+API serves the last two years of events): there the store accumulates, each
+fetch adding the rows it has not seen and keeping those that fell out of the
+window, and the stored history never shrinks by construction.
 
 Canonical columns (one row per published position change):
 
@@ -44,6 +48,10 @@ import _atomic  # type: ignore[import-not-found]
 MARKETS: tuple[str, ...] = ("uk", "fr", "nl", "se", "no", "ie", "de")
 #: Markets whose register is still published per holder (the UK's froze in July 2026).
 LIVE_MARKETS: tuple[str, ...] = ("fr", "nl", "se", "no", "ie", "de")
+#: Markets published as a rolling window (not the whole history): the store accumulates them.
+WINDOWED_MARKETS: tuple[str, ...] = ("no",)
+#: The columns that identify one published position change across fetches.
+ROW_KEY: tuple[str, ...] = ("holder", "isin", "position_date", "net_short_pct")
 PUBLICATION_THRESHOLD_PCT = 0.5
 
 SCHEMA = pa.schema(
@@ -195,12 +203,16 @@ def refresh(
     *,
     run: bool,
     now: Callable[[], dt.datetime] | None = None,
+    accumulate: bool = False,
 ) -> FetchReport:
     """Fetch the published file(s); with ``run`` replace the stored history when they changed.
 
     ``fetch`` returns the raw bytes (or a dict of named parts for a register
     published as several files) and a source label. Without ``run`` the
-    files are still downloaded and parsed but nothing is written.
+    files are still downloaded and parsed but nothing is written. With
+    ``accumulate`` (a rolling window, ``WINDOWED_MARKETS``) the stored rows
+    are kept and the published rows not yet stored are added to them,
+    instead of the whole file replacing the history.
     """
     clock = now or (lambda: dt.datetime.now(dt.timezone.utc))
     target = store(root, market)
@@ -212,33 +224,63 @@ def refresh(
     sha = digest(data)
     state = target.load_state()
     if state.get("sha256") == sha and target.exists():
-        return FetchReport(market, run, root, parsed.file_date, len(parsed.rows), "unchanged")
+        held = int(state.get("rows", len(parsed.rows))) if accumulate else len(parsed.rows)
+        return FetchReport(market, run, root, parsed.file_date, held, "unchanged")
     stored_rows = int(state.get("rows", 0)) if target.exists() else 0
-    if len(parsed.rows) < stored_rows:
+    rows = parsed.rows
+    detail = f"file dated {parsed.file_date.isoformat()}"
+    if accumulate and target.exists():
+        stored = target.read()
+        assert stored is not None
+        rows, added, kept = accumulate_rows(stored, parsed.rows)
+        detail += f"; window {len(parsed.rows):,} rows, {added:,} new, {kept:,} kept from earlier windows"
+    elif len(parsed.rows) < stored_rows:
         return FetchReport(
             market, run, root, parsed.file_date, len(parsed.rows), "failed",
             f"the published file has {len(parsed.rows):,} rows, fewer than the stored {stored_rows:,}: a history must not shrink",
         )
-    if not run:
-        return FetchReport(market, run, root, parsed.file_date, len(parsed.rows), "planned")
-    replaced = target.exists()
-    detail = f"file dated {parsed.file_date.isoformat()}"
-    if replaced:
+    elif target.exists():
         detail += f"; replaced the stored file of {state.get('file_date')} ({stored_rows:,} rows)"
-    target.write(
-        parsed.rows,
-        {
-            "market": market,
-            "file_date": parsed.file_date.isoformat(),
-            "rows": int(len(parsed.rows)),
-            "sha256": sha,
-            "bytes": int(size(data)),
-            "fetched_at": clock().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "source": source,
-            "detail": detail,
-        },
-    )
-    return FetchReport(market, run, root, parsed.file_date, len(parsed.rows), "replaced" if replaced else "stored", detail)
+    if not run:
+        return FetchReport(market, run, root, parsed.file_date, len(rows), "planned")
+    replaced = target.exists()
+    new_state = {
+        "market": market,
+        "file_date": parsed.file_date.isoformat(),
+        "rows": int(len(rows)),
+        "sha256": sha,
+        "bytes": int(size(data)),
+        "fetched_at": clock().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": source,
+        "detail": detail,
+    }
+    if accumulate:
+        new_state.update({"accumulated": True, "window_rows": int(len(parsed.rows))})
+    target.write(rows, new_state)
+    return FetchReport(market, run, root, parsed.file_date, len(rows), "replaced" if replaced else "stored", detail)
+
+
+def _row_key(frame: pd.DataFrame) -> pd.Index:
+    parts = frame[list(ROW_KEY)].copy()
+    parts["position_date"] = pd.to_datetime(parts["position_date"]).dt.strftime("%Y-%m-%d")
+    parts["net_short_pct"] = parts["net_short_pct"].astype(float).round(6)
+    return pd.MultiIndex.from_frame(parts)
+
+
+def accumulate_rows(stored: pd.DataFrame, published: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
+    """The stored rows plus the published rows not yet stored (by ``ROW_KEY``).
+
+    Returns ``(rows, added, kept)``: ``added`` published rows were new,
+    ``kept`` stored rows are no longer in the published window. A stored row
+    keeps its first ``file_date`` and ``published_from``, so what a reader on a
+    past day could see does not move when the window does.
+    """
+    stored_keys = _row_key(stored)
+    fresh = published[~_row_key(published).isin(stored_keys)]
+    kept = int((~stored_keys.isin(_row_key(published))).sum())
+    out = pd.concat([stored[list(COLUMNS)], fresh[list(COLUMNS)]], ignore_index=True)
+    out = out.sort_values(["holder", "isin", "position_date"], kind="stable").reset_index(drop=True)
+    return out, int(len(fresh)), kept
 
 
 def status(root: Path) -> list[dict[str, Any]]:

@@ -125,13 +125,20 @@ def test_ie_parse_reads_both_sheets_from_the_second_column() -> None:
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        sheet([[None, "Millennium International Management LP", "RYANAIR HOLDINGS PLC", "IE00BYTBXV33", 0.52, pd.Timestamp("2026-09-29"), None]]).to_excel(writer, sheet_name="Current", index=False, header=False)
+        sheet([[None, "Millennium International Management LP", "RYANAIR HOLDINGS PLC", "IE00BYTBXV33", 0.0052, pd.Timestamp("2026-09-29"), None]]).to_excel(writer, sheet_name="Current", index=False, header=False)
         sheet([[None, "Millennium International Management LP", "RYANAIR HOLDINGS PLC", "IE00BYTBXV33", 0, pd.Timestamp("2026-05-29"), None],
                [None, None, None, None, None, None, None]]).to_excel(writer, sheet_name="Historical", index=False, header=False)
     parsed = eu.parse_ie({"workbook": buffer.getvalue()})
     rows = parsed.rows.sort_values("position_date")
     assert rows["net_short_pct"].tolist() == [0.0, 0.52] and rows["published_from"].tolist()[1] == dt.date(2026, 9, 30)
     assert parsed.file_date == dt.date(2026, 9, 29)
+    # a value already in percent would be read a hundred times too large: refused rather than misread
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        sheet([[None, "A LLP", "RYANAIR HOLDINGS PLC", "IE00BYTBXV33", 0.52, pd.Timestamp("2026-09-29"), None]]).to_excel(writer, sheet_name="Current", index=False, header=False)
+        sheet([]).to_excel(writer, sheet_name="Historical", index=False, header=False)
+    with pytest.raises(common.RegisterError, match="fraction"):
+        eu.parse_ie({"workbook": buffer.getvalue()})
 
 
 def test_de_parse_reads_the_comma_separated_history_and_current() -> None:
@@ -153,3 +160,37 @@ def test_refresh_digests_multi_part_payloads(tmp_path: Path) -> None:
     again = common.refresh("nl", lambda: ({"history": NL_HIST, "current": NL_CUR}, "afm"), eu.parse_nl, tmp_path, run=True, now=clock)
     assert again.outcome == "unchanged"
     assert set(common.MARKETS) == {"uk", "fr", "nl", "se", "no", "ie", "de"} and "uk" not in common.LIVE_MARKETS
+
+
+NO_JSON_LATER = b"""[
+ {"isin": "NO0010096985", "issuerName": "EQUINOR", "events": [
+   {"date": "2026-09-10T00:00:00", "shortPercent": 0.6, "activePositions": [
+     {"date": "2026-09-01T00:00:00", "shortPercent": 0.6, "positionHolder": "A LLP"}]},
+   {"date": "2026-09-20T00:00:00", "shortPercent": 0, "activePositions": []},
+   {"date": "2026-09-25T00:00:00", "shortPercent": 0.7, "activePositions": [
+     {"date": "2026-09-25T00:00:00", "shortPercent": 0.7, "positionHolder": "C AG"}]}]}
+]"""
+
+
+def test_refresh_accumulates_a_rolling_window_instead_of_refusing_the_shrunk_file(tmp_path: Path) -> None:
+    clock = lambda: dt.datetime(2026, 10, 4, tzinfo=dt.timezone.utc)  # noqa: E731
+    first = common.refresh("no", lambda: ({"api": NO_JSON}, "api"), eu.parse_no, tmp_path, run=True, now=clock, accumulate=True)
+    assert first.outcome == "stored" and first.rows == 4
+    # the window moved: the 2026-09-01 event fell out, so B LP's opening and closing are no longer served, and a new event arrived
+    alone = eu.parse_no({"api": NO_JSON_LATER})
+    assert len(alone.rows) == 3 and "B LP" not in set(alone.rows["holder"])
+    refused = common.refresh("no", lambda: ({"api": NO_JSON_LATER}, "api"), eu.parse_no, tmp_path, run=True, now=clock)
+    assert refused.outcome == "failed" and "must not shrink" in refused.detail
+    planned = common.refresh("no", lambda: ({"api": NO_JSON_LATER}, "api"), eu.parse_no, tmp_path, run=False, now=clock, accumulate=True)
+    assert planned.outcome == "planned" and planned.rows == 5 and len(common.store(tmp_path, "no").read()) == 4
+    second = common.refresh("no", lambda: ({"api": NO_JSON_LATER}, "api"), eu.parse_no, tmp_path, run=True, now=clock, accumulate=True)
+    assert second.outcome == "replaced" and second.rows == 5
+    assert "window 3 rows, 1 new, 2 kept from earlier windows" in second.detail
+    rows = common.store(tmp_path, "no").read().sort_values(["holder", "position_date"]).reset_index(drop=True)
+    assert rows["holder"].tolist() == ["A LLP", "A LLP", "B LP", "B LP", "C AG"]
+    assert rows["file_date"].tolist() == [dt.date(2026, 9, 20)] * 4 + [dt.date(2026, 9, 25)]  # earlier rows keep their first file date
+    state = common.store(tmp_path, "no").load_state()
+    assert state["rows"] == 5 and state["window_rows"] == 3 and state["file_date"] == "2026-09-25" and state["accumulated"] is True
+    again = common.refresh("no", lambda: ({"api": NO_JSON_LATER}, "api"), eu.parse_no, tmp_path, run=True, now=clock, accumulate=True)
+    assert again.outcome == "unchanged" and again.rows == 5  # the stored count, not the window's
+    assert common.WINDOWED_MARKETS == ("no",)

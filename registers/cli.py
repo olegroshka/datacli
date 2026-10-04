@@ -95,7 +95,8 @@ def refresh_market(market: str, root, *, run: bool) -> common.FetchReport:
         holder["source"] = source
         return data, source
 
-    return common.refresh(market, _fetch, lambda data: parse(data, holder.get("source", "")), root, run=run)
+    return common.refresh(market, _fetch, lambda data: parse(data, holder.get("source", "")), root, run=run,
+                          accumulate=market in common.WINDOWED_MARKETS)
 
 
 def cmd_status(argv: list[str]) -> int:
@@ -165,7 +166,8 @@ def cmd_fetch(argv: list[str]) -> int:
         elif report.outcome == "planned":
             console.print(Text(line + "nothing written -- add --run to store it", style="dim"))
         else:
-            console.print(line + report.outcome)
+            window = report.detail.split("; ", 1)[1] if "; window" in report.detail else ""
+            console.print(line + report.outcome + (f" ({window})" if window else ""))
     if failed:
         return 1
     if all(True for _ in markets) and not run:
