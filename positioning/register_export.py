@@ -27,6 +27,12 @@ what btest needs to size it, next to WP15's files under
   from the broker's latest country files (``borrow.ib.COUNTRIES``), one
   rate per ISIN, the market's home file first and the lowest fee elsewhere;
   rates as a fraction a year, for the overlay of ``positioning.btest_results``.
+  One snapshot stands for the whole history (today's rates applied
+  backwards), which breaks on a name that is squeezed today and was not
+  years ago (a rate of several hundred percent on a one percent short
+  weight is most of a book's cost); ``rate_cap`` also writes
+  ``register_borrow_rates_cap<pct>.parquet`` with the fees clipped at the
+  cap, the recorded assumption for a backward application.
 
 The default markets are the euro ones (Germany, France, the Netherlands,
 Ireland), so the pooled book is in one currency; Sweden and Norway need a
@@ -80,6 +86,7 @@ class RegisterExportReport:
     signal_symbols: int
     borrow_symbols: int
     borrow_snapshot: str | None
+    borrow_capped: int = 0
 
 
 def load_panels(root: Path, markets: Sequence[str]) -> pd.DataFrame:
@@ -196,6 +203,20 @@ def borrow_rates(borrow_root: Path, panels: pd.DataFrame) -> pd.DataFrame:
     return out[["snapshot_date", "ticker", "fee_rate"]].sort_values("ticker").reset_index(drop=True)
 
 
+def capped_rates_file(cap: float) -> str:
+    """``register_borrow_rates_cap50.parquet`` for a cap of 0.5 a year."""
+    return f"{Path(BORROW_FILE).stem}_cap{int(round(cap * 100))}.parquet"
+
+
+def cap_rates(borrow: pd.DataFrame, cap: float) -> pd.DataFrame:
+    """The rates frame with ``fee_rate`` clipped at ``cap`` (a fraction a year)."""
+    if cap <= 0:
+        raise ValueError("the rate cap must be a positive fraction a year")
+    out = borrow.copy()
+    out["fee_rate"] = out["fee_rate"].astype(float).clip(upper=cap)
+    return out
+
+
 def export_subdir(markets: Sequence[str]) -> Path:
     """The euro default writes next to WP15's files; any other set of markets gets its own folder."""
     return SUBDIR if tuple(markets) == EUR_MARKETS else SUBDIR.with_name(f"{SUBDIR.name}_{'_'.join(markets)}")
@@ -209,6 +230,7 @@ def export_registers(
     start: str = DEFAULT_START,
     borrow_root: Path | None = None,
     subdir: Path | None = None,
+    rate_cap: float | None = None,
 ) -> RegisterExportReport:
     directory = Path(root) / (subdir or export_subdir(markets))
     directory.mkdir(parents=True, exist_ok=True)
@@ -225,9 +247,13 @@ def export_registers(
     export.write_pair(signal, directory, SIGNAL_FILE)
     export.write_pair(daily_wide(observations, "profit_raw", dates=dates), directory, SIGNAL_RAW_FILE)
     borrow = pd.DataFrame(columns=["snapshot_date", "ticker", "fee_rate"])
+    capped = 0
     if borrow_root is not None:
         borrow = borrow_rates(borrow_root, panels[panels["ticker"].isin(priced)])
         borrow.to_parquet(directory / BORROW_FILE, index=False)
+        if rate_cap is not None:
+            cap_rates(borrow, rate_cap).to_parquet(directory / capped_rates_file(rate_cap), index=False)
+            capped = int((borrow["fee_rate"].astype(float) > rate_cap).sum())
     return RegisterExportReport(
         directory=directory,
         markets=tuple(markets),
@@ -239,4 +265,5 @@ def export_registers(
         signal_symbols=int(signal.notna().any().sum()),
         borrow_symbols=int(len(borrow)),
         borrow_snapshot=str(pd.to_datetime(borrow["snapshot_date"]).max().date()) if len(borrow) else None,
+        borrow_capped=capped,
     )

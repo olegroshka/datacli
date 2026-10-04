@@ -358,7 +358,9 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   per listing such as `SAP.XETRA`, pooled trading days), `register_profit(_raw)(_neg).parquet`
   (the per-date demeaned rank of the issuer panel's funds' short profit residualised on
   reversal and momentum, shown from the day after it is marked, carried at most three days)
-  and `register_borrow_rates.parquet` (one broker rate per issuer from the country files).
+  and `register_borrow_rates.parquet` (one broker rate per issuer from the country files;
+  `--rate-cap 0.5` also writes `register_borrow_rates_cap50.parquet` with the fees clipped,
+  the recorded assumption when today's snapshot stands for the whole history).
   btest's `strategies/smf_register_profit.py` consumes them; the overlay is
   `scripts/btest_borrow_overlay.py <run> --rates .../register_borrow_rates.parquet`.
   `scripts/register_long_leg.py [--freq W|M]` (`positioning.register_long_leg`) isolates the

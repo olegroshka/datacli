@@ -85,3 +85,12 @@ def test_borrow_rates_take_the_home_file_first_then_the_lowest_fee(tmp_path: Pat
     assert got == pytest.approx({"SAP.XETRA": 0.005, "AIR.PA": 0.01})  # SAP from germany.txt (home), AIR from france.txt (home)
     assert "X.PA" not in got and str(rates["snapshot_date"].iloc[0]) == "2026-10-04"
     assert rx.borrow_rates(tmp_path, panels.iloc[:0]).empty
+
+
+def test_rate_cap_clips_the_fees_into_a_second_file_name() -> None:
+    borrow = pd.DataFrame({"snapshot_date": ["2026-10-04"] * 3, "ticker": ["A", "B", "C"], "fee_rate": [0.005, 0.5, 8.3]})
+    capped = rx.cap_rates(borrow, 0.5)
+    assert capped["fee_rate"].tolist() == pytest.approx([0.005, 0.5, 0.5]) and borrow["fee_rate"].iloc[2] == 8.3
+    assert rx.capped_rates_file(0.5) == "register_borrow_rates_cap50.parquet"
+    with pytest.raises(ValueError, match="cap"):
+        rx.cap_rates(borrow, 0.0)
