@@ -379,6 +379,18 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   the next week's sign); a state-only model against state-plus-ripples, linear and boosted,
   split by time (fit to 2019, validate to 2022, test after); prints the base rates, the scores
   and the ripple increments. Needs scikit-learn.
+- **Short-interest nowcast (derived, by hand)** — `scripts/short_interest_nowcast_eval.py [--models linear,boost]
+  [--sample N] [--out report.md]` (`positioning.nowcast_short_interest`) asks whether the daily short volume of a
+  settlement period explains the change the next short-interest print shows: periods by the settlement lag (T+2
+  before 2024-05-28, T+1 after), the target in days of the 63-day median volume, a state-only model against
+  state-plus-flow, linear and boosted (XGBoost on the GPU when present); prints the coverage, the scores and the
+  flow increments.
+- **Daily short-inventory nowcast (derived, by hand)** — `scripts/short_interest_nowcast_family.py [--fit-to 2021-12-31]
+  [--from 2022-01-01] [--out report.md]` (`positioning.nowcast_daily`) builds, for every US common stock and day, the
+  published short interest (`si_pub`, the last print published by that day) and the nowcast (`si_hat`: plus the
+  full-period model's estimate of every complete unpublished period and the partial-period model's estimate of the
+  period in progress), then the path features (EWM z-score of the log level, ten-day growth) on each and the
+  twelve-test family at daily decision dates against the published timing; prints the tables and the nowcast's gain.
 - **Registers (FCA, AMF)** — `registers fetch --run` downloads each market's published
   history file (the FCA's `short-positions-daily-update.xlsx`, frozen since 2026-07-11;
   the AMF's CSV named by the data.gouv.fr dataset API each day), parses it strictly and
