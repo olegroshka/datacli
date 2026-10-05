@@ -670,7 +670,8 @@ class CommandRegistry:
             )
             if positionals:
                 raise CommandValidationError("registers fetch takes flags only")
-            market = options.get("--market")
+            markets = options.get("--market") or []
+            market = markets[-1] if markets else None
             allowed = ("nl", "de") if "--holdings" in options else ("uk", "fr", "nl", "se", "no", "ie", "de")
             if market is not None and market not in allowed:
                 raise CommandValidationError(f"registers fetch --market expects one of {', '.join(allowed)}")
