@@ -12,6 +12,8 @@ dependencies = [
   "rich>=13",
   "duckdb>=1.5.4",
   "openpyxl>=3.1.5",
+  "scikit-learn>=1.5",
+  "xgboost>=2.1",
 ]
 
 [project.optional-dependencies]

@@ -370,6 +370,15 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   21-day reversal; Newey-West lag 5) and on the equal-weight book of every shorted name, and
   writes `register_long_leg_weights.parquet` for btest's `strategies/dpos/register_long_leg.py`
   (a `TargetWeights` run that prices the engine's costs on the given matrix).
+- **Register nowcast (derived, by hand)** — `scripts/register_nowcast_eval.py [--markets uk,fr,nl,se,de]
+  [--models linear,boost] [--targets t1,t2,t3,t4] [--sample N] [--out report.md]`
+  (`positioning.nowcast_register`) asks how much of the next day's register publication can be
+  read at the close from the lane's daily bars: per issuer-day the state block (what is published
+  by that day), the ripple block (returns, abnormal volume, volatility, range, pressure, the
+  market's day) and the targets (an entry or increase, a decrease or exit, the aggregate change,
+  the next week's sign); a state-only model against state-plus-ripples, linear and boosted,
+  split by time (fit to 2019, validate to 2022, test after); prints the base rates, the scores
+  and the ripple increments. Needs scikit-learn.
 - **Registers (FCA, AMF)** — `registers fetch --run` downloads each market's published
   history file (the FCA's `short-positions-daily-update.xlsx`, frozen since 2026-07-11;
   the AMF's CSV named by the data.gouv.fr dataset API each day), parses it strictly and
