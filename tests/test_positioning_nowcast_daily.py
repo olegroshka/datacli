@@ -75,6 +75,28 @@ def test_path_features_are_causal_and_the_flow_is_ten_day_growth() -> None:
     assert out["flow_published"].iloc[10] == pytest.approx(out["flow_nowcast"].iloc[10])  # a scale does not change growth
 
 
+def test_news_features_are_the_gap_between_the_timings() -> None:
+    frame = pd.DataFrame({"adv": [100.0, 100.0, 0.0], "si_hat": [1100.0, 900.0, 500.0], "si_pub": [1000.0, 1000.0, 0.0]})
+    out = nd.news_features(frame)
+    assert out["news_adv"].tolist()[:2] == pytest.approx([1.0, -1.0]) and np.isnan(out["news_adv"].iloc[2])
+    assert out["news_ratio"].tolist()[:2] == pytest.approx([0.1, -0.1]) and np.isnan(out["news_ratio"].iloc[2])
+
+
+def test_news_family_reads_a_planted_news_component() -> None:
+    rng = np.random.default_rng(3)
+    dates = pd.bdate_range("2022-01-03", periods=40)
+    rows = []
+    for d in dates:
+        x = rng.normal(size=250)
+        for i in range(250):
+            rows.append({"date": d, "symbol": f"S{i}", "news_adv": x[i], "news_ratio": rng.normal(), "reversal_21d": rng.normal(),
+                         "momentum_12_1": rng.normal(), "level": rng.normal(), "ret_adj_10": -0.4 * x[i] + rng.normal(), "ret_adj_21": rng.normal()})
+    table = nd.news_family(pd.DataFrame(rows))
+    assert len(table) == 12 and set(table["timing"]) == {"news"}
+    hit = table[(table["feature"] == "news_adv") & (table["cleaning"] == "none") & (table["horizon"] == 10)].iloc[0]
+    assert hit["mean_ic"] < -0.25 and hit["significant"] and hit["sign_as_spec"]
+
+
 def test_family_reads_a_planted_bearish_feature_and_its_gain() -> None:
     rng = np.random.default_rng(2)
     dates = pd.bdate_range("2022-01-03", periods=60)

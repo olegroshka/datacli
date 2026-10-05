@@ -96,6 +96,11 @@ def main() -> int:
     print(f"returns joined ({time.time() - t0:.0f}s)", flush=True)
     table = nd.family(frame)
     gain = nd.gains(table)
+    frame = nd.news_features(frame)
+    news = nd.news_family(frame)
+    news_spread = frame.groupby("date")["news_adv"].agg(lambda s: s.quantile(0.9) - s.quantile(0.1)).describe()[["25%", "50%", "75%"]].round(4).to_dict()
+    print("news_adv 10-90 spread per date, quantiles over dates:", news_spread)
+    print(nr.markdown(news))
     agreement = (
         frame[["date", "si_hat", "si_pub"]].assign(diff=lambda f: (f["si_hat"] / f["si_pub"].where(f["si_pub"] > 0) - 1.0).abs())
         .groupby("date")["diff"].median().describe()[["25%", "50%", "75%"]].round(4).to_dict()
@@ -111,7 +116,12 @@ def main() -> int:
             f"Symbol-days {len(series):,}, symbols {series['symbol'].nunique():,}, dates {series['date'].nunique()}; "
             f"median absolute nowcast-to-published gap per date, quantiles over dates: {agreement}\n\n"
         )
-        args.out.write_text(header + "## Family (twelve tests per timing, Bonferroni p < 4.2e-3)\n\n" + nr.markdown(table) + "\n\n## Gain of the nowcast (mean IC, nowcast minus published)\n\n" + nr.markdown(gain) + "\n", encoding="utf-8")
+        args.out.write_text(
+            header + "## Family (twelve tests per timing, Bonferroni p < 4.2e-3)\n\n" + nr.markdown(table)
+            + "\n\n## Gain of the nowcast (mean IC, nowcast minus published)\n\n" + nr.markdown(gain)
+            + f"\n\n## News component (labelled extension; twelve tests, Bonferroni p < 4.2e-3; news_adv 10-90 spread per date {news_spread})\n\n" + nr.markdown(news) + "\n",
+            encoding="utf-8",
+        )
         print(f"wrote {args.out}")
     return 0
 

@@ -195,6 +195,39 @@ def _ic(frame: pd.DataFrame, min_names: int) -> pd.Series:
     return pd.Series(ics, dtype=float)
 
 
+NEWS: tuple[str, ...] = ("news_adv", "news_ratio")
+
+
+def news_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """The nowcast's news: what the public reader does not have, ``(si_hat - si_pub)`` in days of median volume and as a ratio."""
+    out = frame.copy()
+    adv = out["adv"].where(out["adv"] > 0)
+    out["news_adv"] = (out["si_hat"] - out["si_pub"]) / adv
+    out["news_ratio"] = out["si_hat"] / out["si_pub"].where(out["si_pub"] > 0) - 1.0
+    return out
+
+
+def news_family(frame: pd.DataFrame, *, min_names: int = ev.MIN_NAMES) -> pd.DataFrame:
+    """The news components against the forward returns: two features, three cleanings, two horizons (a labelled extension)."""
+    results: list[FamilyResult] = []
+    for feature in NEWS:
+        for cleaning in CLEANINGS:
+            if cleaning == "none":
+                values = frame[feature]
+            else:
+                factors = ["reversal_21d", "momentum_12_1"] + (["level"] if cleaning == "factors+level" else [])
+                values = ev.residualise(frame.assign(_f=frame[feature]), "_f", factors)
+            part = frame[["date"]].assign(_x=values)
+            for horizon in HORIZONS:
+                part["_r"] = frame[f"ret_adj_{horizon}"]
+                ics = _ic(part, min_names)
+                mean, t = ev.newey_west_t(ics, lag=horizon)
+                p = ev.p_value(t, len(ics))
+                results.append(FamilyResult("news", feature, cleaning, horizon, len(ics), mean, t, p, p < 0.05 / (len(NEWS) * len(CLEANINGS) * len(HORIZONS)),
+                                            math.copysign(1.0, mean) == EXPECTED_SIGN if math.isfinite(mean) else False))
+    return pd.DataFrame([r.__dict__ for r in results])
+
+
 def gains(table: pd.DataFrame) -> pd.DataFrame:
     """The nowcast's mean IC minus the published timing's, per feature, cleaning and horizon."""
     wide = table.pivot_table(index=["feature", "cleaning", "horizon"], columns="timing", values="mean_ic", aggfunc="first")
