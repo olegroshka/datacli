@@ -666,16 +666,17 @@ class CommandRegistry:
             options = {}
         elif identity == "registers fetch":
             positionals, options = _parse_known_options(
-                argv, boolean={"--run"}, scalar={"--market"}
+                argv, boolean={"--run", "--holdings"}, scalar={"--market"}
             )
             if positionals:
                 raise CommandValidationError("registers fetch takes flags only")
             market = options.get("--market")
-            if market is not None and market not in ("uk", "fr", "nl", "se", "no", "ie", "de"):
-                raise CommandValidationError("registers fetch --market expects one of uk, fr, nl, se, no, ie, de")
+            allowed = ("nl", "de") if "--holdings" in options else ("uk", "fr", "nl", "se", "no", "ie", "de")
+            if market is not None and market not in allowed:
+                raise CommandValidationError(f"registers fetch --market expects one of {', '.join(allowed)}")
         elif identity == "registers status":
             positionals, options = _parse_known_options(
-                argv, boolean={"--json"}, scalar=set()
+                argv, boolean={"--json", "--holdings"}, scalar=set()
             )
             if positionals:
                 raise CommandValidationError("registers status takes flags only")

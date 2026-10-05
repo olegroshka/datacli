@@ -137,6 +137,10 @@ def test_registry_matches_admitted_inventory_and_rejects_forbidden(
         registry.validate("eodhd", "refresh", ["--run", "api_key=canary"], context)
     with pytest.raises(CommandValidationError, match="unsupported option"):
         registry.validate("eodhd", "status", ["--write"], context)
+    registry.validate("registers", "fetch", ["--holdings", "--run"], context)
+    registry.validate("registers", "fetch", ["--holdings", "--market", "nl", "--run"], context)
+    with pytest.raises(CommandValidationError, match="expects one of nl, de"):
+        registry.validate("registers", "fetch", ["--holdings", "--market", "uk", "--run"], context)
     command = registry.validate("eodhd", "refresh", ["--fast", "--run"], context)
     assert command.spec.mutation and command.spec.network
     assert any(claim.mode == "exclusive" for claim in command.spec.resources)

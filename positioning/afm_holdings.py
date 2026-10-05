@@ -266,20 +266,9 @@ def build_issuer_map(
 
 
 # --------------------------------------------------------------------------- #
-# visibility (DD-006 C3)
+# visibility (DD-006 C3): the rule lives with the capture; re-exported here
 # --------------------------------------------------------------------------- #
-#: The AFM file carries the obligation date, not the publication date. The law allows four
-#: trading days to notify and the AFM publishes on receipt; until a week of daily captures
-#: measures the lag, a row is taken as visible from the second weekday after the obligation
-#: date (Dutch holidays ignored, recorded as a limit, as for the short registers).
-VISIBILITY_WEEKDAYS = 2
-
-
-def visible_from(obligation_dates: pd.Series, weekdays: int = VISIBILITY_WEEKDAYS) -> pd.Series:
-    """The first day a notification is taken as public: ``weekdays`` Monday-to-Friday days after the obligation date."""
-    dates = pd.to_datetime(obligation_dates)
-    out = dates + pd.offsets.BDay(weekdays)
-    return pd.Series(out.dt.date.to_numpy(), index=obligation_dates.index, name="published_from")
+from registers.holdings import VISIBILITY_WEEKDAYS, visible_from  # noqa: E402,F401
 
 
 # --------------------------------------------------------------------------- #

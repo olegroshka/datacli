@@ -19,7 +19,7 @@ import _cmdtable as ct  # type: ignore[import-not-found]  # noqa: E402
 import _render  # type: ignore[import-not-found]  # noqa: E402
 from _cmdtable import Command, Flag  # type: ignore[import-not-found]  # noqa: E402
 
-from registers import amf, common, eu, fca  # noqa: E402
+from registers import amf, common, eu, fca, holdings  # noqa: E402
 from registers import config as registers_config  # noqa: E402
 
 PROG = "registers"
@@ -31,7 +31,7 @@ COMMANDS: dict[str, Command] = {
             "status",
             "What register histories are on disk (bare `registers` does this)",
             "Show the stored histories per market: file date, rows, last fetch.",
-            (Flag("--json", "machine-readable output"),),
+            (Flag("--json", "machine-readable output"), Flag("--holdings", "the long-side register stores (nl, de) instead")),
         ),
         Command(
             "fetch",
@@ -45,6 +45,8 @@ COMMANDS: dict[str, Command] = {
             (
                 Flag("--run", "store the histories (default is a dry run)"),
                 Flag("--market", "one market only: uk, fr, nl, se, no, ie or de (default: all)", metavar="MARKET"),
+                Flag("--holdings", "the long-side registers instead (nl: the AFM's holdings and capital exports; de: BaFin's snapshot), accumulated, never shrinking"),
+                Flag("--from-dir", "with --holdings: read saved exports from DIR instead of fetching (seeding; the file's date is its modification date)", metavar="DIR"),
             ),
         ),
         Command(
@@ -106,30 +108,42 @@ def cmd_status(argv: list[str]) -> int:
     if done is not None:
         return done
     root, source = registers_config.resolve_root()
-    entries = common.status(root)
+    long_side = "--holdings" in flags
+    entries = holdings.status_holdings(root) if long_side else common.status(root)
     if "--json" in flags:
-        print(jsonlib.dumps({"root": str(root), "root_source": source, "markets": entries}, indent=2))
+        print(jsonlib.dumps({"root": str(root), "root_source": source, "kind": "holdings" if long_side else "short", "markets": entries}, indent=2))
         return 0
     console = _render.make_console()
     console.print(Text(f"root: {root}  ({source})", style="bold"))
-    table = _render.minimal_table(title="markets")
+    table = _render.minimal_table(title="long-side registers (holdings)" if long_side else "markets")
     for name in ("market", "file date", "rows", "bytes", "last fetch", "previous kept"):
+        if long_side and name == "previous kept":
+            continue
         table.add_column(name, no_wrap=True)
     dash = Text("-", style="dim")
     for e in entries:
         present = e["present"]
-        table.add_row(
+        cells = [
             e["market"],
             e["file_date"] or dash,
             _render.fmt_int(e["rows"]) if present else dash,
             _render.fmt_int(e["bytes"]) if present else dash,
             (e["last_fetch"] or "")[:16].replace("T", " ") or dash,
-            ("yes" if e["previous"] else "no") if present else dash,
-        )
+        ]
+        if not long_side:
+            cells.append(("yes" if e["previous"] else "no") if present else dash)
+        table.add_row(*cells)
     console.print(table)
     if not any(e["present"] for e in entries):
-        console.print(Text("nothing stored yet -- run:  registers fetch --run", style="dim"))
+        console.print(Text("nothing stored yet -- run:  registers fetch " + ("--holdings " if long_side else "") + "--run", style="dim"))
     return 0
+
+
+def refresh_holdings_market(market: str, root, *, run: bool, from_dir: str | None) -> holdings.HoldingsReport:
+    from pathlib import Path
+
+    fetch = (lambda: holdings.read_dir(market, Path(from_dir))) if from_dir else holdings.FETCHERS[market]
+    return holdings.refresh_holdings(market, fetch, root, run=run)
 
 
 def cmd_fetch(argv: list[str]) -> int:
@@ -143,18 +157,24 @@ def cmd_fetch(argv: list[str]) -> int:
         console.print(Text(f"fetch takes flags only, got {rest}", style="red"))
         return 2
     market = flags.get("--market")
-    markets = list(common.MARKETS) if market in (None, True) else [str(market)]
+    long_side = "--holdings" in flags
+    from_dir = flags.get("--from-dir")
+    if from_dir is not None and (not long_side or from_dir is True):
+        console.print(Text("--from-dir DIR needs --holdings and a directory", style="red"))
+        return 2
+    universe = holdings.HOLDINGS_MARKETS if long_side else common.MARKETS
+    markets = list(universe) if market in (None, True) else [str(market)]
     for m in markets:
-        if m not in FETCHERS:
-            console.print(Text(f"unknown market {m!r}; expected one of {', '.join(common.MARKETS)}", style="red"))
+        if m not in universe:
+            console.print(Text(f"unknown market {m!r}; expected one of {', '.join(universe)}", style="red"))
             return 2
     root, _ = registers_config.resolve_root()
     run = "--run" in flags
     verb = "fetched" if run else "plan (dry run)"
-    console.print(Text(f"registers {verb}: {root}", style="bold"))
+    console.print(Text(f"registers {'holdings ' if long_side else ''}{verb}: {root}", style="bold"))
     failed = False
     for m in markets:
-        report = refresh_market(m, root, run=run)
+        report = refresh_holdings_market(m, root, run=run, from_dir=str(from_dir) if from_dir else None) if long_side else refresh_market(m, root, run=run)
         if report.outcome == "failed":
             console.print(Text(f"  {m:<3} failed           {report.detail}", style="red"))
             failed = True

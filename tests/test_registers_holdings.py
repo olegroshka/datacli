@@ -6,6 +6,7 @@ import datetime as dt
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,111 @@ def test_parse_holdings_refuses_another_header() -> None:
     bad = HEADER.replace("Meldingsplichtige", "Melder").encode("latin-1")
     with pytest.raises(holdings.HoldingsFormatError):
         holdings.parse_holdings(bad)
+
+
+DE_SNAPSHOT = (
+    "﻿SFC Energy AG;Brunnthal;Deutschland;1752748 Alberta Ltd.;Calgary;Kanada;3,59;;;01.10.2013\n"
+    "2invest AG;Heidelberg;Deutschland;2invest AG;Heidelberg;Deutschland;3,04;0,0;0,0;16.07.2024\n"
+    "3U Holding AG;Marburg;Deutschland;3U Holding AG;Marburg;Deutschland;8,82;0,0;8,82;13.11.2023\n"
+    "3U Holding AG;Marburg;Deutschland;3U Holding AG;Marburg;Deutschland;8,82;0,0;8,82;13.11.2023\n"
+).encode("utf-8")
+DE_SNAPSHOT_2 = (
+    "﻿2invest AG;Heidelberg;Deutschland;2invest AG;Heidelberg;Deutschland;3,04;0,0;0,0;16.07.2024\n"
+    "3U Holding AG;Marburg;Deutschland;3U Holding AG;Marburg;Deutschland;8,82;0,0;8,82;13.11.2023\n"
+    "3U Holding AG;Marburg;Deutschland;Citadel Advisors LLC;Chicago;USA;3,10;0,0;3,10;02.10.2026\n"
+).encode("utf-8")
+
+
+def test_parse_de_reads_the_headerless_snapshot() -> None:
+    frame = holdings.parse_de(DE_SNAPSHOT)
+    assert list(frame.columns) == list(holdings.DE_COLUMNS) and len(frame) == 3  # the duplicate dropped
+    sfc = frame.iloc[0]
+    assert sfc["holder"] == "1752748 Alberta Ltd." and sfc["pct_voting"] == 3.59 and pd.isna(sfc["pct_instruments"]) and sfc["published_at"] == dt.date(2013, 10, 1)
+    assert frame.iloc[2]["pct_total"] == 8.82
+    with pytest.raises(holdings.HoldingsFormatError):
+        holdings.parse_de(b"a;b;c\n")
+
+
+def test_visible_from_adds_two_weekdays_over_weekends() -> None:
+    dates = pd.Series([dt.date(2026, 10, 1), dt.date(2026, 10, 2), dt.date(2026, 10, 3), dt.date(2026, 10, 5)])  # Thu, Fri, Sat, Mon
+    assert holdings.visible_from(dates).tolist() == [dt.date(2026, 10, 5), dt.date(2026, 10, 6), dt.date(2026, 10, 6), dt.date(2026, 10, 7)]
+
+
+def test_refresh_holdings_nl_accumulates_with_first_seen_and_never_shrinks(tmp_path: Path) -> None:
+    capital = (
+        "Datum meldingsplicht;Uitgevende onderneming;Inschrijving handelsregister;Plaats;Totaal geplaatst kapitaal;Totaal aantal stemmen;Aantal gecertificeerd\n"
+        "2026-09-30 00:00:00;Signify N.V.;65220692;Eindhoven;1000.0;1000.0;0.0\n"
+    ).encode("latin-1")
+    day1 = lambda: ({"holdings": _fixture(), "capital": capital}, "fake", dt.date(2026, 10, 5))  # noqa: E731
+    planned = holdings.refresh_holdings("nl", day1, tmp_path, run=False)
+    assert planned.outcome == "planned" and planned.rows == 2 and not holdings.HoldingsStore(tmp_path, "nl").exists()
+    stored = holdings.refresh_holdings("nl", day1, tmp_path, run=True)
+    assert stored.outcome == "stored" and stored.rows == 2 and stored.file_date == dt.date(2026, 10, 5)
+    store = holdings.HoldingsStore(tmp_path, "nl")
+    frame = store.read()
+    assert frame is not None and set(frame["first_seen"]) == {dt.date(2026, 10, 5)} and frame["last_seen"].isna().all()
+    assert "published_from" in frame.columns and (store.dir / "lines.parquet").exists() and (store.dir / "capital.parquet").exists()
+    assert pd.read_parquet(store.dir / "capital.parquet")["issuer_kvk"].tolist() == ["65220692"]
+    assert holdings.refresh_holdings("nl", day1, tmp_path, run=True).outcome == "unchanged"
+    # day 2: one more notification, one of the old ones gone from the export
+    extra = _line("2026-10-02 00:00:00", "Signify N.V.", "Citadel Advisors LLC", "Gewoon aandeel", "Reëel", "Rechtstreeks",
+                  "1.00000", "1.00000", "Ordinary share", "Kapitaalbelang", "3,10 %", "3,10 %", "0,00 %", "0,00 %", "0,00 %")
+    body = _fixture().decode("latin-1").splitlines(keepends=True)
+    without_goldman = "".join(line for line in body if "Goldman" not in line) + extra
+    day2 = lambda: ({"holdings": without_goldman.encode("latin-1"), "capital": capital}, "fake", dt.date(2026, 10, 6))  # noqa: E731
+    replaced = holdings.refresh_holdings("nl", day2, tmp_path, run=True)
+    assert replaced.outcome == "replaced" and replaced.rows == 3 and "1 new rows, 1 closed" in replaced.detail
+    frame = store.read()
+    assert frame is not None and len(frame) == 3
+    by_holder = frame.set_index("holder")
+    assert by_holder.loc["Citadel Advisors LLC", "first_seen"] == dt.date(2026, 10, 6) and by_holder.loc["Citadel Advisors LLC", "published_from"] == dt.date(2026, 10, 6)
+    assert by_holder.loc["Goldman Sachs Group Inc., The", "last_seen"] == dt.date(2026, 10, 6)
+    assert pd.isna(by_holder.loc["Weiss Asset Management LP", "last_seen"])
+    entries = {e["market"]: e for e in holdings.status_holdings(tmp_path)}
+    assert entries["nl"]["rows"] == 3 and entries["nl"]["file_date"] == "2026-10-06" and not entries["de"]["present"]
+    failed = holdings.refresh_holdings("nl", lambda: ({"holdings": b"x;y\n", "capital": capital}, "bad"), tmp_path, run=True)
+    assert failed.outcome == "failed" and "HoldingsFormatError" in failed.detail
+
+
+def test_refresh_holdings_de_closes_holdings_that_leave_the_snapshot(tmp_path: Path) -> None:
+    clock = lambda: dt.datetime(2026, 10, 5, 23, 0, tzinfo=dt.timezone.utc)  # noqa: E731
+    first = holdings.refresh_holdings("de", lambda: ({"snapshot": DE_SNAPSHOT}, "fake"), tmp_path, run=True, now=clock)
+    assert first.outcome == "stored" and first.rows == 3 and first.file_date == dt.date(2026, 10, 5)
+    second = holdings.refresh_holdings("de", lambda: ({"snapshot": DE_SNAPSHOT_2}, "fake"), tmp_path, run=True, today=dt.date(2026, 10, 6), now=clock)
+    assert second.outcome == "replaced" and second.rows == 4
+    frame = holdings.HoldingsStore(tmp_path, "de").read()
+    assert frame is not None
+    sfc = frame[frame["issuer"] == "SFC Energy AG"].iloc[0]
+    assert sfc["last_seen"] == dt.date(2026, 10, 6) and sfc["first_seen"] == dt.date(2026, 10, 5)
+    citadel = frame[frame["holder"] == "Citadel Advisors LLC"].iloc[0]
+    assert citadel["first_seen"] == dt.date(2026, 10, 6) and pd.isna(citadel["last_seen"]) and citadel["published_at"] == dt.date(2026, 10, 2)
+    assert frame["last_seen"].notna().sum() == 1
+
+
+def test_read_dir_reads_saved_exports(tmp_path: Path) -> None:
+    (tmp_path / "bafin_gesamtexport.csv").write_bytes(DE_SNAPSHOT)
+    payload, source, file_date = holdings.read_dir("de", tmp_path)
+    assert payload == {"snapshot": DE_SNAPSHOT} and "saved exports" in source and file_date == dt.date.today() or file_date <= dt.date.today()
+    with pytest.raises(holdings.HoldingsFormatError):
+        holdings.read_dir("nl", tmp_path)
+
+
+def test_cli_fetch_and_status_with_holdings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from registers import cli
+
+    monkeypatch.setenv("DATACLI_REGISTERS_ROOT", str(tmp_path / "root"))
+    saved = tmp_path / "saved"
+    saved.mkdir()
+    (saved / "bafin_gesamtexport.csv").write_bytes(DE_SNAPSHOT)
+    assert cli.main(["fetch", "--holdings", "--market", "de", "--from-dir", str(saved)]) == 0
+    assert not holdings.HoldingsStore(tmp_path / "root", "de").exists()
+    assert cli.main(["fetch", "--holdings", "--market", "de", "--from-dir", str(saved), "--run"]) == 0
+    assert holdings.HoldingsStore(tmp_path / "root", "de").read().shape[0] == 3
+    assert cli.main(["status", "--holdings", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert '"kind": "holdings"' in out and '"rows": 3' in out
+    assert cli.main(["fetch", "--holdings", "--market", "uk"]) == 2
+    assert cli.main(["fetch", "--from-dir", str(saved)]) == 2
 
 
 def test_parse_capital_and_issuer_kvk() -> None:
