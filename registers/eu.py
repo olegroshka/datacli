@@ -32,11 +32,13 @@ the same; :func:`registers.common.refresh` digests the parts together.
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import io
 import json
 import re
 import urllib.parse
 import urllib.request
+import zlib
 from http.cookiejar import CookieJar
 from typing import Any, Iterable
 
@@ -66,10 +68,20 @@ DE_COLUMNS = ("Positionsinhaber", "Emittent", "ISIN", "Position", "Datum")
 
 
 def _get(url: str, *, timeout: float = 120.0, opener: Any = None, data: bytes | None = None) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT}, data=data)
+    # Finansinspektionen answers a request carrying urllib's default ``Accept-Encoding: identity`` with a
+    # redirect to its 404 page (observed from 2026-10-21); offering compression gets the file. Other
+    # regulators do not care. The body is decompressed here when a server does compress.
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"}, data=data)
     open_ = opener.open if opener is not None else urllib.request.urlopen
     with open_(request, timeout=timeout) as response:  # noqa: S310 (fixed https URLs)
-        return response.read()
+        body = response.read()
+        headers = getattr(response, "headers", None)
+        encoding = (headers.get("Content-Encoding") or "").lower() if headers is not None else ""
+    if encoding == "gzip":
+        return gzip.decompress(body)
+    if encoding == "deflate":
+        return zlib.decompress(body)
+    return body
 
 
 #: Rows without a holder, an ISIN, a position date or a percentage are dropped (file trailers,
