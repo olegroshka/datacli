@@ -141,6 +141,12 @@ def test_registry_matches_admitted_inventory_and_rejects_forbidden(
     registry.validate("registers", "fetch", ["--holdings", "--market", "nl", "--run"], context)
     with pytest.raises(CommandValidationError, match="expects one of nl, de"):
         registry.validate("registers", "fetch", ["--holdings", "--market", "uk", "--run"], context)
+    registry.validate("registers", "fetch", ["--ansp", "--run"], context)
+    registry.validate("registers", "fetch", ["--ansp", "--wayback", "--run"], context)
+    with pytest.raises(CommandValidationError, match="--ansp takes neither"):
+        registry.validate("registers", "fetch", ["--ansp", "--market", "uk", "--run"], context)
+    with pytest.raises(CommandValidationError, match="--wayback requires --ansp"):
+        registry.validate("registers", "fetch", ["--wayback", "--run"], context)
     command = registry.validate("eodhd", "refresh", ["--fast", "--run"], context)
     assert command.spec.mutation and command.spec.network
     assert any(claim.mode == "exclusive" for claim in command.spec.resources)

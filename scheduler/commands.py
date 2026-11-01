@@ -666,10 +666,14 @@ class CommandRegistry:
             options = {}
         elif identity == "registers fetch":
             positionals, options = _parse_known_options(
-                argv, boolean={"--run", "--holdings"}, scalar={"--market"}
+                argv, boolean={"--run", "--holdings", "--ansp", "--wayback"}, scalar={"--market"}
             )
             if positionals:
                 raise CommandValidationError("registers fetch takes flags only")
+            if "--wayback" in options and "--ansp" not in options:
+                raise CommandValidationError("registers fetch --wayback requires --ansp")
+            if "--ansp" in options and ("--market" in options or "--holdings" in options):
+                raise CommandValidationError("registers fetch --ansp takes neither --market nor --holdings")
             markets = options.get("--market") or []
             market = markets[-1] if markets else None
             allowed = ("nl", "de") if "--holdings" in options else ("uk", "fr", "nl", "se", "no", "ie", "de")

@@ -19,7 +19,7 @@ import _cmdtable as ct  # type: ignore[import-not-found]  # noqa: E402
 import _render  # type: ignore[import-not-found]  # noqa: E402
 from _cmdtable import Command, Flag  # type: ignore[import-not-found]  # noqa: E402
 
-from registers import amf, common, eu, fca, holdings  # noqa: E402
+from registers import amf, common, eu, fca, fca_ansp, holdings  # noqa: E402
 from registers import config as registers_config  # noqa: E402
 
 PROG = "registers"
@@ -31,7 +31,7 @@ COMMANDS: dict[str, Command] = {
             "status",
             "What register histories are on disk (bare `registers` does this)",
             "Show the stored histories per market: file date, rows, last fetch.",
-            (Flag("--json", "machine-readable output"), Flag("--holdings", "the long-side register stores (nl, de) instead")),
+            (Flag("--json", "machine-readable output"), Flag("--holdings", "the long-side register stores (nl, de) instead"), Flag("--ansp", "the FCA aggregated-net-short-position vintage archive (uk_ansp/) instead")),
         ),
         Command(
             "fetch",
@@ -41,12 +41,19 @@ COMMANDS: dict[str, Command] = {
             "the AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland and\n"
             "Bundesanzeiger files), parse them strictly,\n"
             "and replace the stored history when the file changed. A file with fewer rows\n"
-            "than the stored one is refused. WITHOUT --run nothing is written.",
+            "than the stored one is refused. WITHOUT --run nothing is written.\n"
+            "With --ansp: the FCA's aggregated net short position files (the post-13-July-2026\n"
+            "regime: current and historic CSVs, workbook, reportable shares list, the frozen\n"
+            "per-holder workbook) are archived as vintages under uk_ansp/: every distinct\n"
+            "version is kept with its Last-Modified and retrieval time, every retrieval is\n"
+            "logged. --wayback adds the Internet Archive's captures (one-off backfill).",
             (
                 Flag("--run", "store the histories (default is a dry run)"),
                 Flag("--market", "one market only: uk, fr, nl, se, no, ie or de (default: all)", metavar="MARKET"),
                 Flag("--holdings", "the long-side registers instead (nl: the AFM's holdings and capital exports; de: BaFin's snapshot), accumulated, never shrinking"),
                 Flag("--from-dir", "with --holdings: read saved exports from DIR instead of fetching (seeding; the file's date is its modification date)", metavar="DIR"),
+                Flag("--ansp", "the FCA aggregated-net-short-position files archived as vintages (uk_ansp/): every distinct version kept, every retrieval logged"),
+                Flag("--wayback", "with --ansp: also archive the Internet Archive's captures of the same files (one-off backfill)"),
             ),
         ),
         Command(
@@ -108,6 +115,29 @@ def cmd_status(argv: list[str]) -> int:
     if done is not None:
         return done
     root, source = registers_config.resolve_root()
+    if "--ansp" in flags:
+        view = fca_ansp.status(root)
+        if "--json" in flags:
+            print(jsonlib.dumps({"root": str(root), "root_source": source, "kind": "uk_ansp", **view}, indent=2))
+            return 0
+        console = _render.make_console()
+        console.print(Text(f"root: {root}  ({source})", style="bold"))
+        if not view["present"]:
+            console.print(Text("no FCA aggregate archive yet -- run:  registers fetch --ansp --run", style="dim"))
+            return 0
+        when = (view["last_retrieval"] or "-")[:16].replace("T", " ")
+        flag = "" if view.get("last_retrieval_ok") in (None, True) else ", incomplete"
+        table = _render.minimal_table(title=f"uk_ansp vintages (last retrieval {when}{flag}; {view['observations']:,} observations)")
+        for name in ("file", "versions", "live", "wayback", "earliest last-modified", "latest last-modified", "last seen", "bytes"):
+            table.add_column(name, no_wrap=True)
+        for f in view["files"]:
+            table.add_row(
+                f["key"], str(f["versions"]), str(f["live_versions"]), str(f["wayback_versions"]),
+                (f["earliest_last_modified"] or "-")[:16].replace("T", " "), (f["latest_last_modified"] or "-")[:16].replace("T", " "),
+                (f["latest_observed_at"] or "-")[:16].replace("T", " "), _render.fmt_int(f["bytes"]),
+            )
+        console.print(table)
+        return 0
     long_side = "--holdings" in flags
     entries = holdings.status_holdings(root) if long_side else common.status(root)
     if "--json" in flags:
@@ -159,6 +189,36 @@ def cmd_fetch(argv: list[str]) -> int:
     market = flags.get("--market")
     long_side = "--holdings" in flags
     from_dir = flags.get("--from-dir")
+    if "--ansp" in flags:
+        if market not in (None, True) or long_side or from_dir is not None:
+            console.print(Text("--ansp takes no --market, --holdings or --from-dir", style="red"))
+            return 2
+        root, _ = registers_config.resolve_root()
+        run = "--run" in flags
+        console.print(Text(f"registers uk_ansp {'archived' if run else 'plan (dry run)'}: {root / fca_ansp.STORE}", style="bold"))
+        reports = [fca_ansp.refresh(root, run=run)]
+        if "--wayback" in flags:
+            console.print(Text("  internet archive captures:", style="bold"))
+            reports.append(fca_ansp.backfill_wayback(root, run=run))
+        failed = False
+        for report in reports:
+            for r in report.results:
+                tag = r.key if r.source == "live" else f"{r.key} (wayback)"
+                when = r.last_modified or "-"
+                if r.outcome == "failed":
+                    console.print(Text(f"  {tag:<24} failed      {r.detail}", style="red"))
+                    failed = True
+                elif r.outcome == "unchanged":
+                    console.print(Text(f"  {tag:<24} unchanged   last-modified {when}; {r.detail}", style="dim"))
+                elif r.outcome == "planned":
+                    console.print(Text(f"  {tag:<24} new version last-modified {when}, {_render.fmt_int(r.bytes)} bytes -- add --run to archive it", style="dim"))
+                else:
+                    console.print(f"  {tag:<24} archived    last-modified {when}, {_render.fmt_int(r.bytes)} bytes; {r.detail}")
+        if failed:
+            return 1
+        if run:
+            print("Everything in sync.")
+        return 0
     if from_dir is not None and (not long_side or from_dir is True):
         console.print(Text("--from-dir DIR needs --holdings and a directory", style="red"))
         return 2
@@ -206,7 +266,8 @@ def cmd_qc(argv: list[str]) -> int:
     if rest:
         console.print(Text(f"qc takes no arguments, got {rest}", style="red"))
         return 2
-    findings = common.qc(registers_config.resolve_root()[0])
+    root, _ = registers_config.resolve_root()
+    findings = common.qc(root) + fca_ansp.qc(root)
     if not findings:
         console.print(Text("registers: no findings", style="green"))
         return 0

@@ -299,8 +299,8 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
         "read-only quality checks over the stored borrow snapshots",
     ),
     ("registers", "fetch"): (
-        "registers fetch --run [--market uk|fr|nl|se|no|ie|de]",
-        "the public net short position registers, per holder (FCA workbook, AMF CSV), replaced when changed",
+        "registers fetch --run [--market uk|fr|nl|se|no|ie|de | --holdings [--market nl|de] | --ansp [--wayback]]",
+        "the public net short position registers, per holder (FCA workbook, AMF CSV, ...), replaced when changed; --ansp archives the FCA's aggregate files as vintages",
     ),
     ("registers", "status"): (
         "registers status [--json]",

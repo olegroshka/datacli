@@ -30,7 +30,7 @@ Run any command with `--help` for its full options.
 | `finra status [--live] \| list \| qc` | The FINRA source's coverage (`--live` adds what FINRA has published), catalog, quality checks | `python -m finra.cli` |
 | `sec status \| fetch [--dataset form13f\|adv] [--limit N] [--run] \| units \| qc` | The SEC source: Form 13F data sets (institutional holdings), listing, coverage, quality checks | `python -m sec.cli` |
 | `borrow status \| fetch [--country NAME\|all] [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
-| `registers status \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change (Norway's rolling window accumulated) | `python -m registers.cli` |
+| `registers status [--holdings\|--ansp] \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--holdings] [--ansp [--wayback]] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change (Norway's rolling window accumulated); `--ansp` archives the FCA's post-reform aggregated-net-short-position files as vintages, every distinct version kept with its Last-Modified | `python -m registers.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
@@ -403,6 +403,18 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   file_date)`: one row per published position change, percent of the share capital, `0.0`
   where a position fell below the 0.5 percent threshold; a reader on day `d` uses
   `published_from <= d`; a holder's row stands until the holder's next row for the ISIN.
+- **FCA aggregate vintages (`uk_ansp`)** — `registers fetch --ansp --run` retrieves the FCA's
+  post-13-July-2026 files from the origin (a cache-busting query: the FCA's CDN serves copies up to
+  14 days old and ignores `Cache-Control: no-cache`): the current and historic aggregated-net-short-
+  position CSVs, the workbook, the reportable shares list (CSV and XLSX) and the frozen per-holder
+  workbook. Every distinct version is kept once under
+  `<registers root>/uk_ansp/files/<key>/<Last-Modified>__<sha256[:12]>.<ext>`, every retrieval is
+  appended to `uk_ansp/observations.jsonl` with the kept response headers (Last-Modified is the
+  FCA's publication timestamp), and `state.json` lists the versions. `--wayback` adds the Internet
+  Archive's captures of the same URLs (one-off backfill, source `wayback`). `registers status --ansp`
+  shows the vintages; `registers qc` warns when the archive is stale or a retrieval failed. Nothing
+  is parsed into the per-holder history: the aggregate is a different object and the FCA publishes
+  no history of it (the historic table may be amended in place, SSR 6.4.1G-6.4.2G).
 - **Register ladders (derived, by hand)** — `scripts/register_panel.py --market uk` runs the
   FIFO kernel per holder and ISIN on the register's percent of share capital (lots priced at
   the close on the position date) and writes `<positioning root>/registers/<market>/funds.parquet`

@@ -10,7 +10,8 @@ rows, 602 holders, 917 issuers on the file dated 10.07.2026). A row with
 The file **stopped updating on 2026-07-11** (last position date 2026-07-09):
 under the UK's Short Selling Regulations 2025 the FCA publishes aggregated
 net short positions per issuer instead (``aggregated-*-net-short-positions.csv``
-on the same page, not captured here). The fetch still works and returns the
+on the same page, archived as vintages by ``registers.fca_ansp``:
+``registers fetch --ansp --run``). The fetch still works and returns the
 frozen file; the history is a backtest dataset, not a live one.
 
 Publication: a position is disclosed by 15:30 on the trading day after the
