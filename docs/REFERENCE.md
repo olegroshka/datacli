@@ -370,6 +370,19 @@ eodhd> lab agents · lab skills · lab config     # roster · playbooks · model
   21-day reversal; Newey-West lag 5) and on the equal-weight book of every shorted name, and
   writes `register_long_leg_weights.parquet` for btest's `strategies/dpos/register_long_leg.py`
   (a `TargetWeights` run that prices the engine's costs on the given matrix).
+- **ISA book inputs for btest (derived, by hand)** — `scripts/export_isa_inputs.py [--out DIR]
+  [--start 2011-06-01]` writes `isa_prices_daily.parquet` to `<btest>/data/raw/isa/exports/` from
+  local snapshots, with no network call: daily total-return bars in pounds for the lines
+  btest's `strategies/isa/` books hold. Pence quotes are scaled, dollar lines convert at GBPUSD
+  (FRED's `DEXUSUK`, then the ratio of the two quotes of one gold ETC, refused if they disagree),
+  and Equinor is its NYSE ADR as a stand-in for the Oslo line, so books holding it start in 2017.
+- **Next-day chip forecasts for btest (derived, by hand)** — `scripts/chip_nextday_forecast.py [--live]
+  [--out DIR]` runs a fixed set of 20 walk-forward models of AMD's next close-to-close return, pooled
+  over 16 chip stocks or AMD alone, from price and volume behaviour, the sector, market proxy funds, FRED
+  (lagged a session) and news sentiment (UTC dates before the signal's), and reports how they scored.
+  It writes `nextday_predictions.parquet`, `nextday_results.csv` and `amd_prices_daily.parquet` beside the
+  ISA inputs for btest's `strategies/isa/next_day_timing.py`. `--live` adds 24 delayed EODHD quotes to
+  forecast the next session; without it no network call is made.
 - **Register nowcast (derived, by hand)** — `scripts/register_nowcast_eval.py [--markets uk,fr,nl,se,de]
   [--models linear,boost] [--targets t1,t2,t3,t4] [--sample N] [--out report.md]`
   (`positioning.nowcast_register`) asks how much of the next day's register publication can be
