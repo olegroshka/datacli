@@ -25,7 +25,10 @@ fetch state and, for cross-checks, the daily ``prices`` view. Reports:
 - **volume reconciliation**: (regular-hours volume + the first post-close
   bar, which carries the closing cross) / daily volume, as quantiles per
   exchange, with daily volume un-split-adjusted from the `splits` view (EODHD
-  daily volume is split-adjusted, close is not) -- information, not a failure
+  daily volume is split-adjusted, close is not) -- information, not a failure;
+- **volume fix**: status counts of the US volume fix (``intraday_volume``,
+  which makes ``bars_1m_adj.volume`` consolidated), and a warning when it is
+  missing or older than the newest bars
   (design doc section 11);
 - **state**: status counts and pairs whose history is still to fill.
 
@@ -54,6 +57,7 @@ RAW_DIR = EODHD_RAW_ROOT / "intraday"
 BARS_DIR = RAW_DIR / "bars_1m"
 STATE_PATH = RAW_DIR / "bars_1m_fetch_state.csv"
 TICKERS_PATH = RAW_DIR / "tickers_INTRADAY.parquet"
+VOLUME_DAYS_PATH = RAW_DIR / "bars_1m_volume_days.parquet"
 
 EXPECTED_RTH = {"US": 390, "INDX": 390, "LSE": 510}
 THIN_SHARE = 0.8
@@ -80,6 +84,7 @@ def run_report(
     since: str | None,
     t1: list[tuple[str, str]] | None = None,
     has_prices: bool = False,
+    volume_days_path: Path | None = None,
 ) -> dict[str, Any]:
     """Compute the facts (pure SQL over the bars; ``prices`` view optional)."""
     where = f"WHERE date >= '{since}'" if since else ""
@@ -250,6 +255,22 @@ def run_report(
             }
             for e, n, a, b, c in vol
         ]
+    out["volume_fix"] = None
+    if volume_days_path is not None and volume_days_path.exists():
+        vd = f"read_parquet('{volume_days_path.as_posix()}')"
+        vwhere = f"WHERE date >= '{since}'" if since else ""
+        counts = con.execute(
+            f"SELECT status, count(*) FROM {vd} {vwhere} GROUP BY 1 ORDER BY 2 DESC"
+        ).fetchall()
+        newest_fix = con.execute(f"SELECT max(date) FROM {vd}").fetchone()[0]
+        newest_us = con.execute(
+            "SELECT max(date) FROM _b WHERE upper(exchange) = 'US'"
+        ).fetchone()[0]
+        out["volume_fix"] = {
+            "status": {k: int(v) for k, v in counts},
+            "newest": newest_fix,
+            "stale": bool(newest_us and newest_fix and newest_us > newest_fix),
+        }
     out["state"] = {"present": state_path.exists(), "status": {}, "partial": 0}
     if state_path.exists():
         rows = con.execute(
@@ -323,8 +344,38 @@ def flags(report: dict[str, Any]) -> list[tuple[str, str, str]]:
                 "info",
                 "volume_vs_daily",
                 f"{v['exchange']}: (regular hours + closing bar) / daily volume p10 {v['p10']} / p50 {v['p50']} / "
-                f"p90 {v['p90']} over {v['pair_days']:,} pair-days -- vendor 1m volume is not daily volume",
+                f"p90 {v['p90']} over {v['pair_days']:,} pair-days -- vendor 1m volume (bars_1m) is not daily volume",
             )
+        )
+    vf = report.get("volume_fix")
+    if vf is None:
+        if any(v["exchange"] == "US" for v in report["volume_ratio"]):
+            out.append(
+                (
+                    "warning",
+                    "volume_fix",
+                    "no US volume fix -- bars_1m_adj.volume is the vendor's; run refresh intraday --run "
+                    "(or fetch_eodhd_intraday.py --volume-fix)",
+                )
+            )
+    else:
+        total = sum(vf["status"].values())
+        ok = vf["status"].get("ok", 0)
+        rest = ", ".join(f"{k} {v:,}" for k, v in vf["status"].items() if k != "ok")
+        out.append(
+            (
+                "warning" if vf["stale"] else "info",
+                "volume_fix",
+                f"{ok:,} of {total:,} US pair-days ({ok / total:.1%}) consolidated in bars_1m_adj.volume"
+                + (f"; kept vendor volume: {rest}" if rest else "")
+                + (
+                    f" -- STALE: built to {vf['newest']}, bars are newer"
+                    if vf["stale"]
+                    else ""
+                ),
+            )
+            if total
+            else ("info", "volume_fix", "no US pair-days in range")
         )
     status = report["state"]["status"]
     bad = {k: v for k, v in status.items() if k in {"error", "not_found"}}
@@ -459,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
         since=since,
         t1=t1,
         has_prices=explore_eodhd._has_view(con, "prices"),
+        volume_days_path=VOLUME_DAYS_PATH,
     )
     flag_rows = flags(report)
     if args.json:

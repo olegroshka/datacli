@@ -38,6 +38,13 @@ LANE = "intraday"
 RAW_DIR = EODHD_RAW_ROOT / LANE
 TICKERS_PATH = RAW_DIR / "tickers_INTRADAY.parquet"
 MEMBERSHIP_PATH = RAW_DIR / "universe_membership.parquet"
+#: The 1m fetch state (written by fetch_eodhd_intraday.py), read for bar coverage.
+STATE_NAME = "bars_1m_fetch_state.csv"
+
+#: A ranked name needs a daily price within this many days before the quarter start.
+MAX_STALE_DAYS = 10
+#: Share of trailing days on which two symbols' closes must agree to count as one company.
+DUPLICATE_SHARE = 0.95
 
 #: Curated sections of the toml, in output order.
 CURATED_SECTIONS = ("context", "index", "fx", "uk")
@@ -154,8 +161,14 @@ def load_quarter_ranks(
     min_price: float,
     min_days: int,
     stock_types: Iterable[str] = ("Common Stock",),
+    max_stale_days: int = MAX_STALE_DAYS,
+    coverage: dict[str, tuple[date, date]] | None = None,
 ) -> pd.DataFrame:
     """Dollar-volume ranks per quarter start from the stock lanes' daily prices.
+
+    A name needs a price in the ``max_stale_days`` before the quarter start
+    (it still trades), and one company filed under several symbols is ranked
+    once (:func:`drop_duplicate_series`).
 
     ``sources`` is ``(lane, prices_parquet, universe_parquet_or_None,
     splits_parquet_or_None)`` in priority order: a ticker priced by an earlier
@@ -261,39 +274,190 @@ def load_quarter_ranks(
         SELECT CAST(q.q AS DATE) AS quarter_start, ticker, any_value(exchange) AS exchange,
                count(*) AS n_days,
                median(close * volume) / 1e6 AS adv_musd,
-               arg_max(close, d) AS last_close
+               arg_max(close, d) AS last_close,
+               max(d) AS last_day
         FROM daily JOIN quarters q ON d >= CAST(q.q AS DATE) - INTERVAL 365 DAY AND d < CAST(q.q AS DATE)
         GROUP BY q.q, ticker
         """).df()
-    ranks = ranks[
-        (ranks["n_days"] >= min_days) & (ranks["last_close"] >= min_price)
-    ].copy()
     ranks["quarter_start"] = pd.to_datetime(ranks["quarter_start"]).dt.date
+    # A symbol that stopped trading before the quarter cannot be held in it
+    # (AET was acquired 2018-11-28 but its trailing year still ranked it for 2019Q1).
+    alive = pd.to_datetime(ranks["last_day"]).dt.date >= ranks["quarter_start"].map(
+        lambda q: q - timedelta(days=max_stale_days)
+    )
+    ranks = ranks[
+        (ranks["n_days"] >= min_days) & (ranks["last_close"] >= min_price) & alive
+    ].copy()
+    ranks = drop_duplicate_series(con, ranks, min_days=min_days, coverage=coverage)
     ranks = ranks.sort_values(
         ["quarter_start", "adv_musd", "ticker"], ascending=[True, False, True]
     )
     ranks["adv_rank"] = ranks.groupby("quarter_start").cumcount() + 1
-    return ranks.reset_index(drop=True)
+    return ranks.drop(columns="last_day").reset_index(drop=True)
+
+
+def bar_coverage(state_path: Path) -> dict[str, tuple[date, date]]:
+    """US ticker -> (first, last) date of its stored 1m bars, from the fetch state.
+
+    Used only to pick which symbol labels a company filed under several
+    (:func:`drop_duplicate_series`). Missing state means no coverage.
+    """
+    if not state_path.exists():
+        return {}
+    state = pd.read_csv(state_path, dtype=str, keep_default_na=False)
+    out: dict[str, tuple[date, date]] = {}
+    for r in state.to_dict("records"):
+        first, last = r.get("first_data_date", ""), r.get("latest_data_date", "")
+        if r.get("exchange") != "US" or not first or not last:
+            continue
+        span = (date.fromisoformat(first[:10]), date.fromisoformat(last[:10]))
+        old = out.get(r["ticker"])
+        out[r["ticker"]] = (min(old[0], span[0]), max(old[1], span[1])) if old else span
+    return out
+
+
+def drop_duplicate_series(
+    con: Any,
+    ranks: pd.DataFrame,
+    *,
+    min_days: int,
+    share: float = DUPLICATE_SHARE,
+    coverage: dict[str, tuple[date, date]] | None = None,
+) -> pd.DataFrame:
+    """Keep one symbol per company and quarter; add a ``company`` column.
+
+    The stock lanes file a renamed company's history under its new symbol
+    (us_common) *and* keep the old symbol's series (us_extended, from FINRA's
+    delisted names): CBS, VIAC and PSKY are one series in 2018, as are BK/BNY,
+    SQ/XYZ, RDS-A/SHEL and BHGE/BKR. Ranked separately, the company takes two
+    or three slots. Two symbols are one company in a quarter when they share
+    the last close before it and their closes agree (within half a cent or
+    0.01%) on at least ``share`` of the trailing days they both have.
+
+    Which symbol of a group is kept only picks the label (the company is in the
+    universe either way), so it may use what is known about the 1m bars: EODHD
+    files a renamed company's 1m history under the new symbol for some (XYZ
+    holds SQ's from 2018, ELV ANTM's, SHEL RDS-A's) and under the old one for
+    others (BK, MMC, CBS, CTL, MYL). In order, the kept symbol is: one whose
+    fetched 1m bars (``coverage``: ticker -> first, last bar date) overlap the
+    quarter; then the one whose daily history ends first (the symbol in use at
+    the time); then the earlier lane; then the alphabetically first.
+
+    ``company`` is one id per group of symbols linked in *any* quarter, so a
+    company keeps its tier incumbency when its label changes (``assign_tiers``).
+    Expects the temp tables ``daily`` (``ticker, d, close``) and ``daily_adj``
+    (with ``pri``) on ``con``.
+    """
+    ranks = ranks.assign(company=ranks["ticker"])
+    if ranks.empty:
+        return ranks
+    keys = ranks[["quarter_start", "ticker", "last_close"]]
+    cand = keys.merge(keys, on=["quarter_start", "last_close"])
+    cand = cand[cand["ticker_x"] < cand["ticker_y"]][
+        ["quarter_start", "ticker_x", "ticker_y"]
+    ]
+    if cand.empty:
+        return ranks
+    con.register(
+        "dup_cand",
+        cand.rename(columns={"ticker_x": "a", "ticker_y": "b"}).assign(
+            quarter_start=lambda f: pd.to_datetime(f["quarter_start"])
+        ),
+    )
+    match = con.execute("""
+        SELECT CAST(c.quarter_start AS DATE) AS quarter_start, c.a, c.b, count(*) AS n,
+               sum(CASE WHEN abs(x.close - y.close) <= greatest(0.005, 1e-4 * x.close)
+                   THEN 1 ELSE 0 END) AS same
+        FROM dup_cand c
+        JOIN daily x ON x.ticker = c.a
+             AND x.d >= CAST(c.quarter_start AS DATE) - INTERVAL 365 DAY
+             AND x.d < CAST(c.quarter_start AS DATE)
+        JOIN daily y ON y.ticker = c.b AND y.d = x.d
+        GROUP BY 1, 2, 3
+        """).df()
+    con.unregister("dup_cand")
+    edges = match[
+        (match["n"] >= 0.9 * min_days) & (match["same"] >= share * match["n"])
+    ]
+    if edges.empty:
+        return ranks
+    ends = {
+        t: (pd.Timestamp(e).date(), int(p))
+        for t, e, p in con.execute(
+            "SELECT ticker, max(d), min(pri) FROM daily_adj GROUP BY ticker"
+        ).fetchall()
+    }
+    coverage = coverage or {}
+
+    def covered(t: str, q: date) -> bool:
+        span = coverage.get(t)
+        return span is not None and span[0] < quarter_end(q) and span[1] >= q
+
+    def components(pairs: Iterable[tuple[str, str]]) -> list[list[str]]:
+        parent: dict[str, str] = {}
+
+        def find(t: str) -> str:
+            while parent.setdefault(t, t) != t:
+                t = parent[t]
+            return t
+
+        for a, b in pairs:
+            parent[find(a)] = find(b)
+        groups: dict[str, list[str]] = {}
+        for t in list(parent):
+            groups.setdefault(find(t), []).append(t)
+        return list(groups.values())
+
+    company = {
+        t: min(group)
+        for group in components(zip(edges["a"], edges["b"]))
+        for t in group
+    }
+    drop: set[tuple[date, str]] = set()
+    for quarter, group in edges.groupby("quarter_start"):
+        q = pd.Timestamp(quarter).date()
+        for members in components(zip(group["a"], group["b"])):
+            keep = min(
+                members,
+                key=lambda t: (
+                    not covered(t, q),
+                    *ends.get(t, (date.max, 99)),
+                    t,
+                ),
+            )
+            drop |= {(q, t) for t in members if t != keep}
+    mask = [(q, t) not in drop for q, t in zip(ranks["quarter_start"], ranks["ticker"])]
+    out = ranks[mask].copy()
+    out["company"] = out["ticker"].map(lambda t: company.get(t, t))
+    return out
 
 
 def assign_tiers(ranks: pd.DataFrame, tiers: list[Tier]) -> pd.DataFrame:
     """Tier membership per quarter with hysteresis.
 
     Per quarter and tier, in order: incumbents (names in this tier or a higher
-    one last quarter, not yet placed, with ``rank <= keep``) fill first, best
+    one last quarter, not yet placed, with ``rank <= keep``; matched on the
+    ``company`` column when present, so a relabelled company stays) fill first, best
     rank first; remaining slots go to the best-ranked other names with
     ``rank <= size``. Each tier holds ``size - previous tier size`` names.
     """
     rows: list[pd.DataFrame] = []
-    previous: dict[str, int] = {}  # ticker -> tier index last quarter
+    previous: dict[str, int] = {}  # company -> tier index last quarter
+    if "company" not in ranks.columns:
+        ranks = ranks.assign(company=ranks["ticker"])
     for quarter, frame in ranks.groupby("quarter_start", sort=True):
         frame = frame.sort_values("adv_rank")
+        company = dict(zip(frame["ticker"], frame["company"]))
         placed: dict[str, int] = {}
         floor_size = 0
         for index, tier in enumerate(tiers):
             target = tier.size - floor_size
             free = frame[~frame["ticker"].isin(placed)]
-            incumbent_mask = free["ticker"].map(lambda t: previous.get(t, 99) <= index)
+            incumbent_mask = pd.Series(
+                [previous.get(company[t], 99) <= index for t in free["ticker"]],
+                index=free.index,
+                dtype=bool,
+            )
             incumbents = free[incumbent_mask & (free["adv_rank"] <= tier.keep)]
             chosen = list(incumbents["ticker"][:target])
             if len(chosen) < target:
@@ -308,7 +472,7 @@ def assign_tiers(ranks: pd.DataFrame, tiers: list[Tier]) -> pd.DataFrame:
         member["tier"] = member["ticker"].map(lambda t: tiers[placed[t]].name)
         member["role"] = member["ticker"].map(lambda t: tiers[placed[t]].role)
         rows.append(member)
-        previous = placed
+        previous = {company[t]: index for t, index in placed.items()}
     if not rows:
         return pd.DataFrame(columns=[*ranks.columns, "tier", "role"])
     return pd.concat(rows, ignore_index=True)
@@ -494,6 +658,7 @@ def build(
         quarters,
         min_price=float(rules["min_price"]),
         min_days=int(rules["min_days"]),
+        coverage=bar_coverage(raw_root / LANE / STATE_NAME),
     )
     membership = build_membership(config, ranks, quarters)
     membership = membership.drop(columns=["listed_from"], errors="ignore").merge(

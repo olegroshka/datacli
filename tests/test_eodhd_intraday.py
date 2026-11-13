@@ -135,17 +135,20 @@ def test_fetch_targets_current_and_former_members() -> None:
 
 
 def _daily(tickers: dict[str, float], start: str, end: str) -> pd.DataFrame:
+    """Flat daily series with dollar volume ``dv``; each ticker its own price
+    (identical close series would be one company to the duplicate check)."""
     days = pd.bdate_range(start, end)
     rows = []
-    for t, dv in tickers.items():
+    for k, (t, dv) in enumerate(tickers.items()):
+        close = 10.0 + k
         for d in days:
             rows.append(
                 {
                     "ticker": t,
                     "exchange": "US",
                     "date": d.strftime("%Y-%m-%d"),
-                    "close": 10.0,
-                    "volume": dv / 10,
+                    "close": close,
+                    "volume": dv / close,
                 }
             )
     return pd.DataFrame(rows)
@@ -1068,3 +1071,217 @@ def test_a_vendor_hole_does_not_end_the_backfill(tmp_path: Path) -> None:
         state.loc["TSLA", "first_data_date"] == "2022-01-01"
         and state.loc["TSLA", "status"] == "ok"
     )
+
+
+# --------------------------------------------------------------------------- #
+# renamed symbols, duplicates, masks, half days (2026-11-13 follow-up)
+# --------------------------------------------------------------------------- #
+def _series(ticker: str, start: str, end: str, close: float, dv: float) -> pd.DataFrame:
+    days = pd.bdate_range(start, end)
+    return pd.DataFrame(
+        {
+            "ticker": ticker,
+            "exchange": "US",
+            "date": days.strftime("%Y-%m-%d"),
+            "close": close,
+            "volume": dv / close,
+        }
+    )
+
+
+def test_one_company_under_several_symbols_ranks_once(tmp_path: Path) -> None:
+    """OLD and NEW are one daily series (a rename filed twice); OLD stops trading
+    at the end of 2016. GONE stopped before the quarter. OTHER is unrelated."""
+    prices = pd.concat(
+        [
+            _series("OLD", "2015-01-01", "2016-12-30", 20.0, 9e8),
+            _series("NEW", "2015-01-01", "2017-12-29", 20.0, 9e8),
+            _series("OTHER", "2015-01-01", "2017-12-29", 30.0, 5e8),
+            _series("GONE", "2015-01-01", "2016-06-01", 40.0, 7e8),
+        ]
+    )
+    prices.to_parquet(tmp_path / "prices.parquet")
+    sources = [("us_common", tmp_path / "prices.parquet", None, None)]
+    quarters = [date(2016, 7, 1), date(2017, 7, 1)]
+    ranks = uni.load_quarter_ranks(sources, quarters, min_price=5.0, min_days=200)
+    q1 = ranks[ranks["quarter_start"] == date(2016, 7, 1)]
+    # the symbol in use (the daily history that ends first) labels the company;
+    # GONE has no price in the 10 days before the quarter
+    assert list(q1["ticker"]) == ["OLD", "OTHER"]
+    assert list(q1["adv_rank"]) == [1, 2]
+    assert set(ranks["company"]) == {"NEW", "OTHER"}  # OLD and NEW: one company id
+    q2 = ranks[ranks["quarter_start"] == date(2017, 7, 1)]
+    assert list(q2["ticker"]) == ["NEW", "OTHER"]  # OLD stopped trading
+    # 1m coverage overrides the end-date rule: the vendor filed the bars under NEW
+    covered = uni.load_quarter_ranks(
+        sources,
+        quarters,
+        min_price=5.0,
+        min_days=200,
+        coverage={"NEW": (date(2015, 1, 2), date(2017, 12, 29))},
+    )
+    first = covered[covered["quarter_start"] == date(2016, 7, 1)]
+    assert list(first["ticker"]) == ["NEW", "OTHER"]
+
+
+def test_a_relabelled_company_keeps_its_tier() -> None:
+    ranks = pd.DataFrame(
+        [
+            (date(2016, 1, 1), "OLD", "CO", 2),
+            (date(2016, 1, 1), "AAA", "AAA", 1),
+            (date(2016, 1, 1), "BBB", "BBB", 3),
+            (date(2016, 4, 1), "NEW", "CO", 2),  # same company, new label
+            (date(2016, 4, 1), "AAA", "AAA", 1),
+            (date(2016, 4, 1), "BBB", "BBB", 3),
+        ],
+        columns=["quarter_start", "ticker", "company", "adv_rank"],
+    )
+    # T2 holds one name; NEW (rank 2) keeps the slot as the incumbent over BBB
+    tiers = [uni.Tier("T1", 1, 1, "trade"), uni.Tier("T2", 2, 3, "breadth")]
+    out = uni.assign_tiers(ranks, tiers)
+    q2 = out[out["quarter_start"] == date(2016, 4, 1)].set_index("ticker")
+    assert set(q2.index) == {"AAA", "NEW"} and q2.loc["NEW", "tier"] == "T2"
+    # without the company column NEW is a newcomer; it still wins on rank here,
+    # so check the hysteresis case: BBB incumbent, OLD -> NEW relabel at rank 3
+    swapped = ranks.assign(
+        adv_rank=[1, 2, 3, 1, 3, 2],
+        ticker=["AAA", "BBB", "OLD", "AAA", "NEW", "BBB"],
+        company=["AAA", "BBB", "CO", "AAA", "CO", "BBB"],
+    )
+    tiers3 = [uni.Tier("T1", 1, 1, "trade"), uni.Tier("T2", 3, 3, "breadth")]
+    kept = uni.assign_tiers(swapped, tiers3)
+    assert "NEW" in set(kept[kept["quarter_start"] == date(2016, 4, 1)]["ticker"])
+
+
+def test_early_close_calendar() -> None:
+    assert fx.early_close("US", date(2025, 11, 28)) == fx.time(13, 0)
+    assert fx.early_close("US", date(2024, 12, 24)) == fx.time(13, 0)
+    assert (
+        fx.early_close("US", date(2021, 12, 24)) is None
+    )  # Friday: Christmas observed
+    assert fx.early_close("US", date(2025, 7, 3)) == fx.time(13, 0)
+    assert fx.early_close("US", date(2020, 7, 3)) is None  # Friday: the holiday
+    assert fx.early_close("US", date(2025, 11, 27)) is None  # Thanksgiving itself
+    assert fx.early_close("LSE", date(2025, 12, 31)) == fx.time(12, 30)
+    assert fx.early_close("FOREX", date(2025, 12, 24)) is None
+    payload = [
+        _bar("2025-11-28 17:59:00"),  # 12:59 ET on a half day
+        _bar("2025-11-28 18:00:00"),  # 13:00 ET: after the early close
+        _bar("2025-11-26 20:59:00"),  # 15:59 ET on a normal day
+    ]
+    bars = fx.bars_from_payload(payload, "AAA", "US")
+    assert list(bars["session"]) == ["rth", "rth", "post"]  # sorted by ts
+
+
+def test_retag_sessions_rewrites_stored_half_days(tmp_path: Path) -> None:
+    bars = fx.bars_from_payload(
+        [_bar("2025-11-28 18:30:00"), _bar("2025-11-26 18:30:00")], "AAA", "US"
+    )
+    bars["session"] = "rth"  # as tagged before the calendar existed
+    fx.merge_bars(tmp_path, bars)
+    assert fx.retag_sessions(tmp_path) == (1, 1)
+    stored = pd.read_parquet(tmp_path / "AAA.US_2025.parquet")
+    assert list(stored["session"]) == ["rth", "post"]
+    assert fx.retag_sessions(tmp_path) == (0, 0)  # idempotent
+
+
+def test_corrections_add_alias_rows_and_mask_history() -> None:
+    config = {
+        "alias": [
+            {
+                "ticker": "BKR",
+                "source": "BHGE",
+                "from": "2017-07-05",
+                "until": "2019-10-17",
+            },
+            {
+                "ticker": "GONE",
+                "source": "OLD",
+                "until": "2015-01-01",
+            },  # before the span
+        ],
+        "mask": [
+            {"ticker": "FI", "until": "2023-06-06"},
+            {"ticker": "MT", "until": "2020-06-30"},
+        ],
+    }
+    targets = _targets(
+        ("BKR", "2016-01-01", "2018-06-30"),
+        ("GONE", "2016-01-01", ""),
+        ("FI", "2019-07-01", ""),
+        ("MT", "2016-01-01", "2019-12-31"),  # entirely masked: dropped
+    )
+    out = fx.apply_corrections(targets, config).set_index(["ticker", "source"])
+    assert out.loc[("BKR", "BHGE"), "fetch_from"] == "2017-07-05"
+    assert out.loc[("BKR", "BHGE"), "fetch_to"] == "2018-06-30"
+    assert out.loc[("BKR", ""), "fetch_from"] == "2016-01-01"
+    assert ("GONE", "OLD") not in out.index
+    assert out.loc[("FI", ""), "fetch_from"] == "2023-06-07"
+    assert "MT" not in set(out.index.get_level_values(0))
+
+
+def test_alias_windows_request_the_old_symbol_and_store_under_the_member(
+    tmp_path: Path,
+) -> None:
+    to = date(2018, 3, 31)
+    targets = fx.apply_corrections(
+        _targets(("BKR", "2017-11-01", "")),
+        {"alias": [{"ticker": "BKR", "source": "BHGE", "until": "2018-01-31"}]},
+    )
+    # BKR.US has nothing before 2018-02 except one bad bar the alias must replace
+    stale = fx.bars_from_payload([_bar("2018-01-10 15:00:00", 99.0)], "BKR", "US")
+    fx.merge_bars(tmp_path / "bars", stale)
+    api = _FakeApi({"BKR.US": date(2018, 2, 1)})
+    result, _ = _run(tmp_path, targets, api, to=to)
+    assert result.failed == 0
+    assert {c[0] for c in api.calls} == {"BKR.US", "BHGE.US"}
+    stored = pd.concat(
+        pd.read_parquet(p) for p in fx.pair_files(tmp_path / "bars", "BKR", "US")
+    )
+    assert set(stored["ticker"]) == {"BKR"}
+    assert 99.0 not in set(stored["close"])  # replaced by the alias window
+    state = fx.load_state(tmp_path / "state.csv").set_index(["ticker", "source"])
+    alias_rows = int(state.loc[("BKR", "BHGE"), "n_rows"])
+    own_rows = int(state.loc[("BKR", ""), "n_rows"])
+    assert alias_rows == (date(2018, 1, 31) - date(2017, 11, 1)).days + 1
+    assert alias_rows + own_rows == fx.count_rows(tmp_path / "bars", "BKR", "US")
+    audit = pd.read_csv(tmp_path / "audit.csv", dtype=str, keep_default_na=False)
+    assert set(audit.loc[audit["source"] == "BHGE", "ticker"]) == {"BKR"}
+
+
+def test_purge_masked_deletes_the_other_security(tmp_path: Path) -> None:
+    bars = fx.bars_from_payload(
+        [_bar("2021-09-30 15:00:00", 1.0), _bar("2023-06-07 15:00:00", 115.0)],
+        "FI",
+        "US",
+    )
+    fx.merge_bars(tmp_path, bars)
+    row = {c: "" for c in fx.STATE_COLUMNS}
+    row.update(
+        ticker="FI",
+        exchange="US",
+        n_rows="2",
+        first_data_date="2021-09-30",
+        latest_data_date="2023-06-07",
+    )
+    state = pd.DataFrame([row])
+    config = {"mask": [{"ticker": "FI", "until": "2023-06-06"}]}
+    fixed, gone = fx.purge_masked(tmp_path, state, config)
+    assert gone == 1
+    assert fixed.loc[0, "first_data_date"] == "2023-06-07"
+    assert fixed.loc[0, "n_rows"] == "1"
+    assert [p.name for p in fx.pair_files(tmp_path, "FI", "US")] == [
+        "FI.US_2023.parquet"
+    ]
+    assert fx.purge_masked(tmp_path, fixed, config)[1] == 0
+
+
+def test_audit_header_gains_new_columns(tmp_path: Path) -> None:
+    path = tmp_path / "audit.csv"
+    path.write_text(
+        "requested_at,ticker,exchange,phase,from_date,to_date,http_status,rows,units,error\n"
+        "2026-01-01T00:00:00Z,AAA,US,first,2026-01-01,2026-01-02,200,1,5,\n"
+    )
+    fx._upgrade_audit(path)
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    assert list(frame.columns) == fx.AUDIT_COLUMNS and frame.loc[0, "source"] == ""

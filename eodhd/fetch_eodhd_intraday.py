@@ -17,18 +17,39 @@ windows older than a pair's first bar end its backfill (the vendor's 1m
 history starts there, e.g. LSE about 2021). HTTP 404 marks a pair ``not_found``; other failures mark it ``error``
 and skip it for the rest of the run. HTTP 401/403 aborts the run.
 
-Targets come from ``universe_membership.parquet`` (``build_intraday_universe.py``).
+Targets come from ``universe_membership.parquet`` (``build_intraday_universe.py``),
+plus two hand-kept corrections from ``intraday_universe.toml``:
+
+- ``[[alias]]``: EODHD files a renamed company's 1m history under the symbol in
+  use at the time (BHGE for Baker Hughes until 2019-10-17), while the daily
+  lanes and so the universe use the current one (BKR). An alias adds a state
+  row ``ticker=BKR, source=BHGE`` whose windows request ``BHGE.US`` and store
+  the bars as ``BKR.US``, replacing whatever ``BKR.US`` held in that window.
+- ``[[mask]]``: spans where a symbol's 1m bars are another security (FI.US
+  before 2023-06 is Frank's International, not Fiserv). Masked bars are
+  deleted and never requested again.
+
+Bars on early-close days (``early_close``) are tagged ``post`` after the
+close; ``--retag-sessions`` rewrites stored bars to that rule (local, no API).
+
+Every run that is not a dry run ends by rebuilding the US volume fix
+(``intraday_volume``: the vendor's closing-cross and report artefacts against
+the daily volume); ``--volume-fix`` rebuilds it alone (local, no API).
+
 Design: docs/INTRADAY_1M_DESIGN.md, section 6.
 
 Usage:
     uv run python eodhd/fetch_eodhd_intraday.py --dry-run          # plan + units, spends nothing
     uv run python eodhd/fetch_eodhd_intraday.py --max-units 25000  # what `refresh intraday --run` does
     uv run python eodhd/fetch_eodhd_intraday.py --tickers NVDA.US MU.US
+    uv run python eodhd/fetch_eodhd_intraday.py --retag-sessions   # local: half-day session tags
+    uv run python eodhd/fetch_eodhd_intraday.py --volume-fix       # local: rebuild the volume fix
 
 Outputs (under <data_root>/intraday/):
     bars_1m/<TICKER>.<EXCH>_<YYYY>.parquet
     bars_1m_fetch_state.csv
     bars_1m_fetch_audit.csv
+    bars_1m_volume_days.parquet, bars_1m_volume_fix.parquet   (intraday_volume)
 """
 
 from __future__ import annotations
@@ -99,6 +120,7 @@ STATE_COLUMNS = [
     "fetched_at",
     "status",
     "last_error",
+    "source",
 ]
 AUDIT_COLUMNS = [
     "requested_at",
@@ -111,6 +133,7 @@ AUDIT_COLUMNS = [
     "rows",
     "units",
     "error",
+    "source",
 ]
 
 #: exchange -> (timezone, regular-session open, regular-session close); ``None``
@@ -121,6 +144,59 @@ SESSION_RULES: dict[str, tuple[str, time | None, time | None]] = {
     "LSE": ("Europe/London", time(8, 0), time(16, 30)),
     "FOREX": ("UTC", None, None),
 }
+
+
+#: exchange -> early close (local time) on the days ``early_close`` names.
+EARLY_CLOSE: dict[str, time] = {
+    "US": time(13, 0),
+    "INDX": time(13, 0),
+    "LSE": time(12, 30),
+}
+
+
+def _thanksgiving(year: int) -> date:
+    first = date(year, 11, 1)
+    return first + timedelta(days=(3 - first.weekday()) % 7 + 21)
+
+
+def early_close(exchange: str, day: date) -> time | None:
+    """The early regular-session close on ``day``, or ``None`` on a normal day.
+
+    NYSE / Nasdaq (and the Cboe / S&P indices) close at 13:00 ET on the day
+    after Thanksgiving, and on 24 December and 3 July when those fall Monday to
+    Thursday (on a Friday they are the observed holiday). The LSE closes at
+    12:30 on weekday 24 and 31 December. Rule-based; exceptional closes (a
+    national day of mourning) are full closures, not half days.
+    """
+    close = EARLY_CLOSE.get(exchange)
+    if close is None or day.weekday() >= 5:
+        return None
+    if exchange == "LSE":
+        return close if (day.month, day.day) in {(12, 24), (12, 31)} else None
+    if day == _thanksgiving(day.year) + timedelta(days=1):
+        return close
+    if (day.month, day.day) in {(12, 24), (7, 3)} and day.weekday() <= 3:
+        return close
+    return None
+
+
+def tag_sessions(local: pd.Series, exchange: str) -> pd.Series:
+    """``pre`` / ``rth`` / ``post`` (``24h`` for 24h markets) for local bar times."""
+    _tz, rth_open, rth_close = SESSION_RULES.get(exchange, ("UTC", None, None))
+    if rth_open is None:
+        return pd.Series("24h", index=local.index)
+    clock = local.dt.time
+    close = pd.Series(rth_close, index=local.index, dtype=object)
+    if exchange in EARLY_CLOSE:
+        early = local.dt.date.map(lambda d: early_close(exchange, d))
+        close = close.where(early.isna(), early)
+    rth = pd.Series(
+        [rth_open <= c < e for c, e in zip(clock, close)], index=local.index, dtype=bool
+    )
+    session = pd.Series("post", index=local.index)
+    session[clock < rth_open] = "pre"
+    session[rth] = "rth"
+    return session
 
 
 # --------------------------------------------------------------------------- #
@@ -137,15 +213,9 @@ def bars_from_payload(
     ts = pd.to_datetime(raw["timestamp"].astype("int64"), unit="s", utc=True).astype(
         "datetime64[ms, UTC]"
     )
-    tz, rth_open, rth_close = SESSION_RULES.get(exchange, ("UTC", None, None))
+    tz = SESSION_RULES.get(exchange, ("UTC", None, None))[0]
     local = ts.dt.tz_convert(tz)
-    if rth_open is None:
-        session = pd.Series("24h", index=raw.index)
-    else:
-        clock = local.dt.time
-        session = pd.Series("post", index=raw.index)
-        session[clock < rth_open] = "pre"
-        session[(clock >= rth_open) & (clock < rth_close)] = "rth"
+    session = tag_sessions(local, exchange)
     out = pd.DataFrame(
         {
             "ticker": ticker,
@@ -180,15 +250,54 @@ def pair_files(bars_dir: Path, ticker: str, exchange: str) -> list[Path]:
     )
 
 
-def merge_bars(bars_dir: Path, bars: pd.DataFrame) -> int:
+def _utc_bounds(start: date, end: date) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """``[start 00:00, end + 1 day 00:00)`` UTC: the span a window requests."""
+    return (
+        pd.Timestamp(start, tz="UTC"),
+        pd.Timestamp(end + timedelta(days=1), tz="UTC"),
+    )
+
+
+def _file_year(path: Path) -> int:
+    return int(path.stem.rsplit("_", 1)[1])
+
+
+def drop_span(
+    bars_dir: Path, ticker: str, exchange: str, start: date, end: date
+) -> int:
+    """Delete a pair's stored bars inside ``[start, end]`` (UTC dates); returns the count."""
+    lo, hi = _utc_bounds(start, end)
+    dropped = 0
+    for path in pair_files(bars_dir, ticker, exchange):
+        if not start.year - 1 <= _file_year(path) <= end.year + 1:
+            continue
+        old = pd.read_parquet(path)
+        keep = old[(old["ts"] < lo) | (old["ts"] >= hi)]
+        if len(keep) == len(old):
+            continue
+        dropped += len(old) - len(keep)
+        if keep.empty:
+            path.unlink()
+        else:
+            _atomic.to_parquet(keep, path, index=False, compression="zstd")
+    return dropped
+
+
+def merge_bars(
+    bars_dir: Path, bars: pd.DataFrame, *, replace: tuple[date, date] | None = None
+) -> int:
     """Merge bars into their ticker-year files (last copy of a ``ts`` wins).
 
+    With ``replace`` (an alias window's UTC dates), the pair's stored bars
+    inside that span are dropped first, so the window's bars replace them.
     Returns the number of genuinely new bar timestamps.
     """
     if bars.empty:
         return 0
     added = 0
     ticker, exchange = str(bars["ticker"].iloc[0]), str(bars["exchange"].iloc[0])
+    if replace is not None:
+        drop_span(bars_dir, ticker, exchange, *replace)
     for year, part in bars.groupby(bars["date"].str[:4]):
         path = partition_path(bars_dir, ticker, exchange, year)
         if path.exists():
@@ -213,6 +322,50 @@ def count_rows(bars_dir: Path, ticker: str, exchange: str) -> int:
         int(pq.ParquetFile(p).metadata.num_rows)
         for p in pair_files(bars_dir, ticker, exchange)
     )
+
+
+def count_rows_between(
+    bars_dir: Path, ticker: str, exchange: str, start: date, end: date
+) -> int:
+    """Stored bars of a pair inside ``[start, end]`` (UTC dates)."""
+    lo, hi = _utc_bounds(start, end)
+    total = 0
+    for path in pair_files(bars_dir, ticker, exchange):
+        if not start.year - 1 <= _file_year(path) <= end.year + 1:
+            continue
+        ts = pd.read_parquet(path, columns=["ts"])["ts"]
+        total += int(((ts >= lo) & (ts < hi)).sum())
+    return total
+
+
+def retag_sessions(bars_dir: Path) -> tuple[int, int]:
+    """Re-derive ``session`` for stored bars on early-close days (local, idempotent).
+
+    Only files whose year holds an early-close day are read. Returns
+    ``(files rewritten, bars retagged)``.
+    """
+    files = changed = 0
+    for path in sorted(bars_dir.glob("*.parquet")):
+        stem = path.stem
+        pair, _, year = stem.rpartition("_")
+        exchange = pair.rpartition(".")[2]
+        if exchange not in EARLY_CLOSE or not year.isdigit():
+            continue
+        frame = pd.read_parquet(path)
+        if frame.empty:
+            continue
+        tz = SESSION_RULES[exchange][0]
+        local = frame["ts"].dt.tz_convert(tz)
+        fresh = tag_sessions(local, exchange)
+        diff = int((fresh != frame["session"]).sum())
+        if diff:
+            frame["session"] = fresh.values
+            _atomic.to_parquet(
+                frame[BAR_COLUMNS], path, index=False, compression="zstd"
+            )
+            files += 1
+            changed += diff
+    return files, changed
 
 
 # --------------------------------------------------------------------------- #
@@ -241,6 +394,9 @@ def _iso(value: date | None) -> str:
 
 @dataclass
 class PairState:
+    """One state row: a pair, or an alias of a pair (``source`` = the symbol
+    requested; bars are stored under ``ticker``)."""
+
     ticker: str
     exchange: str
     fetch_from: date
@@ -253,10 +409,16 @@ class PairState:
     fetched_at: str = ""
     status: str = ""
     last_error: str = ""
+    source: str = ""
 
     @property
-    def key(self) -> tuple[str, str]:
-        return (self.ticker, self.exchange)
+    def key(self) -> tuple[str, str, str]:
+        return (self.ticker, self.exchange, self.source)
+
+    @property
+    def symbol(self) -> str:
+        """The symbol requested from the API."""
+        return self.source or self.ticker
 
     def target_end(self, to_date: date) -> date:
         return min(to_date, self.fetch_to) if self.fetch_to else to_date
@@ -290,25 +452,36 @@ class PairState:
             "fetched_at": self.fetched_at,
             "status": self.status,
             "last_error": self.last_error,
+            "source": self.source,
         }
+
+
+def _source(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    return "" if text.lower() in {"", "nan", "none"} else text
+
+
+def state_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    return (str(row["ticker"]), str(row["exchange"]), _source(row.get("source")))
 
 
 def merge_targets(
     targets: pd.DataFrame, state: pd.DataFrame
-) -> dict[tuple[str, str], PairState]:
-    """One :class:`PairState` per target pair, carrying over the saved state.
+) -> dict[tuple[str, str, str], PairState]:
+    """One :class:`PairState` per target (pair or alias), carrying over the saved state.
 
-    State rows for pairs no longer targeted are kept (history is never
-    dropped) but are not fetched.
+    State rows no longer targeted are kept (history is never dropped) but are
+    not fetched.
     """
-    saved = {(r["ticker"], r["exchange"]): r for r in state.to_dict("records")}
-    pairs: dict[tuple[str, str], PairState] = {}
+    saved = {state_key(r): r for r in state.to_dict("records")}
+    pairs: dict[tuple[str, str, str], PairState] = {}
     for r in targets.to_dict("records"):
-        key = (str(r["ticker"]), str(r["exchange"]))
+        key = state_key(r)
         old = saved.get(key, {})
         pairs[key] = PairState(
             ticker=key[0],
             exchange=key[1],
+            source=key[2],
             fetch_from=_d(r["fetch_from"]) or date(2016, 1, 1),
             fetch_to=_d(r.get("fetch_to")),
             coverage_from=_d(old.get("coverage_from")),
@@ -324,15 +497,19 @@ def merge_targets(
 
 
 def state_frame(
-    pairs: dict[tuple[str, str], PairState], previous: pd.DataFrame
+    pairs: dict[tuple[str, str, str], PairState], previous: pd.DataFrame
 ) -> pd.DataFrame:
     rows = {p.key: p.row() for p in pairs.values()}
     for r in previous.to_dict("records"):
         rows.setdefault(
-            (r["ticker"], r["exchange"]), {c: str(r.get(c, "")) for c in STATE_COLUMNS}
+            state_key(r),
+            {
+                c: _source(r.get(c, "")) if c == "source" else str(r.get(c, ""))
+                for c in STATE_COLUMNS
+            },
         )
     frame = pd.DataFrame(list(rows.values()), columns=STATE_COLUMNS)
-    return frame.sort_values(["exchange", "ticker"]).reset_index(drop=True)
+    return frame.sort_values(["exchange", "ticker", "source"]).reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -340,14 +517,20 @@ def state_frame(
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Window:
-    ticker: str
+    ticker: str  # stored under
     exchange: str
     start: date  # inclusive, UTC date
     end: date  # inclusive, UTC date
     phase: str  # topup | first | backfill
+    source: str = ""  # requested symbol when an alias
 
     @property
-    def key(self) -> tuple[str, str]:
+    def key(self) -> tuple[str, str, str]:
+        return (self.ticker, self.exchange, self.source)
+
+    @property
+    def pair(self) -> tuple[str, str]:
+        """The stored pair: its windows (own and alias) never run at once."""
         return (self.ticker, self.exchange)
 
 
@@ -389,7 +572,7 @@ def plan_windows(
     topup: list[Window] = []
     first: list[Window] = []
     backfill: list[Window] = []
-    for p in sorted(pairs, key=lambda s: (s.exchange, s.ticker)):
+    for p in sorted(pairs, key=lambda s: (s.exchange, s.ticker, s.source)):
         if p.status == "not_found" and not (full_refresh or retry_not_found):
             continue
         end = p.target_end(to_date)
@@ -397,21 +580,22 @@ def plan_windows(
             continue
         if full_refresh or p.coverage_from is None or p.coverage_through is None:
             chunks = chunk_down(end, p.fetch_from)
-            first.append(Window(p.ticker, p.exchange, *chunks[0], "first"))
+            first.append(Window(p.ticker, p.exchange, *chunks[0], "first", p.source))
             backfill += [
-                Window(p.ticker, p.exchange, s, e, "backfill") for s, e in chunks[1:]
+                Window(p.ticker, p.exchange, s, e, "backfill", p.source)
+                for s, e in chunks[1:]
             ]
             continue
         if p.coverage_through < end:
             start = max(p.fetch_from, p.coverage_through - timedelta(days=OVERLAP_DAYS))
             topup += [
-                Window(p.ticker, p.exchange, s, e, "topup")
+                Window(p.ticker, p.exchange, s, e, "topup", p.source)
                 for s, e in chunk_up(start, end)
             ]
         if not p.history_done():
             newest = p.coverage_from - timedelta(days=1)
             backfill += [
-                Window(p.ticker, p.exchange, s, e, "backfill")
+                Window(p.ticker, p.exchange, s, e, "backfill", p.source)
                 for s, e in chunk_down(newest, p.fetch_from)
             ]
     backfill.sort(key=lambda w: (-w.end.toordinal(), w.exchange, w.ticker))
@@ -426,6 +610,7 @@ def summarize_plan(windows: list[Window], *, max_units: int) -> dict[str, Any]:
     per_run = max_units if max_units > 0 else units
     return {
         "pairs": len({w.key for w in windows}),
+        "aliases": len({w.key for w in windows if w.source}),
         "windows": len(windows),
         "by_phase": by_phase,
         "units": units,
@@ -437,6 +622,33 @@ def summarize_plan(windows: list[Window], *, max_units: int) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # execution
 # --------------------------------------------------------------------------- #
+def recount(
+    pairs: dict[tuple[str, str, str], PairState],
+    bars_dir: Path,
+    ticker: str,
+    exchange: str,
+    *,
+    to_date: date,
+) -> None:
+    """Refresh ``n_rows`` of a stored pair's state rows.
+
+    An alias row counts the stored bars inside its span; the pair's own row
+    counts the rest, so the rows of one pair sum to its stored bars.
+    """
+    rows = [p for p in pairs.values() if (p.ticker, p.exchange) == (ticker, exchange)]
+    aliased = 0
+    for p in rows:
+        if p.source:
+            p.n_rows = count_rows_between(
+                bars_dir, ticker, exchange, p.fetch_from, p.target_end(to_date)
+            )
+            aliased += p.n_rows
+    for p in rows:
+        if not p.source:
+            p.n_rows = max(0, count_rows(bars_dir, ticker, exchange) - aliased)
+        p.settle_status(to_date)
+
+
 class AuthError(RuntimeError):
     """The API rejected the key (HTTP 401/403): no point continuing."""
 
@@ -466,6 +678,21 @@ def _window_params(window: Window) -> dict[str, Any]:
     }
 
 
+def _upgrade_audit(path: Path) -> None:
+    """Rewrite an audit file whose header predates a column (adds it empty)."""
+    if not path.exists():
+        return
+    with open(path, newline="", encoding="utf-8") as handle:
+        header = next(csv.reader(handle), [])
+    if header == AUDIT_COLUMNS or not header:
+        return
+    old = pd.read_csv(path, dtype=str, keep_default_na=False)
+    for col in AUDIT_COLUMNS:
+        if col not in old.columns:
+            old[col] = ""
+    _atomic.to_csv(old[AUDIT_COLUMNS], path, index=False)
+
+
 def _append_audit(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
@@ -485,8 +712,9 @@ def execution_rounds(windows: list[Window]) -> list[list[Window]]:
 
     Stage 1 (top-ups and first windows) comes before stage 2 (history), so
     every pair is current before any history is filled. Within a stage, round
-    k holds each pair's k-th window in plan order (history newest first), so
-    a pair's windows always run one after another and extend its span
+    k holds each stored pair's k-th window in plan order (history newest
+    first), so a pair's windows -- its own and its aliases', which write the
+    same files -- always run one after another and extend each span
     contiguously, while different pairs can run in parallel.
     """
     rounds: list[list[Window]] = []
@@ -496,7 +724,7 @@ def execution_rounds(windows: list[Window]) -> list[list[Window]]:
     ):
         queues: dict[tuple[str, str], list[Window]] = {}
         for w in stage:
-            queues.setdefault(w.key, []).append(w)
+            queues.setdefault(w.pair, []).append(w)
         depth = max((len(q) for q in queues.values()), default=0)
         for k in range(depth):
             rounds.append([q[k] for q in queues.values() if len(q) > k])
@@ -539,6 +767,7 @@ def execute(
     streak: dict[tuple[str, str], int] = {}
     lock = threading.Lock()
     auth_error: list[AuthError] = []
+    _upgrade_audit(audit_path)
 
     def save_state() -> None:
         _atomic.to_csv(state_frame(pairs, previous_state), state_path, index=False)
@@ -546,7 +775,7 @@ def execute(
     def run_one(window: Window) -> None:
         requested_at = _now()  # when the request starts, not when it was queued
         p = pairs[window.key]
-        url = f"{BASE_URL}/{window.ticker}.{window.exchange}"
+        url = f"{BASE_URL}/{p.symbol}.{window.exchange}"
         audit: dict[str, Any] = {
             "requested_at": requested_at,
             "ticker": window.ticker,
@@ -555,6 +784,7 @@ def execute(
             "from_date": window.start.isoformat(),
             "to_date": window.end.isoformat(),
             "units": UNITS_PER_REQUEST,
+            "source": window.source,
         }
         error = ""
         payload: Any = None
@@ -594,7 +824,11 @@ def execute(
         if not error:
             try:
                 bars = bars_from_payload(payload, window.ticker, window.exchange)
-                added = merge_bars(bars_dir, bars)
+                added = merge_bars(
+                    bars_dir,
+                    bars,
+                    replace=(window.start, window.end) if window.source else None,
+                )
             except (
                 Exception
             ) as exc:  # noqa: BLE001 - a bad payload marks the pair, not the run
@@ -661,9 +895,8 @@ def execute(
                 break
             if stop:
                 break
-    for key in result.touched:
-        pairs[key].n_rows = count_rows(bars_dir, *key)
-        pairs[key].settle_status(to_date)
+    for pair in {key[:2] for key in result.touched}:
+        recount(pairs, bars_dir, *pair, to_date=to_date)
     save_state()
     if auth_error:
         raise auth_error[0]
@@ -679,6 +912,124 @@ def parse_spec(spec: str) -> tuple[str, str]:
         return text.upper(), "US"
     ticker, exchange = text.rsplit(".", 1)
     return ticker.upper(), exchange.upper()
+
+
+@dataclass(frozen=True)
+class Span:
+    """A hand-kept correction for one pair (``[[alias]]`` / ``[[mask]]`` in the toml)."""
+
+    ticker: str
+    exchange: str
+    start: date | None  # inclusive; None = open
+    end: date | None  # inclusive; None = open
+    source: str = ""  # alias: the symbol EODHD files the bars under
+    reason: str = ""
+
+
+def _spans(config: dict[str, Any], section: str) -> list[Span]:
+    out = []
+    for item in config.get(section, []):
+        out.append(
+            Span(
+                ticker=str(item["ticker"]).upper(),
+                exchange=str(item.get("exchange", "US")).upper(),
+                start=_d(item.get("from")),
+                end=_d(item.get("until")),
+                source=str(item.get("source", "")).upper(),
+                reason=str(item.get("reason", "")),
+            )
+        )
+    return out
+
+
+def aliases(config: dict[str, Any]) -> list[Span]:
+    return _spans(config, "alias")
+
+
+def masks(config: dict[str, Any]) -> list[Span]:
+    return _spans(config, "mask")
+
+
+def apply_corrections(targets: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
+    """Targets with masks applied and alias rows added (``source`` column).
+
+    A mask moves the pair's ``fetch_from`` past the masked span (masks start
+    at the beginning of history), dropping pairs left with nothing to fetch.
+    An alias adds a row for the same stored pair over the overlap of the
+    pair's span and the alias's ``from .. until``.
+    """
+    out = targets.copy()
+    if "source" not in out.columns:
+        out["source"] = ""
+    for m in masks(config):
+        if m.end is None:
+            continue
+        hit = (out["ticker"] == m.ticker) & (out["exchange"] == m.exchange)
+        floor = (m.end + timedelta(days=1)).isoformat()
+        out.loc[hit, "fetch_from"] = out.loc[hit, "fetch_from"].map(
+            lambda v: max(str(v), floor)
+        )
+        to = out["fetch_to"].fillna("").astype(str)
+        out = out[~(hit & (to != "") & (to < out["fetch_from"]))]
+    rows = []
+    for a in aliases(config):
+        owner = out[
+            (out["ticker"] == a.ticker)
+            & (out["exchange"] == a.exchange)
+            & (out["source"] == "")
+        ]
+        for r in owner.to_dict("records"):
+            start = max(_d(r["fetch_from"]), a.start or date.min)
+            end_owner = _d(r.get("fetch_to"))
+            end = (
+                min(d for d in (end_owner, a.end) if d)
+                if (end_owner or a.end)
+                else None
+            )
+            if end is not None and end < start:
+                continue
+            rows.append(
+                {
+                    **r,
+                    "source": a.source,
+                    "fetch_from": start.isoformat(),
+                    "fetch_to": end.isoformat() if end else "",
+                }
+            )
+    if rows:
+        out = pd.concat([out, pd.DataFrame(rows)], ignore_index=True)
+    return out.reset_index(drop=True)
+
+
+def purge_masked(
+    bars_dir: Path, state: pd.DataFrame, config: dict[str, Any]
+) -> tuple[pd.DataFrame, int]:
+    """Delete stored bars inside masked spans; fix the affected state rows.
+
+    Local and idempotent (a pair with nothing masked left is not rewritten).
+    Returns the updated state and the number of bars deleted.
+    """
+    state = state.copy()
+    deleted = 0
+    for m in masks(config):
+        start = m.start or date(1990, 1, 1)
+        end = m.end or date.today()
+        gone = drop_span(bars_dir, m.ticker, m.exchange, start, end)
+        if not gone:
+            continue
+        deleted += gone
+        own = (state["ticker"] == m.ticker) & (state["exchange"] == m.exchange)
+        own &= state["source"].map(_source) == ""
+        files = pair_files(bars_dir, m.ticker, m.exchange)
+        dates = (
+            pd.concat([pd.read_parquet(f, columns=["date"]) for f in files])["date"]
+            if files
+            else pd.Series(dtype=str)
+        )
+        state.loc[own, "n_rows"] = str(count_rows(bars_dir, m.ticker, m.exchange))
+        state.loc[own, "first_data_date"] = dates.min() if len(dates) else ""
+        state.loc[own, "latest_data_date"] = dates.max() if len(dates) else ""
+    return state, deleted
 
 
 def load_targets(
@@ -721,7 +1072,7 @@ def load_targets(
         ]
     if limit:
         targets = targets.head(limit)
-    return targets.reset_index(drop=True)
+    return apply_corrections(targets.reset_index(drop=True), config)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -766,7 +1117,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="Print the plan and units; no API calls."
     )
+    parser.add_argument(
+        "--retag-sessions",
+        action="store_true",
+        help="Re-derive session tags of stored bars on early-close days, then exit (local).",
+    )
+    parser.add_argument(
+        "--volume-fix",
+        action="store_true",
+        help="Rebuild the US volume fix from the stored bars and daily volume, then exit (local).",
+    )
     return parser.parse_args(argv)
+
+
+def rebuild_volume_fix() -> None:
+    """Rebuild ``bars_1m_volume_*.parquet``; a failure is reported, not fatal."""
+    import intraday_volume
+
+    try:
+        days, _fix = intraday_volume.build(EODHD_RAW_ROOT)
+    except Exception as exc:  # noqa: BLE001 - derived data; the bars are safe
+        logging.warning("volume fix not rebuilt: %s: %s", type(exc).__name__, exc)
+        return
+    print(intraday_volume.summary(days))
 
 
 def print_plan(summary: dict[str, Any], *, max_units: int, to_date: date) -> None:
@@ -774,8 +1147,11 @@ def print_plan(summary: dict[str, Any], *, max_units: int, to_date: date) -> Non
         ", ".join(f"{k}={v}" for k, v in sorted(summary["by_phase"].items())) or "none"
     )
     cap = f"cap {max_units:,} units/run" if max_units > 0 else "uncapped"
+    alias = (
+        f" (of which {summary['aliases']} aliases)" if summary.get("aliases") else ""
+    )
     print(
-        f"intraday bars_1m plan to {to_date}: {summary['pairs']} pairs, {summary['windows']} windows ({phases}); "
+        f"intraday bars_1m plan to {to_date}: {summary['pairs']} pairs{alias}, {summary['windows']} windows ({phases}); "
         f"{summary['units']:,} units in total, {summary['units_this_run']:,} this run ({cap}); "
         f"runs to finish: {summary['runs_to_finish']}"
     )
@@ -786,6 +1162,13 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     args = parse_args(argv)
+    if args.retag_sessions:
+        files, changed = retag_sessions(BARS_DIR)
+        print(f"retagged {changed:,} bars in {files:,} files (early-close sessions)")
+        return 0
+    if args.volume_fix:
+        rebuild_volume_fix()
+        return 0
     to_date = (
         date.fromisoformat(args.to) if args.to else datetime.now(timezone.utc).date()
     )
@@ -798,6 +1181,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     previous = load_state(STATE_PATH)
+    if not args.dry_run:
+        previous, purged = purge_masked(BARS_DIR, previous, config)
+        if purged:
+            _atomic.to_csv(previous, STATE_PATH, index=False)
+            print(
+                f"masked: deleted {purged:,} bars of another security ([[mask]] in the toml)"
+            )
     pairs = merge_targets(targets, previous)
     windows = plan_windows(
         pairs.values(),
@@ -810,7 +1200,10 @@ def main(argv: list[str] | None = None) -> int:
         max_units=args.max_units,
         to_date=to_date,
     )
-    if args.dry_run or not windows:
+    if args.dry_run:
+        return 0
+    if not windows:
+        rebuild_volume_fix()
         return 0
     import requests
     from fetch_eodhd_us_fundamentals import _get_api_key
@@ -848,6 +1241,7 @@ def main(argv: list[str] | None = None) -> int:
             else ""
         )
     )
+    rebuild_volume_fix()
     return 1 if result.requests and not result.ok else 0
 
 

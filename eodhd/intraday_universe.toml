@@ -78,3 +78,94 @@ tickers = [
 # security filed under the same symbol.
 [exclude]
 tickers = ["TNT", "MRIN"]
+
+# Renamed members whose 1m history EODHD files under the old symbol (found 2026-11-13
+# by probing each candidate for a week and matching its last regular-hours close to
+# the member's daily close: all within 0.1%). The daily lanes, and so the universe,
+# use the current symbol; the fetcher requests `source` for `from .. until` (clipped
+# to the member's span) and stores the bars under `ticker`. `until` is the last
+# trading day under the old symbol (the day before the member's own 1m bars start).
+# Probed and empty, so not listed: BHI (BKR before 2017-07), KORS (CPRI), HCP / PEAK
+# (DOC), ETE (ET), DD (DWDP), WFT (WFRD), VIAC / PARA (PSKY 2019-12 .. 2025-08),
+# FISV (FI before 2023-06), ABX / GOLD (B before 2025-05), LB (BBWI), PCLN (BKNG),
+# PX (LIN), MHFI (SPGI), BBT (TFC), COH (TPR), HCN (WELL), AET, ESRX, TWX.
+# RTX's daily series is adjusted for the 2020 Carrier / Otis spin-offs, so UTX's
+# raw 1m closes sit at a constant 1.067x the daily close (same company).
+[[alias]]
+ticker = "BKR"
+source = "BHGE"
+from = "2017-07-05"
+until = "2019-10-17"
+
+[[alias]]
+ticker = "CHRD"
+source = "OAS"
+until = "2022-06-30"
+
+[[alias]]
+ticker = "COR"
+source = "ABC"
+until = "2023-08-29"
+
+[[alias]]
+ticker = "CTRA"
+source = "COG"
+until = "2021-09-30"
+
+[[alias]]
+ticker = "GAP"
+source = "GPS"
+until = "2024-08-21"
+
+[[alias]]
+ticker = "PSKY"
+source = "CBS"
+until = "2019-12-04"
+
+[[alias]]
+ticker = "VTRS"
+source = "MYL"
+until = "2020-11-13"
+
+[[alias]]
+ticker = "VRX"
+source = "BHC"
+from = "2018-07-16"
+
+[[alias]]
+ticker = "APTV"
+source = "DLPH"
+until = "2017-12-04"
+
+[[alias]]
+ticker = "LUMN"
+source = "CTL"
+until = "2020-09-17"
+
+[[alias]]
+ticker = "MRSH"
+source = "MMC"
+until = "2026-01-13"
+
+[[alias]]
+ticker = "RTX"
+source = "UTX"
+until = "2020-04-02"
+
+[[alias]]
+ticker = "TT"
+source = "IR"
+until = "2020-02-28"
+
+# Spans where a symbol's 1m bars are a different security from its daily series.
+# The fetcher deletes them and never requests them again; members in these spans
+# have no bars (missing, not flat).
+[[mask]]
+ticker = "FI"
+until = "2023-06-06"
+reason = "Frank's International until 2021-10, then unused; Fiserv traded as FISV, whose 1m history EODHD does not hold"
+
+[[mask]]
+ticker = "MTCH"
+until = "2020-06-30"
+reason = "the old Match Group; the daily series follows the former IAC (the current Match Group)"

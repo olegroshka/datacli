@@ -287,6 +287,7 @@ def connect() -> Any:
 INTRADAY_DIR = EODHD_RAW_ROOT / "intraday"
 INTRADAY_TICKERS = INTRADAY_DIR / "tickers_INTRADAY.parquet"
 INTRADAY_MEMBERSHIP = INTRADAY_DIR / "universe_membership.parquet"
+VOLUME_FIX_NAME = "bars_1m_volume_fix.parquet"
 BAR_FREQS = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
 #: exchange -> timezone for the `local` column of `bars`
 BAR_TZ = {
@@ -304,12 +305,39 @@ def register_intraday_views(con: Any, root: Path | None = None) -> list[str]:
     ``split_ratio`` of every split with ``ex_date`` after the bar's trading
     date (splits from every lane's ``splits`` view); ``split_adj`` carries the
     factor. Unadjusted bars stay in ``bars_1m``.
+
+    When the US volume fix exists (``intraday_volume``), ``volume`` in
+    ``bars_1m_adj`` is consolidated: the closing-cross reports the vendor
+    counts are taken out, or the cross it leaves out is put back, so a US day
+    sums to the daily volume. ``volume_vendor`` keeps the delivered volume, and
+    ``synthetic`` marks a close bar the vendor lacks (priced at the daily close).
     """
     base = (root / "intraday") if root is not None else INTRADAY_DIR
     made: list[str] = []
+    fix_path = base / VOLUME_FIX_NAME
     if _has_view(con, "bars_1m"):
+        if fix_path.exists():
+            con.execute(f"""
+                CREATE OR REPLACE VIEW _bars_1m_fixed AS
+                WITH fx AS (SELECT * FROM read_parquet('{fix_path.as_posix()}'))
+                SELECT b.* EXCLUDE (volume), b.volume + coalesce(fx.delta, 0) AS volume,
+                       b.volume AS volume_vendor, false AS synthetic
+                FROM bars_1m b LEFT JOIN fx
+                  ON fx.ticker = b.ticker AND fx.exchange = b.exchange AND fx.ts = b.ts
+                UNION ALL BY NAME
+                SELECT ticker, exchange, ts, date, 'post' AS session, price AS open, price AS high,
+                       price AS low, price AS close, delta AS volume, 0.0 AS volume_vendor,
+                       true AS synthetic, 'intraday' AS lane
+                FROM fx WHERE synthetic
+                """)
+        else:
+            con.execute(
+                "CREATE OR REPLACE VIEW _bars_1m_fixed AS "
+                "SELECT *, volume AS volume_vendor, false AS synthetic FROM bars_1m"
+            )
+        src = "_bars_1m_fixed"
         if _has_view(con, "splits"):
-            segments = """
+            segments = f"""
                 WITH s AS (
                   SELECT upper(ticker) AS t, upper(exchange) AS e, CAST(ex_date AS VARCHAR) AS d,
                          any_value(split_ratio) AS f
@@ -322,14 +350,15 @@ def register_intraday_views(con: Any, root: Path | None = None) -> list[str]:
                   FROM s)
                 SELECT b.* REPLACE (b.open / coalesce(seg.cum, 1) AS open, b.high / coalesce(seg.cum, 1) AS high,
                                     b.low / coalesce(seg.cum, 1) AS low, b.close / coalesce(seg.cum, 1) AS close,
-                                    b.volume * coalesce(seg.cum, 1) AS volume),
+                                    b.volume * coalesce(seg.cum, 1) AS volume,
+                                    b.volume_vendor * coalesce(seg.cum, 1) AS volume_vendor),
                        coalesce(seg.cum, 1.0) AS split_adj
-                FROM bars_1m b LEFT JOIN seg
+                FROM {src} b LEFT JOIN seg
                   ON upper(b.ticker) = seg.t AND upper(b.exchange) = seg.e
                  AND b.date >= seg.since AND b.date < seg.until
             """
         else:
-            segments = "SELECT *, 1.0 AS split_adj FROM bars_1m"
+            segments = f"SELECT *, 1.0 AS split_adj FROM {src}"
         con.execute(f"CREATE OR REPLACE VIEW bars_1m_adj AS {segments}")
         made.append("bars_1m_adj")
     for view, path in (
@@ -947,12 +976,15 @@ def cmd_reindex(con: Any) -> int:
                 n_col, first_col, last_col = CATALOG_FROM_STATE[kind]
                 frames.append(
                     con.execute(
+                        # one entry per pair: an alias row (bars of a renamed
+                        # symbol stored under the current one) adds to its pair
                         f"SELECT '{kind}' AS dataset, lane, upper(ticker) AS ticker, "
                         f"upper(exchange) AS exchange, "
-                        f"CAST(nullif({n_col}, '') AS BIGINT) AS n_rows, "
-                        f"nullif({first_col}, '') AS first_date, "
-                        f"nullif({last_col}, '') AS last_date "
-                        f"FROM {kind}_state WHERE coalesce(nullif({n_col}, ''), '0') <> '0'"
+                        f"sum(CAST(nullif({n_col}, '') AS BIGINT)) AS n_rows, "
+                        f"min(nullif({first_col}, '')) AS first_date, "
+                        f"max(nullif({last_col}, '')) AS last_date "
+                        f"FROM {kind}_state WHERE coalesce(nullif({n_col}, ''), '0') <> '0' "
+                        "GROUP BY lane, upper(ticker), upper(exchange)"
                     ).df()
                 )
             continue

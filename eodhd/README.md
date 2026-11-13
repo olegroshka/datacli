@@ -299,6 +299,13 @@ pairs and eight ISA-eligible LSE ETFs. The lists and rules live in
 volume divides out later forward splits, because EODHD's daily `volume` is
 split-adjusted while `close` is raw (otherwise future splitters rank first);
 `[exclude]` in the toml drops symbols whose daily series is not one security.
+A company filed under several symbols (a rename kept in both us_common and
+us_extended) ranks once, under the symbol whose 1m bars cover the quarter, and
+a name must still trade at the quarter start. `[[alias]]` fetches a renamed
+member's early 1m history from its old symbol (BKR from BHGE) and stores it
+under the member; `[[mask]]` deletes spans where a symbol's 1m bars are another
+security (FI before 2023-06). Early-close days (US 13:00, LSE 12:30) tag the
+later bars `post`.
 
 Bars land in `intraday/bars_1m/<TICKER>.<EXCH>_<YYYY>.parquet` (unadjusted,
 `ts` = bar open UTC, `date` = exchange-local trading date, `session` =
@@ -320,8 +327,11 @@ uv run python eodhd/cli.py universe intraday --tier T1 [--as-of 2020-06-30] [--c
 Views: `bars_1m`, `bars_1m_state`, `bars_1m_adj` (split-adjusted from the
 `splits` view; `split_adj` carries the factor), `intraday_universe`,
 `intraday_membership`. `reindex` takes the bars' catalog rows from the state
-file instead of scanning them. `sync push` skips `intraday/bars_1m` (local
-until the Drive quota is confirmed; `storage/engine.DEFAULT_EXCLUDE_PATHS`).
+file instead of scanning them. Use `bars_1m_adj.volume` for US volume: the
+vendor's 1m volume mishandles the closing cross, and every run rebuilds a fix
+against the daily volume (`intraday_volume.py`, `--volume-fix`;
+`EODHD_INTRADAY_DATA_MANIFEST.md` caveat 2). `sync push` includes the bars
+(since 2026-11-13).
 Scheduled by `eodhd-intraday-1m-daily` (06:00 Tue-Sat), separate from the 05:00
 end-of-day job.
 
