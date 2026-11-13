@@ -212,4 +212,8 @@ def test_scan_skips_the_intraday_bars_but_keeps_the_lane_sidecars(tmp_path) -> N
     (tmp_path / "other" / "bars_1m" / "x.parquet").write_bytes(b"x")
     found = engine.scan_local(tmp_path)
     assert "intraday/bars_1m/AAPL.US_2026.parquet" not in found
-    assert {"intraday/bars_1m_fetch_state.csv", "intraday/tickers_INTRADAY.parquet", "other/bars_1m/x.parquet"} <= set(found)
+    assert {
+        "intraday/bars_1m_fetch_state.csv",
+        "intraday/tickers_INTRADAY.parquet",
+        "other/bars_1m/x.parquet",
+    } <= set(found)
