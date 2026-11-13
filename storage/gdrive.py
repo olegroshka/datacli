@@ -22,6 +22,16 @@ Resilience (after the 2026-09-11 duplicate-tree incident):
   ``{relpath: [RemoteFile...]}`` with ``md5Checksum`` so the manifest can be
   rebuilt without uploading anything. ``trash`` soft-deletes one duplicate.
 
+Parallel uploads (docs/gdrive-sync-initiative/DD-001 section 2):
+``max_workers`` files go up at once, since each upload is mostly round-trip
+latency. The googleapiclient service and its ``httplib2.Http`` are not
+thread-safe, so every worker thread builds its own service over the shared
+credentials, which refresh once under a lock; folder resolution is
+serialised so two threads never create the same folder; and a rate-limit
+answer on any worker pauses every worker's next request. ``upload_new``
+creates without the per-file lookup when the push has just listed the tree
+(DD-001 section 1).
+
 Google deps are imported lazily so the core shell runs without the ``sync``
 extra:  uv sync --extra sync
 """
@@ -29,6 +39,8 @@ extra:  uv sync --extra sync
 from __future__ import annotations
 
 import errno
+import threading
+import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -42,6 +54,8 @@ INSTALL_HINT = "Google Drive sync needs the google client libs:  uv sync --extra
 
 DEFAULT_HTTP_TIMEOUT = 120.0  # seconds per socket operation
 DEFAULT_RETRIES = 5  # googleapiclient num_retries per request / upload chunk
+DEFAULT_WORKERS = 4  # parallel uploads; [sync] push_workers overrides (OQ-001 Q1)
+RATE_LIMIT_PAUSE = 10.0  # seconds every worker waits after a rate-limit answer
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 LIST_FIELDS = (
     "nextPageToken, "
@@ -81,6 +95,40 @@ def _authorized_http(creds: Any, timeout: float) -> Any:
     # googleapiclient.http.build_http does the same.
     http.follow_redirects = False
     return AuthorizedHttp(creds, http=http)
+
+
+def _rate_limited(exc: BaseException) -> bool:
+    """429, or Drive's 403 ``rateLimitExceeded`` / ``userRateLimitExceeded``."""
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status == 429:
+        return True
+    content = getattr(exc, "content", b"") or b""
+    return status == 403 and b"ateLimitExceeded" in content
+
+
+def _refresh_once(creds: Any) -> Any:
+    """Make ``creds.refresh`` safe across worker threads (DD-001 S6).
+
+    Every worker's ``AuthorizedHttp`` shares one credentials object. When the
+    token expires they would all refresh at once; with this wrapper the first
+    refreshes and the rest, finding a token newer than the one they saw
+    rejected, use it.
+    """
+    if getattr(creds, "_datacli_refresh_once", False):
+        return creds
+    lock = threading.Lock()
+    original = creds.refresh
+
+    def refresh(request: Any) -> None:
+        seen = getattr(creds, "token", None)
+        with lock:
+            if getattr(creds, "token", None) != seen and getattr(creds, "valid", False):
+                return  # another worker refreshed while this one waited
+            original(request)
+
+    creds.refresh = refresh
+    creds._datacli_refresh_once = True
+    return creds
 
 
 def _quote(value: str) -> str:
@@ -143,6 +191,7 @@ class GDriveBackend(StorageBackend):
     """Push files into a folder tree under My Drive, mirroring relpaths."""
 
     name = "gdrive"
+    max_workers = DEFAULT_WORKERS
 
     def __init__(
         self,
@@ -159,7 +208,13 @@ class GDriveBackend(StorageBackend):
         self.http_timeout = float(http_timeout)
         self.retries = int(retries)
         self._service = None
+        self._creds: Any = None
+        self._local = threading.local()  # per-thread service
+        self._folder_lock = threading.RLock()
         self._folder_ids: dict[str, str] = {}  # remote dir path -> Drive id
+        self._pause_lock = threading.Lock()
+        self._pause_until = 0.0  # time.monotonic() before which no request starts
+        self.rate_limit_pause = RATE_LIMIT_PAUSE
 
     def describe(self) -> str:
         return f"gdrive:/{self.remote_root}"
@@ -197,22 +252,52 @@ class GDriveBackend(StorageBackend):
             self.token_path.parent.mkdir(parents=True, exist_ok=True)
             self.token_path.write_text(creds.to_json(), encoding="utf-8")
 
-        http = _authorized_http(creds, self.http_timeout)
-        if http is None:  # pragma: no cover - env-dependent
-            self._service = build("drive", "v3", credentials=creds)
-        else:
-            self._service = build("drive", "v3", http=http)
+        self._creds = _refresh_once(creds)
+        self._service = self._build_service(creds)
+        self._local.service = self._service
         about = self._execute(self._svc().about().get(fields="user(emailAddress)"))
         email = about.get("user", {}).get("emailAddress", "?")
         return f"{email} -> Drive:/{self.remote_root}"
 
+    def _build_service(self, creds: Any) -> Any:
+        build = _google()[3]
+        http = _authorized_http(creds, self.http_timeout)
+        if http is None:  # pragma: no cover - env-dependent
+            return build("drive", "v3", credentials=creds)
+        return build("drive", "v3", http=http)
+
     def _svc(self):
-        if self._service is None:
-            raise SyncAuthError("backend not authenticated — call ensure_auth() first")
-        return self._service
+        """This thread's service, built on first use over the shared credentials."""
+        svc = getattr(self._local, "service", None)
+        if svc is not None:
+            return svc
+        if self._creds is None:  # an injected service (tests), or not signed in
+            if self._service is None:
+                raise SyncAuthError(
+                    "backend not authenticated — call ensure_auth() first"
+                )
+            return self._service
+        svc = self._build_service(self._creds)
+        self._local.service = svc
+        return svc
 
     def _execute(self, request: Any) -> Any:
-        return request.execute(num_retries=self.retries)
+        """Run one request; a rate-limit answer pauses every worker (DD-001 S4)."""
+        while True:
+            with self._pause_lock:
+                wait = self._pause_until - time.monotonic()
+            if wait <= 0:
+                break
+            time.sleep(wait)
+        try:
+            return request.execute(num_retries=self.retries)
+        except Exception as exc:
+            if _rate_limited(exc):
+                with self._pause_lock:
+                    self._pause_until = max(
+                        self._pause_until, time.monotonic() + self.rate_limit_pause
+                    )
+            raise
 
     # --------------------------------------------------------------- folders #
     def _ensure_folder(self, dirpath: str) -> str:
@@ -222,6 +307,10 @@ class GDriveBackend(StorageBackend):
         ever see our own tree — name collisions with the user's other folders
         are impossible by construction.
         """
+        with self._folder_lock:
+            return self._ensure_folder_locked(dirpath)
+
+    def _ensure_folder_locked(self, dirpath: str) -> str:
         if dirpath in self._folder_ids:
             return self._folder_ids[dirpath]
         parent = "root"
@@ -264,6 +353,19 @@ class GDriveBackend(StorageBackend):
     def _update(self, remote_id: str, media: Any) -> str:
         return self._execute(
             self._svc().files().update(fileId=remote_id, media_body=media, fields="id")
+        )["id"]
+
+    def upload_new(self, local: Path, relpath: str) -> str:
+        """Create without the name lookup: the push's listing showed it absent."""
+        MediaFileUpload = _google()[5]
+        dirpath, _, name = relpath.rpartition("/")
+        folder = self._ensure_folder(
+            f"{self.remote_root}/{dirpath}" if dirpath else self.remote_root
+        )
+        media = MediaFileUpload(str(local), resumable=True)
+        body = {"name": name, "parents": [folder]}
+        return self._execute(
+            self._svc().files().create(body=body, media_body=media, fields="id")
         )["id"]
 
     def upload(self, local: Path, relpath: str, remote_id: str | None = None) -> str:
@@ -326,6 +428,8 @@ class GDriveBackend(StorageBackend):
         status = getattr(getattr(exc, "resp", None), "status", None)
         if status in RETRY_STATUSES:
             return True  # googleapiclient HttpError
+        if _rate_limited(exc):
+            return True
         if (type(exc).__module__ or "").startswith("httplib2"):
             return True
         if isinstance(exc, OSError) and exc.errno in _TRANSIENT_ERRNOS:

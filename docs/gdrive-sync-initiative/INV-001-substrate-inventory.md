@@ -27,9 +27,9 @@ referenced_by: [BOOTSTRAP-GDS]
 
 | WP | scope | design | depends on | needs owner | effort |
 |---|---|---|---|---|---|
-| WP1 | one listing per unit; `_find_files` retired from the upload path; fake Drive service with request counting | DD-001 section 1 | nothing | no | half a session |
+| WP1 | one listing per unit; `_find_files` retired from the upload path; fake Drive service with request counting (done 2026-11-13; `_find_files` stays for retries and 404 fallbacks) | DD-001 section 1 | nothing | no | half a session |
 | WP2 | progress line, progress file, `sync status` reads it | DD-001 section 3 | nothing | no | half a session |
-| WP3 | worker pool, per-worker service, manifest cadence, shared 429 pause | DD-001 section 2 | WP1 | OQ-001 Q1 (default workers) | one session |
+| WP3 | worker pool, per-worker service, manifest cadence, shared 429 pause (done 2026-11-13, Q1 option A) | DD-001 section 2 | WP1 | OQ-001 Q1 (default workers) | one session |
 | WP4 | request deadline | DD-001 section 4 | WP3 | no | half a session |
 | WP5 | live timing on a temporary root, before and after; KB-001 gains the numbers | DD-001 section 5 | WP1 to WP4 | yes: one real push of a throwaway folder | an hour |
 | WP6 | the eodhd job: nothing changes in its definition; record the first scheduled push's duration | | WP5 | no | a look at `schedule history` |

@@ -45,9 +45,10 @@ MANIFEST_VERSION = 1
 DEFAULT_INCLUDE = ("*.parquet", "*.csv", "*.json", "*.md")
 DEFAULT_EXCLUDE_DIRS = frozenset({"cache", "probe_cache", ".sync"})
 # Directories pruned by their path relative to the root (POSIX), not by name.
-# The intraday lane's 1m bars (~20 GB once backfilled) stay local until the
-# owner confirms the Drive quota (docs/INTRADAY_1M_DESIGN.md, decision D3).
-DEFAULT_EXCLUDE_PATHS = frozenset({"intraday/bars_1m"})
+# Empty by default: the intraday lane's 1m bars (about 8.5 GB) were held back
+# until the Drive quota was checked, then pushed from 2026-11-13
+# (docs/INTRADAY_1M_DESIGN.md, decision D3).
+DEFAULT_EXCLUDE_PATHS: frozenset[str] = frozenset()
 
 ACTION_UPLOAD = "upload"
 ACTION_SKIP = "skip"
@@ -108,8 +109,9 @@ def scan_local(
 
     ``exclude_dirs`` prunes by directory *name* at any depth (cache dirs, the
     ``.sync`` manifest dir); ``exclude_paths`` prunes directories by their
-    POSIX path relative to ``root`` (``intraday/bars_1m``). Returns ``{relpath: FileStat}`` with POSIX-style
-    relative paths so manifests are portable across OSes.
+    POSIX path relative to ``root`` (e.g. ``intraday/bars_1m``). Returns
+    ``{relpath: FileStat}`` with POSIX-style relative paths so manifests are
+    portable across OSes.
     """
     root = Path(root)
     include = tuple(include)

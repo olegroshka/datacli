@@ -59,6 +59,9 @@ class StorageBackend(ABC):
     """Minimal push surface a sync target must implement."""
 
     name: str = ""
+    #: Files the push uploads at once (``[sync] push_workers`` overrides);
+    #: ``upload`` / ``upload_new`` must be thread-safe above 1.
+    max_workers: int = 1
 
     @abstractmethod
     def describe(self) -> str:
@@ -82,6 +85,14 @@ class StorageBackend(ABC):
         version files. Without one, a backend that can look files up by path
         must still update rather than create a second copy.
         """
+
+    def upload_new(self, local: Path, relpath: str) -> str:
+        """Create a file the caller's ``list_remote`` showed absent.
+
+        Backends that look a path up before creating may skip that lookup
+        here; the push only calls it on a first attempt, right after listing.
+        """
+        return self.upload(local, relpath, remote_id=None)
 
     def retryable(self, exc: BaseException) -> bool:
         """Whether the push loop should retry ``exc`` with backoff."""
@@ -157,11 +168,14 @@ def make_backend(settings: Mapping[str, object]) -> StorageBackend:
     if name == "gdrive":
         from storage.gdrive import GDriveBackend  # lazy: google deps optional
 
-        return GDriveBackend(
+        backend = GDriveBackend(
             client_secrets=settings.get("gdrive_client_secrets"),
             token_path=settings.get("gdrive_token"),
             remote_root=str(settings.get("remote_root") or "datacli/eodhd"),
         )
+        if settings.get("push_workers"):
+            backend.max_workers = max(1, int(str(settings["push_workers"])))
+        return backend
     raise SyncConfigError(
         f"unknown sync backend '{name}'. Known: {', '.join(KNOWN_BACKENDS)}"
     )

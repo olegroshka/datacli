@@ -202,7 +202,13 @@ def test_push_stops_on_failure_but_keeps_progress(tmp_path: Path) -> None:
     assert set(manifest["files"]) == {"a.parquet"}
 
 
-def test_scan_skips_the_intraday_bars_but_keeps_the_lane_sidecars(tmp_path) -> None:
+def test_scan_pushes_the_intraday_bars_by_default(tmp_path) -> None:
+    (tmp_path / "intraday" / "bars_1m").mkdir(parents=True)
+    (tmp_path / "intraday" / "bars_1m" / "AAPL.US_2026.parquet").write_bytes(b"x")
+    assert "intraday/bars_1m/AAPL.US_2026.parquet" in engine.scan_local(tmp_path)
+
+
+def test_exclude_paths_prune_by_relative_path_not_name(tmp_path) -> None:
     lane = tmp_path / "intraday"
     (lane / "bars_1m").mkdir(parents=True)
     (lane / "bars_1m" / "AAPL.US_2026.parquet").write_bytes(b"x")
@@ -210,7 +216,7 @@ def test_scan_skips_the_intraday_bars_but_keeps_the_lane_sidecars(tmp_path) -> N
     (lane / "tickers_INTRADAY.parquet").write_bytes(b"x")
     (tmp_path / "other" / "bars_1m").mkdir(parents=True)  # same name elsewhere is kept
     (tmp_path / "other" / "bars_1m" / "x.parquet").write_bytes(b"x")
-    found = engine.scan_local(tmp_path)
+    found = engine.scan_local(tmp_path, exclude_paths=frozenset({"intraday/bars_1m"}))
     assert "intraday/bars_1m/AAPL.US_2026.parquet" not in found
     assert {
         "intraday/bars_1m_fetch_state.csv",

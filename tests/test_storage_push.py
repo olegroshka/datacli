@@ -403,3 +403,76 @@ def test_reconcile_trash_duplicates_uses_backend_trash(tmp_path: Path) -> None:
     assert trashed == ["dup"]  # the md5-matching copy is kept, whatever its date
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["files"]["a.parquet"]["remote_id"] == "keep"
+
+
+# --------------------------------------------------------------------------- #
+# parallel uploads
+# --------------------------------------------------------------------------- #
+class _Concurrent(_Recording):
+    """Records how many uploads overlap; a short sleep makes them overlap."""
+
+    max_workers = 4
+
+    def __init__(self, dest: Path, fail: str | None = None) -> None:
+        super().__init__(dest)
+        import threading
+
+        self._lock = threading.Lock()
+        self.active = 0
+        self.peak = 0
+        self.fail = fail
+
+    def upload(self, local: Path, relpath: str, remote_id: str | None = None) -> str:
+        import time
+
+        with self._lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        try:
+            if relpath == self.fail:
+                raise ValueError("permanent")  # at once, before the others finish
+            time.sleep(0.05)
+            with self._lock:
+                return super().upload(local, relpath, remote_id)
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
+def test_parallel_push_uploads_everything_and_records_it(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    for i in range(12):
+        _write(root, f"lane/f{i:02d}.parquet", b"x" * (i + 1), mtime=1_000 + i)
+    manifest_path = root / ".sync" / "local.json"
+    backend = _Concurrent(tmp_path / "backup")
+    lines: list[str] = []
+    assert execute_push(root, backend, manifest_path, run=True, echo=lines.append) == 0
+    assert 1 < backend.peak <= 4
+    assert any("with 4 workers" in l for l in lines)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert len(manifest["files"]) == 12
+    assert any("Push finished: 12 uploaded" in l for l in lines)
+    # nothing left to do
+    lines.clear()
+    assert execute_push(root, backend, manifest_path, run=True, echo=lines.append) == 0
+    assert any("Everything in sync." in l for l in lines)
+
+
+def test_parallel_fail_fast_starts_nothing_new(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    for i in range(12):
+        # newest first: f11 is uploaded first and fails
+        _write(root, f"lane/f{i:02d}.parquet", b"x", mtime=1_000 + i)
+    manifest_path = root / ".sync" / "local.json"
+    backend = _Concurrent(tmp_path / "backup", fail="lane/f11.parquet")
+    lines: list[str] = []
+    rc = execute_push(
+        root, backend, manifest_path, run=True, keep_going=False, echo=lines.append
+    )
+    assert rc == 1
+    # only the uploads already in flight beside the failure finish
+    assert len(backend.uploads) <= backend.max_workers - 1
+    finished = [l for l in lines if l.startswith("\nPush finished")][0]
+    assert "1 failed" in finished and "not run" in finished
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert set(manifest["files"]) == {rel for rel, _ in backend.uploads}

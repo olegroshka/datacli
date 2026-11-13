@@ -42,6 +42,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
@@ -67,6 +68,8 @@ PLAN_ROWS_SHOWN = 40  # dry-run detail rows before "... and N more"
 DEFAULT_ATTEMPTS = 5  # per-file upload attempts (1 + 4 retries)
 DEFAULT_BACKOFF = 2.0  # seconds; doubles per retry, capped at MAX_BACKOFF
 MAX_BACKOFF = 60.0
+MANIFEST_SAVE_SECONDS = 5.0  # a parallel push saves the manifest every 5 s ...
+MANIFEST_SAVE_FILES = 20  # ... or every 20 completed files (DD-001 section 2)
 EXIT_MANIFEST_UNREADABLE = 2
 
 
@@ -329,15 +332,23 @@ def _upload_with_retry(
     relpath: str,
     prev_id: str | None,
     *,
+    known_absent: bool = False,
     attempts: int,
     backoff: float,
     max_backoff: float,
     sleep: Callable[[float], None],
     echo,
 ) -> str:
-    """``backend.upload`` with bounded exponential backoff on transient errors."""
+    """``backend.upload`` with bounded exponential backoff on transient errors.
+
+    ``known_absent`` (the push's listing did not contain the path) creates
+    without a lookup, but only on the first attempt: a retry may follow a
+    create whose answer was lost, so it looks the path up again.
+    """
     for attempt in range(1, attempts + 1):
         try:
+            if known_absent and attempt == 1:
+                return backend.upload_new(local, relpath)
             return backend.upload(local, relpath, remote_id=prev_id)
         except Exception as exc:  # noqa: BLE001 - classified by the backend
             if attempt >= attempts or not backend.retryable(exc):
@@ -367,8 +378,11 @@ def execute_push(
 ) -> int:
     """Plan and (optionally) execute a push. Testable core behind ``cmd_push``.
 
-    The manifest is re-saved after every uploaded file, so an interrupted push
-    resumes where it left off on the next run.
+    Uploads run on ``backend.max_workers`` threads (DD-001 section 2). The
+    manifest is saved every ``MANIFEST_SAVE_FILES`` files or
+    ``MANIFEST_SAVE_SECONDS`` (after every file with one worker), so an
+    interrupted push resumes where it left off; a file uploaded but not yet
+    recorded is found by the next push's listing and updated, not duplicated.
     """
     manifest = _load_manifest_or_quarantine(manifest_path, echo)
     if manifest is None:
@@ -376,11 +390,13 @@ def execute_push(
 
     console = _render.make_console()
     signed_in = False
+    listed = False  # the backend's tree was listed during this push
     if run and not manifest.get("files"):
         # Lost or first manifest: recover from the backend, never by re-creating.
         echo(f"signed in: {backend.ensure_auth(interactive=_interactive())}")
         signed_in = True
         rebuilt = _rebuild_from_remote(root, backend, with_caches=with_caches)
+        listed = rebuilt is not None
         if rebuilt is not None:
             manifest, report = rebuilt
             if report.remote_paths:
@@ -424,41 +440,101 @@ def execute_push(
     failures: list[tuple[engine.PlanItem, Exception]] = []
     completed_uploads = 0
     done_bytes = 0
-    for i, item in enumerate(uploads, 1):
+    entries = manifest.get("files", {})
+    prev_ids = {p.relpath: entries.get(p.relpath, {}).get("remote_id") for p in uploads}
+    # One listing per unit instead of a lookup per new file (DD-001 section 1):
+    # a path the backend holds is updated, an absent one created directly.
+    absent: set[str] = set()
+    if listed:  # the rebuild just listed: what it left without an id is absent
+        absent = {rel for rel, rid in prev_ids.items() if rid is None}
+    elif any(v is None for v in prev_ids.values()):
+        tree = backend.list_remote()
+        if tree is not None:
+            for item in uploads:
+                if prev_ids[item.relpath] is not None:
+                    continue
+                copies = tree.get(item.relpath)
+                if copies:
+                    prev_ids[item.relpath] = engine.choose_remote(
+                        copies, item.md5
+                    ).remote_id
+                else:
+                    absent.add(item.relpath)
+
+    def upload_one(item: engine.PlanItem) -> tuple[engine.FileStat, str, str]:
         local = root / item.relpath
-        stat = engine.FileStat(
-            item.relpath, local.stat().st_size, local.stat().st_mtime_ns
-        )
+        st = local.stat()
+        stat = engine.FileStat(item.relpath, st.st_size, st.st_mtime_ns)
         md5 = item.md5 or engine.md5_file(local)
-        prev_id = manifest.get("files", {}).get(item.relpath, {}).get("remote_id")
-        echo(
-            f"[{i}/{len(uploads)}] {item.relpath} ({engine.human_size(item.size)}) ..."
+        remote_id = _upload_with_retry(
+            backend,
+            local,
+            item.relpath,
+            prev_ids[item.relpath],
+            known_absent=item.relpath in absent,
+            attempts=attempts,
+            backoff=backoff,
+            max_backoff=max_backoff,
+            sleep=sleep,
+            echo=echo,
         )
-        try:
-            remote_id = _upload_with_retry(
-                backend,
-                local,
-                item.relpath,
-                prev_id,
-                attempts=attempts,
-                backoff=backoff,
-                max_backoff=max_backoff,
-                sleep=sleep,
-                echo=echo,
-            )
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 - report per-file, don't crash the batch
-            failures.append((item, exc))
-            echo(f"    -> FAILED: {exc}")
-            if not keep_going:
-                echo("Stopping (--fail-fast).")
-                break
-            continue
-        engine.record_push(manifest, stat, md5=md5, remote_id=remote_id)
-        engine.save_manifest(manifest_path, manifest)
-        done_bytes += item.size
-        completed_uploads += 1
+        return stat, md5, remote_id
+
+    workers = max(1, min(int(getattr(backend, "max_workers", 1) or 1), len(uploads)))
+    if workers > 1:
+        echo(f"uploading {len(uploads)} file(s) with {workers} workers")
+    # The manifest is the resume point. Rewriting and fsyncing it after every
+    # file is slow once it holds thousands of entries, so with several workers
+    # it is saved on a cadence and at the end. A file uploaded but not yet
+    # recorded when a push dies is found by the next push's listing and
+    # updated in place, so a lost save costs a re-upload, never a duplicate.
+    last_save = time.monotonic()
+    unsaved = 0
+    stopping = False
+    queue = iter(uploads)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # At most ``workers`` uploads in flight, the next one queued as one
+        # finishes: plan order is kept and --fail-fast starts nothing new.
+        running: dict[Future, engine.PlanItem] = {}
+
+        def top_up() -> None:
+            while not stopping and len(running) < workers:
+                nxt = next(queue, None)
+                if nxt is None:
+                    return
+                running[pool.submit(upload_one, nxt)] = nxt
+
+        top_up()
+        while running:
+            done, _ = wait(running, return_when=FIRST_COMPLETED)
+            for fut in done:
+                item = running.pop(fut)
+                try:
+                    stat, md5, remote_id = fut.result()
+                except Exception as exc:  # noqa: BLE001 - per-file report
+                    failures.append((item, exc))
+                    echo(f"    {item.relpath} -> FAILED: {exc}")
+                    if not keep_going and not stopping:
+                        stopping = True
+                        echo("Stopping (--fail-fast).")
+                    continue
+                engine.record_push(manifest, stat, md5=md5, remote_id=remote_id)
+                done_bytes += item.size
+                completed_uploads += 1
+                echo(
+                    f"[{completed_uploads}/{len(uploads)}] {item.relpath} "
+                    f"({engine.human_size(item.size)})"
+                )
+                unsaved += 1
+                if (
+                    workers == 1
+                    or unsaved >= MANIFEST_SAVE_FILES
+                    or time.monotonic() - last_save >= MANIFEST_SAVE_SECONDS
+                ):
+                    engine.save_manifest(manifest_path, manifest)
+                    last_save = time.monotonic()
+                    unsaved = 0
+            top_up()
 
     # metadata-only refreshes (content identical, mtime moved) — no upload needed
     for item in (p for p in todo if p.action == engine.ACTION_TOUCH):

@@ -22,6 +22,10 @@ sit well inside it, but the number was not measured. Options:
   measurement before the default ships in a job generation.
 - B: default 1 (today's behaviour) and opt in per machine.
 
+**Answered 2026-11-13:** the owner asked to speed the Drive push; option A
+applied (default 4, `[sync] push_workers`). The live timing is the next
+intraday-lane push.
+
 ## Q2. Is the FINRA root worth backing up at 3,000 files?
 
 The 2026-10-03 push was slow because the FINRA root (daily partitions, 0.3

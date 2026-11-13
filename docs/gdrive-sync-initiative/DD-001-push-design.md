@@ -13,6 +13,18 @@ referenced_by: [BOOTSTRAP-GDS, INV-001, OQ-001]
 
 # Push design
 
+**Implemented 2026-11-13 (owner: "speed the Drive"):** section 1 (WP1) and
+section 2 (WP3) in `storage/cli.py`, `storage/gdrive.py` and
+`storage/backends.py`, with OQ-001 Q1 option A (four workers,
+`[sync] push_workers`). Differences from the text below: the shared pause
+is a fixed `RATE_LIMIT_PAUSE` (10 s) set when a request surfaces a 429 or a
+403 rate-limit reason after the client library's own retries, and every
+worker waits it out before its next request; a listed-absent file is
+created without a lookup only on its first attempt (a retry may follow a
+create whose answer was lost, so it looks the path up again). With one
+worker the manifest is still saved after every file. Sections 3 (progress)
+and 4 (deadlines) are not implemented.
+
 Four changes, each independently shippable and tested, in the order below.
 None changes the `sync` argv contract or its resource claims, the manifest
 format (version 1) or the Drive folder layout.

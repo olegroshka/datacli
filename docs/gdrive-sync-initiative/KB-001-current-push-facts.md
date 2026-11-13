@@ -26,11 +26,14 @@ Drive folder). For each unit `execute_push`:
    manifest never re-creates files (the 2026-09-11 incident);
 2. plans by comparing every local file's size and `mtime_ns` with the
    manifest (`engine.plan`); payload cache dirs are skipped unless
-   `--with-caches`, and `engine.DEFAULT_EXCLUDE_PATHS` (`intraday/bars_1m`,
-   added 2026-11-13 by docs/INTRADAY_1M_DESIGN.md decision D3) is always
-   skipped;
+   `--with-caches`, and the directories in `engine.DEFAULT_EXCLUDE_PATHS`
+   are always skipped (empty since 2026-11-13: `intraday/bars_1m` was held
+   back until the quota check of docs/INTRADAY_1M_DESIGN.md decision D3, then
+   pushed);
 3. uploads the planned files **one at a time**, in plan order, and saves the
-   manifest (tmp file, `fsync`, atomic replace) **after every file**;
+   manifest (tmp file, `fsync`, atomic replace) **after every file**
+   (until 2026-11-13; since then DD-001 sections 1 and 2 apply: one listing
+   per unit, four workers, a save every 20 files or 5 seconds);
 4. applies metadata-only touches, saves the manifest, prints
    `Push finished: N uploaded (X), F failed, R not run.`
 

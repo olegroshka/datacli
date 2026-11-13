@@ -274,3 +274,276 @@ def test_authorized_http_has_timeout_and_does_not_follow_redirects() -> None:
     assert authorized is not None
     assert authorized.http.timeout == 120.0
     assert authorized.http.follow_redirects is False
+
+
+def test_each_thread_gets_its_own_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    backend = gdrive.GDriveBackend(remote_root="datacli/eodhd")
+    backend._creds = object()
+    built: list[object] = []
+
+    def fake_build(creds):
+        svc = _Service(_Files({}))
+        built.append(svc)
+        return svc
+
+    monkeypatch.setattr(backend, "_build_service", fake_build)
+    main = backend._svc()
+    assert backend._svc() is main
+    seen: list[object] = []
+    threads = [
+        threading.Thread(target=lambda: seen.append(backend._svc())) for _ in range(3)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len({id(s) for s in seen + [main]}) == 4 and len(built) == 4
+
+
+def test_parallel_folder_resolution_creates_each_folder_once(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    files = _Files({})
+    backend = _backend(files)
+    with ThreadPoolExecutor(8) as pool:
+        ids = set(
+            pool.map(
+                lambda _: backend._ensure_folder("datacli/eodhd/intraday/bars_1m"),
+                range(16),
+            )
+        )
+    assert len(ids) == 1
+    creates = [kw["body"]["name"] for kind, kw in files.calls if kind == "create"]
+    assert creates == ["datacli", "eodhd", "intraday", "bars_1m"]
+
+
+def test_drive_rate_limit_403_is_retryable() -> None:
+    class _Resp:
+        status = 403
+
+    class RateLimited(Exception):
+        resp = _Resp()
+        content = b'{"error": {"errors": [{"reason": "userRateLimitExceeded"}]}}'
+
+    class Forbidden(Exception):
+        resp = _Resp()
+        content = b'{"error": {"errors": [{"reason": "insufficientPermissions"}]}}'
+
+    backend = gdrive.GDriveBackend()
+    assert backend.retryable(RateLimited())
+    assert not backend.retryable(Forbidden())
+
+
+def test_workers_setting_overrides_the_default() -> None:
+    from storage.backends import make_backend
+
+    assert make_backend({"backend": "gdrive"}).max_workers == gdrive.DEFAULT_WORKERS
+    assert make_backend({"backend": "gdrive", "push_workers": 3}).max_workers == 3
+
+
+# --------------------------------------------------------------------------- #
+# DD-001: one listing per unit, worker pool, shared pause, single refresh
+# --------------------------------------------------------------------------- #
+def _push_fixture(tmp_path: Path, listing: list[dict]):
+    import json
+    import os
+
+    from storage import engine
+    from storage.cli import execute_push
+
+    pytest.importorskip("rich")
+    root = tmp_path / "data"
+    for rel in (
+        "STATUS.json",
+        "a/x.parquet",
+        "a/y.parquet",
+        "b/z.parquet",
+        "old.parquet",
+    ):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(rel.encode())
+        os.utime(path, (1_000, 1_000))
+    manifest_path = root / ".sync" / "gdrive.json"
+    old = root / "old.parquet"
+    manifest: dict = {"files": {}}
+    engine.record_push(
+        manifest,
+        engine.FileStat("old.parquet", old.stat().st_size, old.stat().st_mtime_ns),
+        md5="m-old",
+        remote_id="r-old",
+    )
+    engine.save_manifest(manifest_path, manifest)
+
+    class _Listing(_Files):
+        def list(self, **kwargs):
+            if kwargs.get("q") == "trashed = false":
+                self.calls.append(("listing", kwargs))
+                return _Request({"files": listing})
+            return super().list(**kwargs)
+
+    files = _Listing({})
+    backend = _backend(files)
+    backend.ensure_auth = lambda interactive=True: "fake -> Drive:/datacli/eodhd"
+    lines: list[str] = []
+    rc = execute_push(root, backend, manifest_path, run=True, echo=lines.append)
+    saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return rc, files, backend, saved, lines, (root, manifest_path, execute_push)
+
+
+def test_push_lists_once_and_creates_new_files_without_lookups(tmp_path: Path) -> None:
+    rc, files, backend, saved, lines, (root, manifest_path, execute_push) = (
+        _push_fixture(tmp_path, [])
+    )
+    assert rc == 0
+    kinds = [kind for kind, _ in files.calls]
+    assert kinds.count("listing") == 1
+    lookups = [kw["q"] for kind, kw in files.calls if kind == "list"]
+    assert all(f"mimeType = '{FOLDER}'" in q for q in lookups)  # folders only
+    assert len(lookups) == 4  # datacli, eodhd, a, b
+    creates = [kw["body"]["name"] for kind, kw in files.calls if kind == "create"]
+    assert sorted(creates) == sorted(
+        [
+            "datacli",
+            "eodhd",
+            "a",
+            "b",
+            "STATUS.json",
+            "x.parquet",
+            "y.parquet",
+            "z.parquet",
+        ]
+    )
+    assert set(saved["files"]) == {
+        "STATUS.json",
+        "a/x.parquet",
+        "a/y.parquet",
+        "b/z.parquet",
+        "old.parquet",
+    }
+    files.calls.clear()
+    assert execute_push(root, backend, manifest_path, run=True, echo=lines.append) == 0
+    assert files.calls == []  # a repeat push issues nothing
+
+
+def test_push_updates_a_file_the_listing_holds_instead_of_creating(
+    tmp_path: Path,
+) -> None:
+    listing = [
+        {"id": "f-datacli", "name": "datacli", "mimeType": FOLDER, "parents": ["root"]},
+        {
+            "id": "f-eodhd",
+            "name": "eodhd",
+            "mimeType": FOLDER,
+            "parents": ["f-datacli"],
+        },
+        {"id": "f-a", "name": "a", "mimeType": FOLDER, "parents": ["f-eodhd"]},
+        {
+            "id": "r-x",
+            "name": "x.parquet",
+            "parents": ["f-a"],
+            "modifiedTime": "2026-11-13T10:00:00Z",
+        },
+    ]
+    rc, files, _backend_, saved, _lines, _ = _push_fixture(tmp_path, listing)
+    assert rc == 0
+    updates = [kw["fileId"] for kind, kw in files.calls if kind == "update"]
+    assert updates == ["r-x"]
+    creates = [kw["body"]["name"] for kind, kw in files.calls if kind == "create"]
+    assert "x.parquet" not in creates
+    assert saved["files"]["a/x.parquet"]["remote_id"] == "r-x"
+
+
+def test_a_retry_after_a_listed_create_looks_the_path_up(tmp_path: Path) -> None:
+    """A create whose answer was lost must not become a second copy (DD-001 S2)."""
+    from storage.cli import _upload_with_retry
+
+    local = tmp_path / "x.parquet"
+    local.write_bytes(b"x")
+
+    class _LostAnswer(_Files):
+        def create(self, **kwargs):
+            if "media_body" in kwargs and not getattr(self, "lost", False):
+                self.lost = True
+                self.calls.append(("create", kwargs))
+                raise ConnectionResetError(104, "reset")  # created, answer lost
+            return super().create(**kwargs)
+
+    files = _LostAnswer(
+        {
+            "name = 'datacli' and 'root' in parents": [{"id": "f-datacli"}],
+            "name = 'eodhd' and 'f-datacli' in parents": [{"id": "f-eodhd"}],
+            "name = 'x.parquet' and 'f-eodhd' in parents": [{"id": "r-x"}],
+        }
+    )
+    backend = _backend(files)
+    rid = _upload_with_retry(
+        backend,
+        local,
+        "x.parquet",
+        None,
+        known_absent=True,
+        attempts=3,
+        backoff=0,
+        max_backoff=0,
+        sleep=lambda _s: None,
+        echo=lambda _l: None,
+    )
+    assert rid == "r-x"
+    assert [k for k, _ in files.calls].count("create") == 1  # the lost one only
+
+
+def test_a_rate_limit_pauses_every_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Resp:
+        status = 429
+
+    class TooMany(Exception):
+        resp = _Resp()
+        content = b""
+
+    backend = _backend(_Files({}))
+    slept: list[float] = []
+    clock = [100.0]
+    monkeypatch.setattr(gdrive.time, "monotonic", lambda: clock[0])
+
+    def fake_sleep(s: float) -> None:
+        slept.append(s)
+        clock[0] += s
+
+    monkeypatch.setattr(gdrive.time, "sleep", fake_sleep)
+    with pytest.raises(TooMany):
+        backend._execute(_Request(TooMany()))
+    assert backend._pause_until == 100.0 + backend.rate_limit_pause
+    # the next request on any thread waits out the pause first
+    assert backend._execute(_Request({"ok": 1})) == {"ok": 1}
+    assert slept == [backend.rate_limit_pause]
+
+
+def test_credentials_refresh_once_across_workers() -> None:
+    import threading
+    import time as _time
+
+    class _Creds:
+        def __init__(self) -> None:
+            self.token = "t0"
+            self.valid = False
+            self.refreshes = 0
+
+        def refresh(self, request) -> None:
+            _time.sleep(0.05)
+            self.refreshes += 1
+            self.token = f"t{self.refreshes}"
+            self.valid = True
+
+    creds = gdrive._refresh_once(_Creds())
+    threads = [threading.Thread(target=creds.refresh, args=(None,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert creds.refreshes == 1 and creds.token == "t1"
+    creds.valid = False  # expires again later: refreshes again
+    creds.refresh(None)
+    assert creds.refreshes == 2
