@@ -250,7 +250,7 @@ def collect_dataset(
         active = state
         universe = (
             lane_universe_pairs(lane)
-            if dataset.kind in ("prices", "dividends", "splits")
+            if dataset.kind in ("prices", "dividends", "splits", "bars_1m")
             else None
         )
         if universe is not None and {"ticker", "exchange"}.issubset(state.columns):
@@ -484,6 +484,12 @@ def first_fill_hint(records: list[dict[str, Any]], root: Path) -> str | None:
     """
     if not records or any(r.get("source") != "absent" for r in records):
         return None
+    if {r.get("kind") for r in records} == {"bars_1m"}:
+        # The intraday lane is opt-in: the rest of the root may be full.
+        return (
+            "no 1m bars yet — first fill: refresh intraday --datasets bars_1m --run "
+            "(capped per run; see docs/INTRADAY_1M_DESIGN.md)"
+        )
     return (
         f"no data under {root} — first fill: config set data-root <path>, then "
         "refresh <lane> --run (us_common/uk_eu: add --with-fundamentals); "

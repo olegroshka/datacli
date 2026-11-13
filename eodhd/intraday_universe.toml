@@ -1,0 +1,80 @@
+# Universe definition for the `intraday` lane (1m bars).
+# Design: docs/INTRADAY_1M_DESIGN.md, section 4. Built by build_intraday_universe.py
+# (local, no API). Change the lists here, not in code.
+
+[rules]
+history_start = "2016-01-01"   # first quarter ranked; bars are never fetched earlier
+warmup_days = 90               # bars fetched this many days before a pair's first member quarter
+min_price = 5.0                # last unadjusted close before the quarter start, USD
+min_days = 200                 # trading days with a price in the trailing 365 calendar days
+stock_lanes = ["us_common", "us_extended"]   # daily price lanes the ranking reads, in priority order
+
+[[rules.tiers]]
+name = "T1"
+size = 100     # join at rank <= size
+keep = 130     # an incumbent stays while rank <= keep
+role = "trade"
+
+[[rules.tiers]]
+name = "T2"
+size = 300
+keep = 390
+role = "breadth"
+
+# Signal-only US ETFs: no UK KID, so a UK retail account cannot trade them.
+[context]
+exchange = "US"
+asset_type = "etf"
+role = "signal"
+isa_tradable = "no"
+
+[context.groups]
+broad = ["SPY", "QQQ", "IWM", "DIA", "RSP"]
+sectors = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC"]
+themes = ["SMH", "KRE", "XBI", "IGV", "GDX", "XOP"]
+rates_credit = ["TLT", "IEF", "SHY", "HYG", "LQD"]
+commodities = ["GLD", "SLV", "USO"]
+international = ["EFA", "EEM", "FXI", "EWJ", "EWZ", "EWY"]
+vol_crypto = ["VXX", "IBIT"]
+
+[index]
+exchange = "INDX"
+asset_type = "index"
+role = "signal"
+isa_tradable = "no"
+tickers = ["GSPC", "NDX", "VIX"]
+
+[fx]
+exchange = "FOREX"
+asset_type = "fx"
+role = "signal"
+isa_tradable = "no"
+tickers = ["GBPUSD", "EURUSD", "USDJPY", "USDCNH"]
+
+# ISA-eligible UCITS ETFs on the LSE (KID filed, no stamp duty). CSPX and SWDA probed
+# 2026-11-13; the rest are unprobed and will show as empty/not_found if unavailable.
+[uk]
+exchange = "LSE"
+asset_type = "etf"
+role = "trade"
+isa_tradable = "yes"
+tickers = ["SWDA", "CNX1", "SGLN", "IGLT", "CSPX", "VUSA", "EQQQ", "IUIT"]
+
+# US listings that are ADRs: IBKR says an ISA cannot hold them, so they are signal-only
+# for the ISA. Hand-kept and not exhaustive (datacli metadata has no ADR flag).
+[adr]
+tickers = [
+  "TSM", "ASML", "BABA", "PDD", "ARM", "SHEL", "NOK", "BIDU", "JD", "SONY", "TM", "NVO",
+  "AZN", "SAP", "BP", "HSBC", "UL", "RIO", "BHP", "INFY", "MUFG", "SE", "TCOM", "BBVA",
+  "SAN", "ING", "DEO", "GSK", "BTI", "TTE", "NTES", "LI", "NIO", "XPEV", "BEKE",
+  "VALE", "PBR", "ITUB", "ERIC", "SNY", "NVS", "TEVA",
+]
+
+# Symbols whose daily series in the stock lanes is not one US security, so their
+# dollar volume is meaningless. Dropped before ranking (they take no rank). Found
+# 2026-11-13 by a price-swing screen over every T1/T2 member: within one year
+# TNT swings 1,672x (closes in the thousands, ~90k shares a day) and MRIN
+# 12,478x (2.40 in 2017, 4,000+ in 2026); us_extended appears to mix in another
+# security filed under the same symbol.
+[exclude]
+tickers = ["TNT", "MRIN"]

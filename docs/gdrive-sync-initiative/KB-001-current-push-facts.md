@@ -26,7 +26,9 @@ Drive folder). For each unit `execute_push`:
    manifest never re-creates files (the 2026-09-11 incident);
 2. plans by comparing every local file's size and `mtime_ns` with the
    manifest (`engine.plan`); payload cache dirs are skipped unless
-   `--with-caches`;
+   `--with-caches`, and `engine.DEFAULT_EXCLUDE_PATHS` (`intraday/bars_1m`,
+   added 2026-11-13 by docs/INTRADAY_1M_DESIGN.md decision D3) is always
+   skipped;
 3. uploads the planned files **one at a time**, in plan order, and saves the
    manifest (tmp file, `fsync`, atomic replace) **after every file**;
 4. applies metadata-only touches, saves the manifest, prints

@@ -16,7 +16,7 @@ extra fundamentals fields ride along via ``SELECT *``.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 4  # v2: + news; v3: + news_daily; v4: + issuer_map, news_issuer_daily
+SCHEMA_VERSION = 5  # v2: + news; v3: + news_daily; v4: + issuer_map, news_issuer_daily; v5: + bars_1m
 
 # canonical column -> role, per dataset
 SCHEMAS: dict[str, dict[str, str]] = {
@@ -115,6 +115,21 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "neg_share": "value",
         "first_published_at": "value",
         "last_published_at": "value",
+    },
+    # 1-minute bars of the intraday lane: unadjusted, ``ts`` = bar open (UTC),
+    # ``date`` = trading date in the exchange's timezone, ``session`` =
+    # pre / rth / post / 24h (docs/INTRADAY_1M_DESIGN.md section 5).
+    "bars_1m": {
+        "ticker": "key",
+        "exchange": "key",
+        "ts": "key",
+        "date": "date",
+        "session": "value",
+        "open": "value",
+        "high": "value",
+        "low": "value",
+        "close": "value",
+        "volume": "value",
     },
     # Article-level corpus (news lane); ``symbols``/``tags`` are list<string>
     # columns -- unnest them for symbol- or tag-level views.

@@ -202,6 +202,7 @@ def test_registry_covers_all_lanes() -> None:
         "uk_eu_etf",
         "uk_eu_index_ref",
         "news",
+        "intraday",
     }
     # us_common carries prices, both event lanes, and a fundamentals snapshot.
     kinds = {d.kind for d in reg.LANES["us_common"].datasets}

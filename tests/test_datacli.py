@@ -49,6 +49,8 @@ def test_eodhd_plugin_command_names() -> None:
         "sql",
         "schema",
         "reindex",
+        "bars",
+        "universe",
     }
 
 

@@ -81,7 +81,9 @@ class EodhdPlugin(SourcePlugin):
 
     # query verbs run in-process against a warm DuckDB connection (snappy,
     # skips per-command process startup); everything else delegates to the CLI.
-    EXPLORE_QUERY = frozenset({"describe", "find", "rows", "coverage", "sql"})
+    EXPLORE_QUERY = frozenset(
+        {"describe", "find", "rows", "coverage", "sql", "bars", "universe"}
+    )
 
     def __init__(self) -> None:
         self._con: Any = None  # warm DuckDB connection, lazily built
@@ -103,6 +105,8 @@ class EodhdPlugin(SourcePlugin):
         "config": "config",
         "schema": "schema",
         "reindex": "reindex",
+        "bars": "bars",
+        "universe": "universe",
     }
 
     def command_names(self) -> list[str]:
@@ -599,11 +603,20 @@ class DataCli(cmd2.Cmd):
         """Raw DuckDB query over the datasets:  sql "select ..." """
         self._dispatch("sql", statement)
 
+    def do_bars(self, statement: object) -> None:
+        """One trading day of 1m bars, resampled:  bars NVDA.US --on 2026-11-11 --freq 5m"""
+        self._dispatch("bars", statement)
+
+    def do_universe(self, statement: object) -> None:
+        """Intraday universe members:  universe intraday --tier T1 [--as-of DATE] [--changes]"""
+        self._dispatch("universe", statement)
+
     # ----- tab-completion (known lanes / datasets / sub-commands) ------------ #
     _LANES = (*LANES, "all")
     # qc audits price-bearing lanes only (mirrors eodhd/cli.py cmd_qc)
     _QC_LANES = (
         *(n for n, ln in LANES.items() if any(d.kind == "prices" for d in ln.datasets)),
+        *(n for n in ("news", "intraday") if n in LANES),
         "all",
     )
     _QC_DATASETS = ("prices", "dividends", "splits")
@@ -614,6 +627,7 @@ class DataCli(cmd2.Cmd):
         "fundamentals",
         "news_daily",
         "news_issuer_daily",
+        "bars_1m",
     )
     _CONFIG_ACTIONS = ("show", "get", "set")
     _CONFIG_KEYS = tuple(eodhd_cli.CONFIG_KEYS)

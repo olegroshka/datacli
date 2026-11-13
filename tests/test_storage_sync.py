@@ -200,3 +200,16 @@ def test_push_stops_on_failure_but_keeps_progress(tmp_path: Path) -> None:
     # a succeeded and was recorded before b failed -> resume skips a
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert set(manifest["files"]) == {"a.parquet"}
+
+
+def test_scan_skips_the_intraday_bars_but_keeps_the_lane_sidecars(tmp_path) -> None:
+    lane = tmp_path / "intraday"
+    (lane / "bars_1m").mkdir(parents=True)
+    (lane / "bars_1m" / "AAPL.US_2026.parquet").write_bytes(b"x")
+    (lane / "bars_1m_fetch_state.csv").write_text("a\n")
+    (lane / "tickers_INTRADAY.parquet").write_bytes(b"x")
+    (tmp_path / "other" / "bars_1m").mkdir(parents=True)  # same name elsewhere is kept
+    (tmp_path / "other" / "bars_1m" / "x.parquet").write_bytes(b"x")
+    found = engine.scan_local(tmp_path)
+    assert "intraday/bars_1m/AAPL.US_2026.parquet" not in found
+    assert {"intraday/bars_1m_fetch_state.csv", "intraday/tickers_INTRADAY.parquet", "other/bars_1m/x.parquet"} <= set(found)

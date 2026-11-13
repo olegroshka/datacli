@@ -32,6 +32,9 @@ __all__ = [
     "news_daily_spec",
     "issuer_map_spec",
     "news_issuer_daily_spec",
+    "bars_1m_spec",
+    "INTRADAY_REFRESH_MAX_UNITS",
+    "INTRADAY_REFRESH_MAX_MINUTES",
     "derived_spec",
     "iter_datasets",
     "registered_lane_names",
@@ -87,6 +90,9 @@ class DatasetSpec:
             partitions (``<output>/*.parquet``) rather than a single file.
             Large append-mostly corpora (news) use this so a flush rewrites one
             partition, not the whole dataset.
+        dry_run_arg: Flag the fetcher accepts to print its own plan (units)
+            without calling the API; ``refresh`` runs it during a dry-run so
+            the plan shows the cost. ``None`` when the fetcher has none.
     """
 
     kind: str
@@ -105,6 +111,7 @@ class DatasetSpec:
     fetcher_args: tuple[str, ...] = ()
     partitioned: bool = False
     local: bool = False
+    dry_run_arg: str | None = None
 
     @property
     def display(self) -> str:
@@ -149,6 +156,8 @@ class LaneConfig:
             spans several exchanges (``None`` -> ``default_exchange`` applies).
         default_exchange: Exchange for every universe row when the file has no
             exchange column (single-exchange lanes).
+        universe_local: ``True`` when ``universe_fetcher`` is a local build (no
+            API calls, no quota), so ``refresh`` marks the step as such.
         bootstrap_file: File (under the lane root) that the incremental
             prices/dividends/splits fetchers require before they can run, or
             ``None``. For the common-stock lanes this is ``coverage_summary.csv``,
@@ -169,6 +178,7 @@ class LaneConfig:
     universe_exchange_column: str | None = None
     default_exchange: str | None = None
     bootstrap_file: str | None = None
+    universe_local: bool = False
 
     def resolved_root(self) -> Path:
         """Return the lane directory, defaulting to ``RAW_EODHD / name``."""
@@ -324,6 +334,43 @@ def news_issuer_daily_spec(
         label="news_issuer_daily",
         fetcher=fetcher,
         local=True,
+    )
+
+
+#: Unit cap per routine ``refresh`` run of the 1m bars: the fetcher tops every
+#: pair up first, then fills history newest-first until the cap (5 units per
+#: request), so the first backfill completes over a few nightly runs.
+INTRADAY_REFRESH_MAX_UNITS = 25_000
+#: Wall-clock cap per routine run (minutes): a 1m window returns up to ~10 MB of
+#: JSON, so a full unit budget can outlast the scheduled job's 3 h timeout. The
+#: fetcher stops starting requests after this and resumes next run.
+INTRADAY_REFRESH_MAX_MINUTES = 150
+
+
+def bars_1m_spec(fetcher: str | None = "fetch_eodhd_intraday.py") -> DatasetSpec:
+    """1-minute bars of the ``intraday`` lane (docs/INTRADAY_1M_DESIGN.md).
+
+    Flat ticker-year partitions ``bars_1m/<TICKER>.<EXCH>_<YYYY>.parquet``;
+    per-pair state with ``coverage_from .. coverage_through`` (UTC dates);
+    freshness = the newest bar's trading date. Opt-in (not a default refresh
+    kind) and capped per run by ``INTRADAY_REFRESH_MAX_UNITS``.
+    """
+    return DatasetSpec(
+        kind="bars_1m",
+        output="bars_1m",
+        state="bars_1m_fetch_state.csv",
+        audit="bars_1m_fetch_audit.csv",
+        freshness_col="latest_data_date",
+        as_of_data_col="date",
+        fetcher=fetcher,
+        fetcher_args=(
+            "--max-units",
+            str(INTRADAY_REFRESH_MAX_UNITS),
+            "--max-minutes",
+            str(INTRADAY_REFRESH_MAX_MINUTES),
+        ),
+        partitioned=True,
+        dry_run_arg="--dry-run",
     )
 
 
@@ -505,6 +552,19 @@ LANES: dict[str, LaneConfig] = {
         [prices_spec("fetch_eodhd_uk_eu_index_ref_prices.py")],
         universe_fetcher="fetch_eodhd_uk_eu_index_ref_universe.py",
         default_exchange="INDX",
+    ),
+    # Liquid 1m-bar subuniverse: ranked US stocks + curated context ETFs, indices,
+    # FX and ISA-eligible LSE ETFs (eodhd/intraday_universe.toml; local build).
+    "intraday": LaneConfig(
+        name="intraday",
+        region="US/UK/FX",
+        asset_class="intraday",
+        datasets=(bars_1m_spec(),),
+        universe_path=RAW_EODHD / "intraday" / "tickers_INTRADAY.parquet",
+        universe_fetcher="build_intraday_universe.py",
+        universe_code_column="ticker",
+        universe_exchange_column="exchange",
+        universe_local=True,
     ),
     # Global article corpus crawled by day; no universe (symbol tags come with
     # each article and symbol-level views are derived locally).

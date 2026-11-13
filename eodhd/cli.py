@@ -53,7 +53,17 @@ NEWS_QC_SCRIPT = "report_news_quality.py"
 QC_DATASETS = ("prices", "dividends", "splits")
 
 # Entity-centric exploration verbs, all handled by explore_eodhd.py (DuckDB).
-EXPLORE_COMMANDS = ("describe", "find", "rows", "coverage", "sql", "schema", "reindex")
+EXPLORE_COMMANDS = (
+    "describe",
+    "find",
+    "rows",
+    "coverage",
+    "sql",
+    "schema",
+    "reindex",
+    "bars",
+    "universe",
+)
 
 # One-line descriptions for the top-level help, in display order.
 COMMAND_HELP: list[tuple[str, str]] = [
@@ -64,6 +74,8 @@ COMMAND_HELP: list[tuple[str, str]] = [
     ("rows", "Show the actual rows for a ticker in a dataset"),
     ("coverage", "Do the datasets cover a ticker equally?"),
     ("sql", "Raw DuckDB query over the dataset views (incl. news)"),
+    ("bars", "One trading day of a pair's 1m bars, resampled (intraday lane)"),
+    ("universe", "Intraday universe members at a date, or a quarter's changes"),
     ("qc", "Run raw-data quality checks (qc [lane] [dataset])"),
     ("probe", "Probe ad-hoc ticker availability (paid API; caches under probe_cache/)"),
     ("lanes", "List registered lanes, datasets, and their fetchers"),
@@ -95,7 +107,7 @@ LIFECYCLE: list[tuple[str, str, bool]] = [
         "reindex  (describe/find read the catalog -- run after every fetch)",
         False,
     ),
-    ("6. explore", "describe, find, rows, coverage, sql", False),
+    ("6. explore", "describe, find, rows, coverage, sql, bars, universe", False),
 ]
 
 KNOWN_KINDS = (
@@ -107,6 +119,7 @@ KNOWN_KINDS = (
     "news_daily",
     "issuer_map",
     "news_issuer_daily",
+    "bars_1m",
 )
 # news rides the default refresh: its registry args cap each run to a bounded
 # top-up (newest days first), so a routine refresh never turns into a backfill.
@@ -125,6 +138,14 @@ DEFAULT_KINDS = (
 # fundamentals is refreshed via its own --update mode and takes different flags;
 # news is a day-keyed crawl that must never receive --full-refresh/--tickers.
 INCREMENTAL_KINDS = frozenset({"prices", "dividends", "splits"})
+# Kinds whose fetchers take the per-ticker passthrough flags. bars_1m (the
+# intraday lane, opt-in) accepts them too but has no bulk endpoint, so it is
+# not an INCREMENTAL_KIND for --fast.
+PASSTHROUGH_KINDS = INCREMENTAL_KINDS | {"bars_1m"}
+QC_SCRIPTS_BY_LANE = {
+    "news": "report_news_quality.py",
+    "intraday": "report_intraday_quality.py",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -221,6 +242,7 @@ class Step:
     script: str
     args: list[str] = field(default_factory=list)
     local: bool = False  # a local build: no API calls, no quota
+    dry_run_arg: str | None = None  # fetcher flag that prints its own cost plan
 
     def display(self) -> str:
         tail = (" " + " ".join(self.args)) if self.args else ""
@@ -277,16 +299,24 @@ def build_refresh_plan(
                     "universe",
                     lane.universe_fetcher,
                     list(lane.universe_fetcher_args),
+                    local=lane.universe_local,
                 )
             )
         lane_steps: list[Step] = []
         for ds in matching:
             assert ds.fetcher is not None  # guaranteed by `matching`
             step_args = list(ds.fetcher_args)
-            if ds.kind in INCREMENTAL_KINDS:  # these fetchers accept passthrough flags
+            if ds.kind in PASSTHROUGH_KINDS:  # these fetchers accept passthrough flags
                 step_args += passthrough
             lane_steps.append(
-                Step(name, ds.kind, ds.fetcher, step_args, local=ds.local)
+                Step(
+                    name,
+                    ds.kind,
+                    ds.fetcher,
+                    step_args,
+                    local=ds.local,
+                    dry_run_arg=ds.dry_run_arg,
+                )
             )
         if lane.bootstrap_missing():
             # First fill of a common-stock lane: the per-ticker fetchers need
@@ -345,7 +375,8 @@ def cmd_refresh(argv: list[str]) -> int:
         help=f"Comma list of dataset kinds. Choices: {', '.join(KNOWN_KINDS)} "
         f"(default: {','.join(DEFAULT_KINDS)}). news is a bounded top-up here "
         "(newest days first, capped by the registry); the one-off backfill is "
-        "'python eodhd/fetch_eodhd_news.py'.",
+        "'python eodhd/fetch_eodhd_news.py'. bars_1m (intraday lane, 1m bars) is "
+        "opt-in: 'refresh intraday --datasets bars_1m', capped per run the same way.",
     )
     parser.add_argument(
         "--with-fundamentals",
@@ -382,23 +413,25 @@ def cmd_refresh(argv: list[str]) -> int:
     parser.add_argument(
         "--full-refresh",
         action="store_true",
-        help="Forward --full-refresh to the prices/dividends/splits fetchers "
+        help="Forward --full-refresh to the prices/dividends/splits/bars_1m fetchers "
         "(never to fundamentals or news).",
     )
     parser.add_argument(
-        "--to", default="", help="Forward --to YYYY-MM-DD (prices/dividends/splits)."
+        "--to",
+        default="",
+        help="Forward --to YYYY-MM-DD (prices/dividends/splits/bars_1m).",
     )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
-        help="Forward --limit N (prices/dividends/splits).",
+        help="Forward --limit N (prices/dividends/splits/bars_1m).",
     )
     parser.add_argument(
         "--tickers",
         nargs="*",
         default=[],
-        help="Forward --tickers ... (prices/dividends/splits).",
+        help="Forward --tickers ... (prices/dividends/splits/bars_1m).",
     )
     args = parser.parse_args(argv)
 
@@ -441,6 +474,12 @@ def cmd_refresh(argv: list[str]) -> int:
                 "note: --fast covers prices/dividends/splits; refresh fundamentals via "
                 "'refresh --datasets fundamentals --run'\n"
             )
+        for name in args.lanes:
+            if any(ds.kind == "bars_1m" for ds in LANES[name].datasets):
+                print(
+                    f"note: --fast has no bulk path for {name}'s 1m bars (opt-in); "
+                    f"run 'refresh {name} --datasets bars_1m --run'"
+                )
         # Only lanes with a bulk-refreshable dataset go to the bulk script; the
         # news lane (day-keyed) is handled by the follow-up plan below.
         bulk_lanes = [
@@ -564,6 +603,13 @@ def _print_and_run_steps(steps: list[Step], *, run: bool, keep_going: bool) -> i
     )
 
     if not run:
+        # Fetchers with their own plan mode print the windows and units they
+        # would spend (no API calls), so the dry-run shows the cost.
+        for step in steps:
+            if step.dry_run_arg:
+                print()
+                print(f"[{step.lane} :: {step.kind}] cost plan:", flush=True)
+                subprocess.run([*step.argv(), step.dry_run_arg], cwd=str(REPO_ROOT))
         console.print(
             Text(
                 "dry-run only — re-run with --run to execute (hits the paid EODHD API).",
@@ -792,15 +838,21 @@ def cmd_qc(argv: list[str]) -> int:
         for n, lane in LANES.items()
         if any(ds.kind == "prices" for ds in lane.datasets)
     )
-    lanes = (*price_lanes, *(("news",) if "news" in LANES else ()), "all")
+    own = tuple(n for n in QC_SCRIPTS_BY_LANE if n in LANES)
+    lanes = (*price_lanes, *own, "all")
     if pos and pos[0] not in lanes:
         _bad_choice("lane", pos[0], lanes)
         return 2
-    if pos and pos[0] == "news":
-        if len(pos) > 1:
-            _bad_choice("dataset", pos[1], ())
+    if pos and pos[0] in own:
+        # Lanes with their own report: news (corpus hygiene), intraday (1m bars).
+        name = pos[0]
+        allowed = (
+            () if name == "news" else tuple(ds.kind for ds in LANES[name].datasets)
+        )
+        if len(pos) > 1 and pos[1] not in allowed:
+            _bad_choice("dataset", pos[1], allowed)
             return 2
-        return delegate(NEWS_QC_SCRIPT, rest, prog="qc news")
+        return delegate(QC_SCRIPTS_BY_LANE[name], rest, prog=f"qc {name}")
     if len(pos) > 1 and pos[1] not in QC_DATASETS:
         _bad_choice("dataset", pos[1], QC_DATASETS)
         return 2

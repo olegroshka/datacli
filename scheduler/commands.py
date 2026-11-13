@@ -117,6 +117,7 @@ EODHD_LANES = {
     "uk_eu_etf",
     "uk_eu_index_ref",
     "news",
+    "intraday",
 }
 EODHD_KINDS = {
     "prices",
@@ -127,6 +128,7 @@ EODHD_KINDS = {
     "news_daily",
     "issuer_map",
     "news_issuer_daily",
+    "bars_1m",
 }
 
 CAPABILITIES = (

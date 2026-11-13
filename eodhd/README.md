@@ -157,6 +157,9 @@ pre-fetch numbers. The news lane is day-keyed, so the ticker verbs skip it; use 
 ### Global
 
 - News / sentiment lane: `EODHD_NEWS_SENTIMENT_FINDINGS.md`
+- Intraday 1m bars lane (`intraday`: liquid US stocks, context ETFs, indices,
+  FX, ISA-eligible LSE ETFs): `EODHD_INTRADAY_DATA_MANIFEST.md`; design in
+  `docs/INTRADAY_1M_DESIGN.md`
 
 ## 6. Resume model
 
@@ -283,6 +286,44 @@ Own scores over the corpus: `uv run python -m scoring.cli plan|run --run|status`
 (shell: `score …`), local model by default; sidecars land under
 `news/scores/<schema>@<v>/<backend>/` and show up in `status news` and the
 `news_scores_<schema>` views. See `NEWS_SCORING_DESIGN.md`.
+
+## 9a. Intraday lane (1m bars)
+
+A liquid subuniverse with 1-minute bars: the top 300 US common stocks by median
+daily dollar volume (re-ranked each quarter, with hysteresis: T1 = 100 traded
+names, T2 = 200 for training breadth), 38 context ETFs, GSPC/NDX/VIX, four FX
+pairs and eight ISA-eligible LSE ETFs. The lists and rules live in
+`intraday_universe.toml`; `build_intraday_universe.py` (local, seconds) writes
+`intraday/tickers_INTRADAY.parquet` (current members) and
+`intraday/universe_membership.parquet` (point in time, per quarter). Dollar
+volume divides out later forward splits, because EODHD's daily `volume` is
+split-adjusted while `close` is raw (otherwise future splitters rank first);
+`[exclude]` in the toml drops symbols whose daily series is not one security.
+
+Bars land in `intraday/bars_1m/<TICKER>.<EXCH>_<YYYY>.parquet` (unadjusted,
+`ts` = bar open UTC, `date` = exchange-local trading date, `session` =
+pre/rth/post/24h). Each request covers at most 118 days of one pair and costs
+5 units; a run tops every pair up first, then fills history newest-first.
+`bars_1m` is **opt-in** (not in the default refresh or `--fast`).
+
+```powershell
+uv run python eodhd/cli.py refresh intraday --datasets bars_1m             # plan + cost (dry-run, runs the fetcher's --dry-run)
+uv run python eodhd/cli.py refresh intraday --datasets bars_1m --run       # capped: 25k units / 150 min per run
+uv run python eodhd/cli.py refresh intraday --datasets bars_1m --tickers NVDA.US --run
+uv run python eodhd/fetch_eodhd_intraday.py --workers 10 --max-minutes 200 # manual, uncapped units (no lock: prefer refresh)
+uv run python eodhd/cli.py status intraday
+uv run python eodhd/cli.py qc intraday [bars_1m] [--days 30 | --all]
+uv run python eodhd/cli.py bars NVDA.US --on 2026-11-11 --freq 5m [--session all] [--adjusted]
+uv run python eodhd/cli.py universe intraday --tier T1 [--as-of 2020-06-30] [--changes]
+```
+
+Views: `bars_1m`, `bars_1m_state`, `bars_1m_adj` (split-adjusted from the
+`splits` view; `split_adj` carries the factor), `intraday_universe`,
+`intraday_membership`. `reindex` takes the bars' catalog rows from the state
+file instead of scanning them. `sync push` skips `intraday/bars_1m` (local
+until the Drive quota is confirmed; `storage/engine.DEFAULT_EXCLUDE_PATHS`).
+Scheduled by `eodhd-intraday-1m-daily` (06:00 Tue-Sat), separate from the 05:00
+end-of-day job.
 
 ## 10. Typical run order (per-ticker scripts)
 

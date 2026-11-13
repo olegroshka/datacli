@@ -65,7 +65,13 @@ DATE_COL = {
     "news_daily": "date",
     "issuer_map": "built_at",
     "news_issuer_daily": "date",
+    "bars_1m": "date",
 }
+# Column that orders a dataset's rows newest-first in `rows` (defaults to DATE_COL).
+ORDER_COL = {"bars_1m": "ts"}
+# Datasets whose catalog entries come from the fetch-state sidecar instead of a
+# scan (bars_1m holds ~600M rows): state column for rows / first / last date.
+CATALOG_FROM_STATE = {"bars_1m": ("n_rows", "first_data_date", "latest_data_date")}
 STATE_ASOF = {
     "prices": "latest_data_date",
     "dividends": "latest_data_date",
@@ -75,6 +81,7 @@ STATE_ASOF = {
     "news_daily": None,
     "issuer_map": None,
     "news_issuer_daily": None,
+    "bars_1m": "latest_data_date",
 }
 STATE_COVERAGE = {
     "prices": "coverage_through",
@@ -85,6 +92,7 @@ STATE_COVERAGE = {
     "news_daily": None,
     "issuer_map": None,
     "news_issuer_daily": None,
+    "bars_1m": "coverage_through",
 }
 DEFAULT_COLS = {
     "prices": ["date", "open", "high", "low", "close", "adjusted_close", "volume"],
@@ -110,6 +118,7 @@ DEFAULT_COLS = {
         "neg_share",
     ],
     "issuer_map": ["symbol", "issuer_id", "issuer_name", "primary_symbol", "evidence"],
+    "bars_1m": ["ts", "date", "session", "open", "high", "low", "close", "volume"],
     "news_issuer_daily": [
         "date",
         "issuer_name",
@@ -221,6 +230,7 @@ def connect() -> Any:
         except Exception:
             pass
     register_score_views(con, EODHD_RAW_ROOT)
+    register_intraday_views(con)
     # Macro views (macro / macro_country / macro_market) are layered on top when
     # that source has been fetched, so `sql` sees the same surface as the lab and
     # the MCP server. Best-effort: macro is optional and must never break eodhd.
@@ -269,6 +279,208 @@ def connect() -> Any:
     except Exception:
         pass
     return con
+
+
+# --------------------------------------------------------------------------- #
+# intraday lane: views + `bars` / `universe` verbs
+# --------------------------------------------------------------------------- #
+INTRADAY_DIR = EODHD_RAW_ROOT / "intraday"
+INTRADAY_TICKERS = INTRADAY_DIR / "tickers_INTRADAY.parquet"
+INTRADAY_MEMBERSHIP = INTRADAY_DIR / "universe_membership.parquet"
+BAR_FREQS = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
+#: exchange -> timezone for the `local` column of `bars`
+BAR_TZ = {
+    "US": "America/New_York",
+    "INDX": "America/New_York",
+    "LSE": "Europe/London",
+    "FOREX": "UTC",
+}
+
+
+def register_intraday_views(con: Any, root: Path | None = None) -> list[str]:
+    """``bars_1m_adj`` (split-adjusted bars) and the universe views, when present.
+
+    ``bars_1m_adj`` divides prices and multiplies volume by the product of the
+    ``split_ratio`` of every split with ``ex_date`` after the bar's trading
+    date (splits from every lane's ``splits`` view); ``split_adj`` carries the
+    factor. Unadjusted bars stay in ``bars_1m``.
+    """
+    base = (root / "intraday") if root is not None else INTRADAY_DIR
+    made: list[str] = []
+    if _has_view(con, "bars_1m"):
+        if _has_view(con, "splits"):
+            segments = """
+                WITH s AS (
+                  SELECT upper(ticker) AS t, upper(exchange) AS e, CAST(ex_date AS VARCHAR) AS d,
+                         any_value(split_ratio) AS f
+                  FROM splits WHERE split_ratio > 0 AND split_ratio <> 1 GROUP BY 1, 2, 3),
+                seg AS (
+                  SELECT t, e, d AS until,
+                         coalesce(lag(d) OVER (PARTITION BY t, e ORDER BY d), '') AS since,
+                         exp(sum(ln(f)) OVER (PARTITION BY t, e ORDER BY d DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)) AS cum
+                  FROM s)
+                SELECT b.* REPLACE (b.open / coalesce(seg.cum, 1) AS open, b.high / coalesce(seg.cum, 1) AS high,
+                                    b.low / coalesce(seg.cum, 1) AS low, b.close / coalesce(seg.cum, 1) AS close,
+                                    b.volume * coalesce(seg.cum, 1) AS volume),
+                       coalesce(seg.cum, 1.0) AS split_adj
+                FROM bars_1m b LEFT JOIN seg
+                  ON upper(b.ticker) = seg.t AND upper(b.exchange) = seg.e
+                 AND b.date >= seg.since AND b.date < seg.until
+            """
+        else:
+            segments = "SELECT *, 1.0 AS split_adj FROM bars_1m"
+        con.execute(f"CREATE OR REPLACE VIEW bars_1m_adj AS {segments}")
+        made.append("bars_1m_adj")
+    for view, path in (
+        ("intraday_universe", base / INTRADAY_TICKERS.name),
+        ("intraday_membership", base / INTRADAY_MEMBERSHIP.name),
+    ):
+        if path.exists():
+            con.execute(
+                f"CREATE OR REPLACE VIEW {view} AS SELECT * FROM read_parquet('{path.as_posix()}')"
+            )
+            made.append(view)
+    return made
+
+
+def bars(
+    con: Any,
+    spec: str,
+    on: str | None,
+    freq: str,
+    session: str,
+    adjusted: bool,
+    head: int,
+) -> int:
+    """One trading day of a pair's bars, resampled from 1m."""
+    if _no_data_hint(con):
+        return 0
+    console = _console()
+    view = "bars_1m_adj" if adjusted else "bars_1m"
+    if not _has_view(con, view):
+        console.print(
+            f"[yellow]no 1m bars yet[/yellow] -- refresh intraday --datasets bars_1m --run"
+        )
+        return 0
+    if freq not in BAR_FREQS:
+        console.print(
+            f"[red]unknown --freq {freq}[/red]. Choose: {', '.join(BAR_FREQS)}"
+        )
+        return 2
+    ticker, exchange = parse_ticker(spec)
+    cond, params = _where(ticker, exchange)
+    if on is None:
+        row = con.execute(
+            f"SELECT max(date) FROM {view} WHERE {cond}", params
+        ).fetchone()
+        on = row[0] if row else None
+        if on is None:
+            console.print(f"[yellow]{spec} not present in bars_1m[/yellow]")
+            return 0
+    sess = "" if session == "all" else f" AND session = '{session}'"
+    minutes = BAR_FREQS[freq]
+    df = con.execute(
+        f"""
+        SELECT time_bucket(INTERVAL '{minutes} minutes', ts) AS ts,
+               any_value(exchange) AS exchange, any_value(session) AS session,
+               arg_min(open, ts) AS open, max(high) AS high, min(low) AS low,
+               arg_max(close, ts) AS close, sum(volume) AS volume, count(*) AS n_1m
+        FROM {view} WHERE {cond} AND date = ?{sess}
+        GROUP BY 1 ORDER BY 1
+        """,
+        [*params, on],
+    ).df()
+    if df.empty:
+        console.print(f"[yellow]{spec}: no {session} bars on {on}[/yellow]")
+        return 0
+    tz = BAR_TZ.get(str(df["exchange"].iloc[0]), "UTC")
+    df.insert(
+        1,
+        "local",
+        pd.to_datetime(df["ts"], utc=True).dt.tz_convert(tz).dt.strftime("%H:%M"),
+    )
+    df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.strftime("%Y-%m-%d %H:%M")
+    shown = df.drop(columns=["exchange"]).head(head)
+    title = (
+        f"{spec} {freq} bars on {on} ({session}{', split-adjusted' if adjusted else ''}) "
+        f"-- {len(df)} bar(s){f', first {head}' if len(df) > head else ''}"
+    )
+    console.print(_render.df_table(shown, title=title))
+    return 0
+
+
+def universe(
+    con: Any, lane: str, as_of: str | None, tier: str | None, changes: bool
+) -> int:
+    """Members of the intraday universe at a date, or the last quarter's changes."""
+    console = _console()
+    if lane != "intraday":
+        console.print(f"[red]no universe verb for lane '{lane}'[/red] (only: intraday)")
+        return 2
+    if not _has_view(con, "intraday_membership"):
+        console.print(
+            "[yellow]no intraday universe yet[/yellow] -- python eodhd/build_intraday_universe.py"
+        )
+        return 0
+    quarters = [
+        q
+        for (q,) in con.execute(
+            "SELECT DISTINCT quarter_start FROM intraday_membership ORDER BY 1"
+        ).fetchall()
+    ]
+    asof = as_of or quarters[-1]
+    eligible = [q for q in quarters if q <= asof]
+    if not eligible:
+        console.print(
+            f"[yellow]no membership on or before {asof}[/yellow] (first quarter {quarters[0]})"
+        )
+        return 0
+    q = eligible[-1]
+    tier_cond = " AND tier = ?" if tier else ""
+    tier_params = [tier] if tier else []
+    if changes:
+        prev = eligible[-2] if len(eligible) > 1 else None
+        if prev is None:
+            console.print(
+                f"[yellow]{q} is the first quarter; nothing to compare[/yellow]"
+            )
+            return 0
+        df = con.execute(
+            f"""
+            WITH cur AS (SELECT ticker, exchange, tier, adv_rank FROM intraday_membership WHERE quarter_start = ?{tier_cond}),
+                 old AS (SELECT ticker, exchange, tier, adv_rank FROM intraday_membership WHERE quarter_start = ?{tier_cond})
+            SELECT coalesce(cur.ticker, old.ticker) AS ticker, coalesce(cur.exchange, old.exchange) AS exchange,
+                   old.tier AS was, cur.tier AS now, cur.adv_rank AS rank_now, old.adv_rank AS rank_was
+            FROM cur FULL OUTER JOIN old ON cur.ticker = old.ticker AND cur.exchange = old.exchange
+            WHERE cur.tier IS DISTINCT FROM old.tier
+            ORDER BY now NULLS LAST, rank_now NULLS LAST, ticker
+            """,
+            [q, *tier_params, prev, *tier_params],
+        ).df()
+        console.print(
+            _render.df_table(
+                df, title=f"intraday universe changes {prev} -> {q} ({len(df)})"
+            )
+        )
+        return 0
+    df = con.execute(
+        f"""
+        SELECT ticker, exchange, tier, "group", adv_rank, adv_musd, isa_tradable
+        FROM intraday_membership WHERE quarter_start = ?{tier_cond}
+        ORDER BY tier, adv_rank NULLS LAST, "group", ticker
+        """,
+        [q, *tier_params],
+    ).df()
+    counts = ", ".join(
+        f"{k}={v}" for k, v in df["tier"].value_counts().sort_index().items()
+    )
+    console.print(
+        _render.df_table(
+            df, title=f"intraday universe for quarter {q} (as of {asof}): {counts}"
+        )
+    )
+    return 0
 
 
 def register_score_views(con: Any, root: Path) -> list[str]:
@@ -540,7 +752,7 @@ def rows(con: Any, spec: str, dataset: str, head: int, cols: str | None) -> int:
         return 0
     ticker, exchange = parse_ticker(spec)
     cond, params = _where(ticker, exchange)
-    dcol = DATE_COL[dataset]
+    dcol = ORDER_COL.get(dataset, DATE_COL[dataset])
     if cols == "*":
         sel = "*"
     elif cols:
@@ -730,6 +942,20 @@ def cmd_reindex(con: Any) -> int:
     console = _console()
     frames = []
     for kind in TICKER_DATASETS:
+        if kind in CATALOG_FROM_STATE:
+            if _has_view(con, f"{kind}_state"):
+                n_col, first_col, last_col = CATALOG_FROM_STATE[kind]
+                frames.append(
+                    con.execute(
+                        f"SELECT '{kind}' AS dataset, lane, upper(ticker) AS ticker, "
+                        f"upper(exchange) AS exchange, "
+                        f"CAST(nullif({n_col}, '') AS BIGINT) AS n_rows, "
+                        f"nullif({first_col}, '') AS first_date, "
+                        f"nullif({last_col}, '') AS last_date "
+                        f"FROM {kind}_state WHERE coalesce(nullif({n_col}, ''), '0') <> '0'"
+                    ).df()
+                )
+            continue
         if not _has_view(con, kind):
             continue
         dcol = DATE_COL[kind]
@@ -785,6 +1011,8 @@ VERB_HELP: dict[str, str] = {
     "schema": "Declared schema version + drift vs on-disk data",
     "reindex": "(Re)build the fast query catalog after new data — describe/find "
     "read the catalog, so run this after every fetch",
+    "bars": "One trading day of a pair's 1m bars, resampled (intraday lane)",
+    "universe": "Members of a lane's universe at a date, or a quarter's changes (intraday)",
 }
 
 
@@ -839,6 +1067,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add("schema")
     add("reindex")
+    b = add("bars")
+    b.add_argument("ticker", help="TICKER or TICKER.EXCHANGE")
+    b.add_argument(
+        "--on", default=None, help="trading date YYYY-MM-DD (default: the latest)"
+    )
+    b.add_argument(
+        "--freq", default="15m", choices=tuple(BAR_FREQS), help="bar size, default 15m"
+    )
+    b.add_argument(
+        "--session",
+        default="rth",
+        choices=("rth", "pre", "post", "24h", "all"),
+        help="default rth",
+    )
+    b.add_argument(
+        "--adjusted", action="store_true", help="split-adjusted prices (bars_1m_adj)"
+    )
+    b.add_argument(
+        "--head", type=int, default=100, help="max bars to print, default 100"
+    )
+    u = add("universe")
+    u.add_argument("lane", nargs="?", default="intraday", choices=("intraday",))
+    u.add_argument(
+        "--as-of", default=None, help="date YYYY-MM-DD (default: the latest quarter)"
+    )
+    u.add_argument("--tier", default=None, help="T1, T2, context, index, fx or uk")
+    u.add_argument(
+        "--changes", action="store_true", help="joiners/leavers vs the previous quarter"
+    )
     return p
 
 
@@ -865,6 +1122,12 @@ def main(argv: list[str] | None = None, con: Any = None) -> int:
         return cmd_schema(con)
     if args.command == "reindex":
         return cmd_reindex(con)
+    if args.command == "bars":
+        return bars(
+            con, args.ticker, args.on, args.freq, args.session, args.adjusted, args.head
+        )
+    if args.command == "universe":
+        return universe(con, args.lane, args.as_of, args.tier, args.changes)
     return 2
 
 

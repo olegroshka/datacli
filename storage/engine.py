@@ -44,6 +44,10 @@ MANIFEST_VERSION = 1
 # rate-limited slog; they are re-derivable from the API).
 DEFAULT_INCLUDE = ("*.parquet", "*.csv", "*.json", "*.md")
 DEFAULT_EXCLUDE_DIRS = frozenset({"cache", "probe_cache", ".sync"})
+# Directories pruned by their path relative to the root (POSIX), not by name.
+# The intraday lane's 1m bars (~20 GB once backfilled) stay local until the
+# owner confirms the Drive quota (docs/INTRADAY_1M_DESIGN.md, decision D3).
+DEFAULT_EXCLUDE_PATHS = frozenset({"intraday/bars_1m"})
 
 ACTION_UPLOAD = "upload"
 ACTION_SKIP = "skip"
@@ -98,18 +102,26 @@ def scan_local(
     *,
     include: Iterable[str] = DEFAULT_INCLUDE,
     exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS,
+    exclude_paths: frozenset[str] = DEFAULT_EXCLUDE_PATHS,
 ) -> dict[str, FileStat]:
     """Walk ``root`` and stat every file matching the include globs.
 
     ``exclude_dirs`` prunes by directory *name* at any depth (cache dirs, the
-    ``.sync`` manifest dir). Returns ``{relpath: FileStat}`` with POSIX-style
+    ``.sync`` manifest dir); ``exclude_paths`` prunes directories by their
+    POSIX path relative to ``root`` (``intraday/bars_1m``). Returns ``{relpath: FileStat}`` with POSIX-style
     relative paths so manifests are portable across OSes.
     """
     root = Path(root)
     include = tuple(include)
     found: dict[str, FileStat] = {}
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in exclude_dirs)
+        rel_dir = Path(dirpath).relative_to(root).as_posix()
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in exclude_dirs
+            and (d if rel_dir == "." else f"{rel_dir}/{d}") not in exclude_paths
+        )
         for name in sorted(filenames):
             if not any(fnmatch.fnmatch(name, pat) for pat in include):
                 continue
