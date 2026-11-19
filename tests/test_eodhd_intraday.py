@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -69,17 +69,38 @@ def test_assign_tiers_applies_hysteresis() -> None:
         "C",
         "D",
     }
-    # q2: incumbent B (rank 3 <= keep 3) stays T1, leaving one slot for C (rank 1);
-    # A fell to rank 5 (> keep 3) and drops to T2 (rank 5 <= T2 keep 5).
+    # q2: C and D (ranks 1, 2 <= size 2) join T1 and incumbent B (rank 3 <=
+    # keep 3) stays, so T1 floats to three; A fell to rank 5 (> keep 3) and
+    # drops to T2 (rank 5 <= T2 keep 5), E joins T2 at rank 4 <= size 4.
     assert {t for (q, t), tier in tiers.items() if q == q2 and tier == "T1"} == {
         "B",
         "C",
+        "D",
     }
     assert {t for (q, t), tier in tiers.items() if q == q2 and tier == "T2"} == {
         "A",
-        "D",
+        "E",
     }
     assert "F" not in {t for (q, t) in tiers if q == q2}
+
+
+def test_incumbents_never_crowd_out_a_name_ranked_within_size() -> None:
+    # 2026Q4 regression: T2 incumbents ranked up to keep filled every slot, so
+    # APH at rank 166 could not join. Here the four T2 incumbents of q1 sit at
+    # ranks 4..7 in q2 (all <= keep 8) and NEW enters at rank 3 (<= size 6).
+    q1, q2 = date(2020, 1, 1), date(2020, 4, 1)
+    ranks = _ranks(
+        [
+            (q1, ["A", "B", "C", "D", "E", "F", "NEW"]),
+            (q2, ["A", "B", "NEW", "C", "D", "E", "F"]),
+        ]
+    )
+    tiers = [uni.Tier("T1", 2, 2, "trade"), uni.Tier("T2", 6, 8, "breadth")]
+    got = uni.assign_tiers(ranks, tiers)
+    q2_members = set(got[got["quarter_start"] == q2]["ticker"])
+    assert "NEW" in q2_members
+    assert {"C", "D", "E", "F"} <= q2_members  # every incumbent within keep stays
+    assert len(q2_members) == 7  # the tier floats above size
 
 
 def test_build_membership_drops_excluded_symbols_before_ranking() -> None:
@@ -394,17 +415,20 @@ class _Resp:
 
 
 class _FakeApi:
-    """Serves one bar per requested UTC day from ``first_day`` on; 404 for ``missing``."""
+    """Serves one bar per requested UTC day from ``first_day`` through
+    ``last_day`` (the vendor's newest published session); 404 for ``missing``."""
 
     def __init__(
         self,
         first_day: dict[str, date],
         missing: set[str] = frozenset(),
         status: int = 200,
+        last_day: dict[str, date] | None = None,
     ) -> None:
         self.first_day = first_day
         self.missing = missing
         self.status = status
+        self.last_day = last_day if last_day is not None else {}
         self.calls: list[tuple[str, int, int]] = []
 
     def __call__(
@@ -418,6 +442,7 @@ class _FakeApi:
             return _Resp(404, "Ticker Not Found.")
         start = datetime.fromtimestamp(params["from"], tz=timezone.utc).date()
         end = datetime.fromtimestamp(params["to"], tz=timezone.utc).date()
+        end = min(end, self.last_day.get(symbol, end))
         first = self.first_day.get(symbol, date(1900, 1, 1))
         rows = []
         day = max(start, first)
@@ -510,6 +535,63 @@ def test_execute_fills_history_resumes_and_stops_at_listing(
     assert api.calls == []
     _run(tmp_path, targets, api, to=date(2026, 11, 14))
     assert sorted(c[0] for c in api.calls) == ["AAA.US", "IPO.US"]
+
+
+def test_covered_through_holds_recent_windows_to_their_newest_bar() -> None:
+    to = date(2026, 11, 19)
+    settled = to - timedelta(days=fx.VENDOR_LAG_DAYS)
+    assert fx.covered_through(to, to, to) == to
+    assert fx.covered_through(to, date(2026, 11, 17), to) == date(2026, 11, 17)
+    assert fx.covered_through(to, None, to) == settled  # halted: still advances
+    assert fx.covered_through(to, date(2026, 10, 1), to) == settled
+    old = date(2026, 11, 10)  # a settled window is held whatever it returned
+    assert fx.covered_through(old, None, to) == old
+
+
+def test_a_session_the_vendor_publishes_late_is_asked_for_again(
+    tmp_path: Path,
+) -> None:
+    targets = _targets(
+        ("AAA", "2026-11-01", ""), ("LAG", "2026-11-01", ""), ("DEAD", "2026-11-01", "")
+    )
+    api = _FakeApi(
+        {},
+        last_day={
+            "LAG.US": date(2026, 11, 17),  # 11-18 not published yet
+            "DEAD.US": date(2026, 11, 6),  # stopped trading
+        },
+    )
+    _, state = _run(tmp_path, targets, api, to=date(2026, 11, 19))
+    assert state.loc["AAA", "coverage_through"] == "2026-11-19"
+    assert state.loc["LAG", "coverage_through"] == "2026-11-17"
+    assert state.loc["DEAD", "coverage_through"] == "2026-11-15"
+    # next day the vendor has caught up: LAG's top-up re-reads 11-18 and fills it
+    api.last_day["LAG.US"] = date(2026, 11, 20)
+    api.calls.clear()
+    _, state = _run(tmp_path, targets, api, to=date(2026, 11, 20))
+    lag = [c for c in api.calls if c[0] == "LAG.US"]
+    assert len(lag) == 1
+    assert datetime.fromtimestamp(lag[0][1], tz=timezone.utc).date() <= date(
+        2026, 11, 18
+    )
+    assert state.loc["LAG", "coverage_through"] == "2026-11-20"
+    assert state.loc["LAG", "latest_data_date"] == "2026-11-20"
+    bars = pd.read_parquet(tmp_path / "bars" / "LAG.US_2026.parquet")
+    assert "2026-11-18" in set(bars["date"])
+    # a dead member stays one short top-up window a run
+    assert len([c for c in api.calls if c[0] == "DEAD.US"]) == 1
+
+
+def test_a_retired_pair_without_recent_bars_settles(tmp_path: Path) -> None:
+    targets = _targets(("OLD", "2026-10-01", "2026-11-17"))
+    api = _FakeApi({}, last_day={"OLD.US": date(2026, 11, 13)})
+    _, state = _run(tmp_path, targets, api, to=date(2026, 11, 19))
+    assert state.loc["OLD", "coverage_through"] == "2026-11-15"
+    _, state = _run(tmp_path, targets, api, to=date(2026, 11, 22))
+    assert state.loc["OLD", "coverage_through"] == "2026-11-17"  # its fetch_to
+    api.calls.clear()
+    _run(tmp_path, targets, api, to=date(2026, 11, 23))
+    assert api.calls == []
 
 
 def test_execute_stops_at_the_time_limit(tmp_path: Path) -> None:
@@ -1136,21 +1218,24 @@ def test_a_relabelled_company_keeps_its_tier() -> None:
         ],
         columns=["quarter_start", "ticker", "company", "adv_rank"],
     )
-    # T2 holds one name; NEW (rank 2) keeps the slot as the incumbent over BBB
     tiers = [uni.Tier("T1", 1, 1, "trade"), uni.Tier("T2", 2, 3, "breadth")]
     out = uni.assign_tiers(ranks, tiers)
     q2 = out[out["quarter_start"] == date(2016, 4, 1)].set_index("ticker")
     assert set(q2.index) == {"AAA", "NEW"} and q2.loc["NEW", "tier"] == "T2"
-    # without the company column NEW is a newcomer; it still wins on rank here,
-    # so check the hysteresis case: BBB incumbent, OLD -> NEW relabel at rank 3
+    # the hysteresis case: in q2 the company ranks 3 (> size 2, <= keep 3) under
+    # its new label, so only its incumbency as CO keeps it
     swapped = ranks.assign(
         adv_rank=[1, 2, 3, 1, 3, 2],
-        ticker=["AAA", "BBB", "OLD", "AAA", "NEW", "BBB"],
-        company=["AAA", "BBB", "CO", "AAA", "CO", "BBB"],
+        ticker=["AAA", "OLD", "BBB", "AAA", "NEW", "BBB"],
+        company=["AAA", "CO", "BBB", "AAA", "CO", "BBB"],
     )
-    tiers3 = [uni.Tier("T1", 1, 1, "trade"), uni.Tier("T2", 3, 3, "breadth")]
-    kept = uni.assign_tiers(swapped, tiers3)
-    assert "NEW" in set(kept[kept["quarter_start"] == date(2016, 4, 1)]["ticker"])
+    kept = uni.assign_tiers(swapped, tiers)
+    q2_kept = set(kept[kept["quarter_start"] == date(2016, 4, 1)]["ticker"])
+    assert q2_kept == {"AAA", "BBB", "NEW"}
+    unlinked = uni.assign_tiers(swapped.drop(columns="company"), tiers)
+    assert "NEW" not in set(
+        unlinked[unlinked["quarter_start"] == date(2016, 4, 1)]["ticker"]
+    )
 
 
 def test_early_close_calendar() -> None:

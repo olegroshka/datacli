@@ -16,17 +16,18 @@ subuniverse chosen for short-horizon models:
 
 | Group | Members now | Rule / list | Role |
 |---|---|---|---|
-| T1 | 100 | top US common stocks by median daily dollar volume (join rank <= 100, stay <= 130), price >= $5 | trade |
-| T2 | 200 | next 200 (join <= 300, stay <= 390) | training breadth |
+| T1 | 120 | top US common stocks by median daily dollar volume (join rank <= 100, stay <= 130; counts float), price >= $5 | trade |
+| T2 | 235 | below T1 (join <= 300, stay <= 390) | training breadth |
 | context | 38 | curated US ETFs (broad, sectors, themes, rates/credit, commodities, international, vol/crypto) | signal only (no UK KID) |
 | index | 3 | GSPC, NDX, VIX | signal only |
 | fx | 4 | GBPUSD, EURUSD, USDJPY, USDCNH | signal only |
 | uk | 8 | ISA-eligible LSE UCITS ETFs (CSPX, SWDA, VUSA, EQQQ, IUIT, CNX1, SGLN, IGLT) | trade |
 
 Stock tiers are re-ranked at each quarter start from the trailing year, so the
-lane also holds former members (kept for history, not refreshed): 549 pairs over
-44 quarters (2016Q1 .. 2026Q4), 353 current members. A company filed under
-several symbols ranks once (caveat 17). The fetch state holds 599 pairs plus 13
+lane also holds former members (kept for history, not refreshed): 693 pairs over
+44 quarters (2016Q1 .. 2026Q4), 408 current members (549 and 353 before the
+buffer-rule fix, caveat 18). A company filed under
+several symbols ranks once (caveat 17). Before that fix the fetch state held 599 pairs plus 13
 alias rows (caveat 5): the extra pairs were members under earlier rankings
 (caveats 10 and 17) and keep their bars as retired pairs.
 
@@ -155,8 +156,12 @@ SGI) and the excluded TNT and MRIN.
    official index. Use their `rth` bars only, or SPY / QQQ. VIX extended-hours
    bars match Cboe's extended session. Index 1m history starts 2020-03.
 13. **LSE 1m starts 2021-10-12** for all eight UK ETFs.
-14. **Publication lag.** The previous US session was not published at 00:45 UTC;
-   the 06:00 London job tops up with a 3-day overlap, which self-heals a late day.
+14. **Publication lag.** The previous US session was not published at 00:45 UTC,
+   and on 2026-11-17 and 11-18 it was still missing for 150 of 350 pairs at
+   06:00 London. The job runs at 12:00 London since 2026-11-19, tops up with a
+   3-day overlap, and holds a recent window's coverage only through its newest
+   bar, so a late session is asked for again. A 12:00 run also stores part of
+   the current LSE day (and US pre-market bars), completed by the next run.
 15. **Not consolidated live.** The free WebSocket is Cboe EDGX only; historical
     1m bars are consolidated. Do not mix them as one series without checking.
 16. **Drive.** Pushed to Google Drive with the rest of the root since
@@ -172,6 +177,11 @@ SGI) and the excluded TNT and MRIN.
     of 15,532 member-quarters on 2026-11-13. A model that tracks a company
     across quarters must follow the label change (same `company`, different
     `ticker`).
+18. **Membership before 2026-11-19** left out 12 to 48 top-300 names a quarter
+    (incumbents filled a fixed count first, so a newcomer ranked as high as 86
+    could miss the lane). Rebuilt with the buffer rule, where tier counts float
+    (2026Q4: 355 stocks); a membership file or backtest from before then is
+    stale.
 
 ## 5. Cost
 

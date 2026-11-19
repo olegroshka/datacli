@@ -433,13 +433,19 @@ def drop_duplicate_series(
 
 
 def assign_tiers(ranks: pd.DataFrame, tiers: list[Tier]) -> pd.DataFrame:
-    """Tier membership per quarter with hysteresis.
+    """Tier membership per quarter with a buffer rule (hysteresis).
 
-    Per quarter and tier, in order: incumbents (names in this tier or a higher
-    one last quarter, not yet placed, with ``rank <= keep``; matched on the
-    ``company`` column when present, so a relabelled company stays) fill first, best
-    rank first; remaining slots go to the best-ranked other names with
-    ``rank <= size``. Each tier holds ``size - previous tier size`` names.
+    Per quarter and tier, in order, among the names not yet placed in a higher
+    tier: every name ranked ``<= size`` joins, and an incumbent (in this tier
+    or a higher one last quarter, matched on the ``company`` column when
+    present, so a relabelled company stays) also stays while ranked
+    ``<= keep``. Tier counts therefore float a little above
+    ``size - previous tier size``.
+
+    Until 2026-11-19 incumbents filled a fixed count first, so in a quarter
+    with enough of them ranked up to ``keep`` no newcomer could join however
+    high it ranked: 12 to 48 of the top 300 were left out every quarter
+    (2026Q4: CLS at 134, APH at 166, PWR at 177, CRWD at 265).
     """
     rows: list[pd.DataFrame] = []
     previous: dict[str, int] = {}  # company -> tier index last quarter
@@ -449,25 +455,17 @@ def assign_tiers(ranks: pd.DataFrame, tiers: list[Tier]) -> pd.DataFrame:
         frame = frame.sort_values("adv_rank")
         company = dict(zip(frame["ticker"], frame["company"]))
         placed: dict[str, int] = {}
-        floor_size = 0
         for index, tier in enumerate(tiers):
-            target = tier.size - floor_size
             free = frame[~frame["ticker"].isin(placed)]
             incumbent_mask = pd.Series(
                 [previous.get(company[t], 99) <= index for t in free["ticker"]],
                 index=free.index,
                 dtype=bool,
             )
-            incumbents = free[incumbent_mask & (free["adv_rank"] <= tier.keep)]
-            chosen = list(incumbents["ticker"][:target])
-            if len(chosen) < target:
-                newcomers = free[
-                    ~free["ticker"].isin(chosen) & (free["adv_rank"] <= tier.size)
-                ]
-                chosen += list(newcomers["ticker"][: target - len(chosen)])
-            for ticker in chosen:
+            stays = incumbent_mask & (free["adv_rank"] <= tier.keep)
+            joins = free["adv_rank"] <= tier.size
+            for ticker in free["ticker"][stays | joins]:
                 placed[ticker] = index
-            floor_size = tier.size
         member = frame[frame["ticker"].isin(placed)].copy()
         member["tier"] = member["ticker"].map(lambda t: tiers[placed[t]].name)
         member["role"] = member["ticker"].map(lambda t: tiers[placed[t]].role)

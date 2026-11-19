@@ -289,9 +289,10 @@ Own scores over the corpus: `uv run python -m scoring.cli plan|run --run|status`
 
 ## 9a. Intraday lane (1m bars)
 
-A liquid subuniverse with 1-minute bars: the top 300 US common stocks by median
-daily dollar volume (re-ranked each quarter, with hysteresis: T1 = 100 traded
-names, T2 = 200 for training breadth), 38 context ETFs, GSPC/NDX/VIX, four FX
+A liquid subuniverse with 1-minute bars: about 355 US common stocks by median
+daily dollar volume (re-ranked each quarter, with a buffer: T1 traded names
+join within rank 100 and stay within 130, T2 training breadth joins within 300
+and stays within 390, so counts float), 38 context ETFs, GSPC/NDX/VIX, four FX
 pairs and eight ISA-eligible LSE ETFs. The lists and rules live in
 `intraday_universe.toml`; `build_intraday_universe.py` (local, seconds) writes
 `intraday/tickers_INTRADAY.parquet` (current members) and
@@ -332,7 +333,7 @@ vendor's 1m volume mishandles the closing cross, and every run rebuilds a fix
 against the daily volume (`intraday_volume.py`, `--volume-fix`;
 `EODHD_INTRADAY_DATA_MANIFEST.md` caveat 2). `sync push` includes the bars
 (since 2026-11-13).
-Scheduled by `eodhd-intraday-1m-daily` (06:00 Tue-Sat), separate from the 05:00
+Scheduled by `eodhd-intraday-1m-daily` (12:00 Tue-Sat), separate from the 05:00
 end-of-day job.
 
 ## 10. Typical run order (per-ticker scripts)

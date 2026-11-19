@@ -92,9 +92,9 @@ NVDA 2024-06-05: close 1224.4, volume 528.4M (10x).
 | # | Decision | Choice |
 |---|---|---|
 | D1 | History start | 2016-01-01 (US 1m reaches 2004; deepen later only if a model needs it) |
-| D2 | Breadth tier T2 | Included (ranks 101 to 300, training only) |
+| D2 | Breadth tier T2 | Included (joins at ranks 101 to 300, training only) |
 | D3 | Google Drive | Pushed with the rest of the root since 2026-11-13: the quota check showed 5.4 TB free against 8 GB of bars, and the owner chose to push. The exclude option stays in `storage/engine.py` (empty by default). |
-| D4 | Scheduling | A separate job `eodhd-intraday-1m-daily` at 06:00 London, Tuesday to Saturday (section 9) |
+| D4 | Scheduling | A separate job `eodhd-intraday-1m-daily` at 12:00 London (06:00 until 2026-11-19), Tuesday to Saturday (section 9) |
 | D5 | Lane shape | One lane `intraday` with one dataset kind `bars_1m`, opt-in like `fundamentals` (not part of the default refresh or `--fast`) |
 
 ## 4. Universe
@@ -105,8 +105,8 @@ spends no API units.
 
 | Tier | Rule | Count | Role |
 |---|---|---|---|
-| `T1` | US common stocks (us_common and us_extended), price at least $5, at least 200 trading days in the trailing 365 calendar days, ranked by median daily dollar volume. A name joins at rank 100 or better and stays until it falls below rank 130. | 100 | trade |
-| `T2` | Same ranking, next 200 names. A name joins at rank 300 or better and stays until it falls below rank 390. | 200 | training breadth |
+| `T1` | US common stocks (us_common and us_extended), price at least $5, at least 200 trading days in the trailing 365 calendar days, ranked by median daily dollar volume. A name joins at rank 100 or better and stays until it falls below rank 130. | about 120 | trade |
+| `T2` | Same ranking, below T1. A name joins at rank 300 or better and stays until it falls below rank 390. | about 235 | training breadth |
 | `context` | Curated US ETFs in groups: broad, sectors, themes, rates and credit, commodities, international, volatility and crypto | 38 | signal only (no UK KID) |
 | `index` | GSPC, NDX, VIX | 3 | signal only |
 | `fx` | GBPUSD, EURUSD, USDJPY, USDCNH | 4 | signal only |
@@ -150,7 +150,15 @@ The two rules changed 326 of 15,532 member-quarters on 2026-11-13.
 
 **Point in time.** Stock tiers are re-ranked at every quarter start
 (1 Jan, 1 Apr, 1 Jul, 1 Oct) from the trailing year that ends the day before.
-Hysteresis compares against the previous quarter's tier.
+Hysteresis compares against the previous quarter's tier. It is a buffer
+rule, so tier counts float: every name ranked within `size` joins, and an
+incumbent also stays while ranked within `keep` (2026Q4: T1 120, T2 235, 355
+stocks). Until 2026-11-19 the code instead filled a fixed count with
+incumbents first, so once enough incumbents ranked within `keep` no newcomer
+could join, however high it ranked. Every quarter 12 to 48 of the top 300
+were left out (2026Q4: CLS at rank 134, APH 166, PWR 177, CRWD 265), against
+the rule in the table above. The fix took the lane from 549 to 693 pairs
+ever included.
 `universe_membership.parquet` keeps one row per quarter and member, so a
 backtest can ask who was a member on any date.
 
@@ -432,7 +440,7 @@ The job, built in cut 2:
 |---|---|
 | id | `eodhd-intraday-1m-daily` |
 | steps | `eodhd refresh intraday --datasets bars_1m --run`, then `eodhd reindex`, then `sync push --run` |
-| trigger | daily at 06:00 London, Tuesday to Saturday |
+| trigger | daily at 12:00 London, Tuesday to Saturday (06:00 until 2026-11-19, open check 7) |
 | logon | logged-off (S4U), enabled by the owner from an elevated terminal |
 | policy | stop on first failure, skip on overlap, timeout 3 hours |
 
@@ -488,8 +496,16 @@ about 65,000 units in all, 477M bars, 4,312 files, 8.4 GB, 589 pairs in state.
 5. **Survivorship before 2018** (section 4).
 6. **Same-day round trips in the ISA cash account** need checking with IBKR.
 7. **Publication lag:** more than 3.75 h after the regular close (section 2).
-   Check whether the previous session is complete by the 06:00 job; the 3-day
-   top-up overlap self-heals a late day either way.
+   Checked 2026-11-19: at the 06:00 London job the same 150 of 350 pairs
+   (SPY, QQQ, AMD, ABBV, ...) lacked the previous session on 11-17 and 11-18,
+   while Friday's and Monday's sessions were complete. The top-up overlap
+   filled them a day later, but `coverage_through` claimed the missing day.
+   Since 2026-11-19 a window ending within `VENDOR_LAG_DAYS` (4) of the run
+   date holds coverage only through its newest bar, and the job runs at 12:00
+   London, still before the US regular session (14:30 London). At 12:00 the
+   LSE session is half done and the US pre-market (from 09:00 London) has
+   begun, so a run may store part of the current day; the next run's overlap
+   completes it.
 8. **Unprobed symbols** (resolved by the backfill): USDCNH.FOREX and all
    eight UK ETFs return bars; every LSE pair starts 2021-10-12. No pair was
    `not_found`.
@@ -569,6 +585,15 @@ No real backfill.
 - the volume fix (open check 1): `intraday_volume.py`, `--volume-fix`, the
   consolidated `bars_1m_adj.volume`, the `volume_fix` QC line; about 480
   units of tick probes.
+
+**Cut 5** (done 2026-11-19, after the first week of scheduled runs)
+- the tier buffer rule (section 4): newcomers within `size` always join;
+  144 pairs added (408 current members, 355 of them stocks), backfilled the
+  same night: 1,755 requests, 8,775 units, 0 failed, 52.5M bars; the volume
+  fix then covered 1,137,161 US pair-days, 98.3% consolidated;
+- coverage held to the newest bar for recent windows (`VENDOR_LAG_DAYS`,
+  open check 7);
+- the job moved to 12:00 London (open check 7).
 
 **Next (not started)**
 - the blive parity week (open check 4);

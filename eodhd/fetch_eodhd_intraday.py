@@ -7,7 +7,9 @@ one end. A run goes in this order, so a capped run always keeps every pair
 current before it fills any history:
 
 1. top-up of pairs that already have coverage (re-reading the last
-   ``OVERLAP_DAYS`` days for late corrections);
+   ``OVERLAP_DAYS`` days for late corrections; a recent window holds coverage
+   only through its newest bar, so a session the vendor has not published yet
+   is asked for again next run, see ``VENDOR_LAG_DAYS``);
 2. the newest window of pairs with no state yet;
 3. history windows across all pairs, newest window first.
 
@@ -78,6 +80,13 @@ INTERVAL = "1m"
 UNITS_PER_REQUEST = 5
 WINDOW_DAYS = 118  # the API caps a 1m request at 120 days
 OVERLAP_DAYS = 3
+#: A window ending within this many days of the run's ``to_date`` claims
+#: coverage only through its newest bar: EODHD publishes the previous session
+#: for some names hours later than others (2026-11-18: 150 of 350 pairs were
+#: still missing at 06:00 UTC), so a recent window without that session must
+#: not mark it held. Coverage still advances to ``to_date - VENDOR_LAG_DAYS``
+#: so a halted or delisted member's top-up stays one short window.
+VENDOR_LAG_DAYS = 4
 #: Consecutive empty history windows (each ~4 months) that end a backfill. Bars
 #: are never requested before a pair's first daily price (the universe build
 #: clips fetch_from), so this is only the backstop for vendor-side history
@@ -534,6 +543,20 @@ class Window:
         return (self.ticker, self.exchange)
 
 
+def covered_through(window_end: date, newest_bar: date | None, to_date: date) -> date:
+    """How far a successful window may extend ``coverage_through``.
+
+    A window that ended ``VENDOR_LAG_DAYS`` or more before ``to_date`` is
+    settled: what it did not return will not come. A more recent one is held
+    only through its newest bar (the exchange-local session date, which never
+    overstates the UTC span), and at least through ``to_date - VENDOR_LAG_DAYS``.
+    """
+    settled = to_date - timedelta(days=VENDOR_LAG_DAYS)
+    if window_end <= settled:
+        return window_end
+    return min(window_end, max(newest_bar or settled, settled))
+
+
 def chunk_down(
     newest: date, oldest: date, days: int = WINDOW_DAYS
 ) -> list[tuple[date, date]]:
@@ -850,7 +873,9 @@ def execute(
             if p.status in {"error", "not_found"}:
                 p.status, p.last_error = "", ""
             p.coverage_from = min(filter(None, [p.coverage_from, window.start]))
-            p.coverage_through = max(filter(None, [p.coverage_through, window.end]))
+            newest = None if bars.empty else date.fromisoformat(bars["date"].max())
+            through = covered_through(window.end, newest, to_date)
+            p.coverage_through = max(filter(None, [p.coverage_through, through]))
             if not bars.empty:
                 streak[window.key] = 0
                 first, last = date.fromisoformat(
