@@ -316,3 +316,152 @@ def test_dry_run_does_not_need_api_key(tmp_path: Path, monkeypatch, capsys) -> N
     assert bulk.main(["bogus"]) == 2
     assert bulk.main(["news"]) == 0
     assert "no bulk-refreshable dataset" in capsys.readouterr().out
+
+
+def test_has_gap_counts_business_days() -> None:
+    # Saturday coverage meeting a Monday window: no business day is missing.
+    assert not bulk.has_gap(pd.Timestamp("2026-10-03"), pd.Timestamp("2026-10-05"))
+    assert not bulk.has_gap(pd.Timestamp("2026-11-13"), pd.Timestamp("2026-11-16"))
+    # Thursday coverage meeting a Monday window leaves Friday unfetched.
+    assert bulk.has_gap(pd.Timestamp("2026-11-12"), pd.Timestamp("2026-11-16"))
+
+
+class _Resp:
+    def __init__(self, status: int, body) -> None:
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+class _FakeBulk:
+    """Serves bulk event rows by (exchange, date); exchange 'XX' always fails."""
+
+    def __init__(self, rows: dict[tuple[str, str], list[dict]]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, str]] = []
+
+    def get(self, url: str, params: dict, timeout: int) -> _Resp:
+        exchange = url.rsplit("/", 1)[-1]
+        self.calls.append((exchange, params["date"]))
+        if exchange == "XX":
+            return _Resp(500, {"error": "boom"})
+        return _Resp(200, self.rows.get((exchange, params["date"]), []))
+
+
+def _split_lane(tmp_path: Path, state: pd.DataFrame):
+    import eodhd_datasets as reg  # type: ignore
+
+    lane = reg.LaneConfig(
+        name="tmp_events",
+        region="US",
+        asset_class="common",
+        datasets=(reg.event_spec("splits", "x.py"),),
+        root=tmp_path,
+    )
+    state.to_csv(tmp_path / "splits_fetch_state.csv", index=False)
+    return lane, lane.datasets[0]
+
+
+def _run(lane, ds, session, as_of: str) -> dict:
+    return bulk.process_dataset(
+        lane,
+        ds,
+        session=session,
+        cache={},
+        as_of=pd.Timestamp(as_of),
+        max_days=7,
+        now=f"{as_of}T05:00:00Z",
+        dry_run=False,
+    )
+
+
+def test_event_scan_advances_quiet_pairs_and_keeps_late_listings(
+    tmp_path: Path,
+) -> None:
+    # Regression (2026-11-22): coverage moved only for pairs with an event, so a
+    # pair quiet for --days fell out of the window and its next event (SNDK's
+    # 8:1 split on 2026-11-20) was dropped as a hole.
+    state = pd.DataFrame(
+        {
+            "ticker": ["SNDK", "QUIET", "OLD", "FAIL"],
+            "exchange": ["US", "US", "US", "XX"],
+            "coverage_through": [
+                "2026-11-13",
+                "2026-11-13",
+                "2026-10-02",
+                "2026-11-13",
+            ],
+            "latest_data_date": [None, "2024-05-01", None, None],
+            "status": ["empty", "ok", "empty", "empty"],
+        }
+    )
+    lane, ds = _split_lane(tmp_path, state)
+    sndk = {
+        "code": "SNDK",
+        "exchange": "US",
+        "date": "2026-11-20",
+        "split": "8.000000/1.000000",
+    }
+    old = {"code": "OLD", "exchange": "US", "date": "2026-11-18", "split": "1/10"}
+    fake = _FakeBulk({("US", "2026-11-20"): [sndk], ("US", "2026-11-18"): [old]})
+
+    s = _run(lane, ds, fake, "2026-11-22")  # a Sunday: window Mon 11-16..Fri 11-20
+    assert s["new_rows"] == 1 and s["splits_seen"] == 1 and s["skipped"] == 1
+    hist = pd.read_parquet(tmp_path / "splits_history.parquet")
+    assert list(zip(hist["ticker"], hist["ex_date"])) == [("SNDK", "2026-11-20")]
+    st = pd.read_csv(tmp_path / "splits_fetch_state.csv").set_index("ticker")
+    assert st.at["SNDK", "coverage_through"] == "2026-11-20"
+    assert st.at["SNDK", "latest_data_date"] == "2026-11-20"
+    # quiet pair: scanned through the window although it had no split
+    assert st.at["QUIET", "coverage_through"] == "2026-11-20"
+    assert st.at["QUIET", "latest_data_date"] == "2024-05-01"
+    assert st.at["QUIET", "status"] == "ok"
+    # a real hole is still left for the per-ticker refresh, untouched
+    assert st.at["OLD", "coverage_through"] == "2026-10-02"
+    # a failed call is not "no events": that exchange's pairs stay put
+    assert st.at["FAIL", "coverage_through"] == "2026-11-13"
+    assert "XX" in s["note"]
+
+    # Next run: the vendor lists a split for QUIET on an already-scanned day.
+    late = {"code": "QUIET", "exchange": "US", "date": "2026-11-18", "split": "2/1"}
+    fake.rows[("US", "2026-11-18")] = [late]
+    s2 = _run(lane, ds, fake, "2026-11-23")
+    assert s2["new_rows"] == 1  # the late QUIET split; SNDK's repeat is not new
+    hist = pd.read_parquet(tmp_path / "splits_history.parquet")
+    assert sorted(zip(hist["ticker"], hist["ex_date"])) == [
+        ("QUIET", "2026-11-18"),
+        ("SNDK", "2026-11-20"),
+    ]
+    st = pd.read_csv(tmp_path / "splits_fetch_state.csv").set_index("ticker")
+    assert st.at["QUIET", "coverage_through"] == "2026-11-23"
+    assert st.at["QUIET", "latest_data_date"] == "2026-11-18"
+
+
+def test_quiet_event_pair_stays_in_the_window_across_weeks(tmp_path: Path) -> None:
+    state = pd.DataFrame(
+        {
+            "ticker": ["AAA"],
+            "exchange": ["US"],
+            "coverage_through": ["2026-10-02"],
+            "latest_data_date": [None],
+            "status": ["empty"],
+        }
+    )
+    lane, ds = _split_lane(tmp_path, state)
+    fake = _FakeBulk({})
+    for day in pd.bdate_range("2026-10-05", "2026-11-20"):
+        assert _run(lane, ds, fake, day.date().isoformat())["skipped"] == 0
+    split = {"code": "AAA", "exchange": "US", "date": "2026-11-23", "split": "4/1"}
+    fake.rows[("US", "2026-11-23")] = [split]
+    assert _run(lane, ds, fake, "2026-11-23")["new_rows"] == 1
+
+
+def test_bulk_fetch_failure_is_not_an_empty_day() -> None:
+    cache: dict = {}
+    fake = _FakeBulk({})
+    assert bulk.bulk_fetch(fake, "XX", "2026-11-20", "splits", cache) is None
+    assert bulk.bulk_fetch(fake, "US", "2026-11-20", "splits", cache) == []
+    assert bulk.bulk_fetch(fake, "XX", "2026-11-20", "splits", cache) is None
+    assert fake.calls == [("XX", "2026-11-20"), ("US", "2026-11-20")]  # cached

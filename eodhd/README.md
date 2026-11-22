@@ -200,9 +200,22 @@ uv run python eodhd/cli.py refresh --fast --days 3 --run # only fill the last 3 
 It pulls a whole exchange's latest day(s) in a single `/eod-bulk-last-day/{EXCHANGE}`
 call (shared across lanes on the same exchange), filters to each lane's universe,
 and **append-merges** only genuinely-new rows — existing rows are never rewritten,
-so multiple dividends on one ex-date are preserved. State advances only to each
-pair's actual newest bar (never past real data), so nothing is ever skipped. The
-news top-up (capped, newest days first) runs after the bulk step.
+so multiple dividends on one ex-date are preserved. Price state advances only to
+each pair's actual newest bar (never past real data). Dividends and splits re-read
+the whole `--days` window every run, so an event the vendor lists a few days late
+still lands, and a complete scan advances every gap-free pair's coverage to the
+last scanned day even without an event (a bulk event call lists all of an
+exchange's events that day; a failed call advances nothing). The news top-up
+(capped, newest days first) runs after the bulk step.
+
+> **Until 2026-11-22** event coverage advanced only for pairs that had an event,
+> so a pair quiet for `--days` fell behind the window and its later events were
+> dropped as "skipped". With the daily job bulk-only since 2026-10-03, almost no
+> split or dividend from 2026-10-05 on was recorded. All lanes were caught up on
+> 2026-11-22: the US lanes by bulk (`--days 51`, 70 calls), the European lanes
+> per ticker (`refresh uk_eu uk_eu_etf --datasets splits,dividends --run`,
+> cheaper there than bulk across 11 exchanges); split names got a per-ticker
+> prices `--full-refresh` so their `adjusted_close` history is re-adjusted.
 
 **Cadence.** Run `refresh --fast --run` at least every `--days` (default 7): the
 bulk path only fills that many days back and never hole-punches, so a pair that

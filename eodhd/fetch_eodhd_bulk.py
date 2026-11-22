@@ -16,7 +16,16 @@ Scope / caveat:
   re-adjust historical ``adjusted_close`` after a split. Tickers that split on a
   fetched day are reported so they can get a periodic per-ticker ``--full-refresh``.
 - A pair whose gap to today exceeds ``--days`` is skipped (never hole-punched) and
-  reported; run the normal per-ticker refresh for those.
+  reported; run the normal per-ticker refresh for those. "Gap" counts business
+  days, so a Friday or Saturday coverage meeting a Monday window is no hole.
+- Events (dividends, splits) re-read the whole ``--days`` window every run, so an
+  event the vendor posts a few days late still lands (the merge drops repeats),
+  and a complete scan advances every gap-free pair's coverage even when it had
+  no event. Before 2026-11-22 coverage moved only for pairs that had an event,
+  so a pair quiet for ``--days`` fell out of the window and every later event of
+  it was dropped as a hole: from 2026-10-03 (when the daily job became bulk-only)
+  almost no split or dividend was recorded (SNDK's 8:1 split of 2026-11-20,
+  AAPL's and MSFT's November dividends).
 - Only lanes with a bulk-refreshable dataset are valid targets (see
   ``BULK_LANES``); the day-keyed news corpus is refreshed by its own crawler.
 - Without ``--run`` it is a dry-run: with an API key it queries the bulk
@@ -49,6 +58,9 @@ from fetch_eodhd_eu_fundamentals import _get_api_key  # noqa: E402
 BULK_URL = "https://eodhd.com/api/eod-bulk-last-day"
 HTTP_TIMEOUT = 120
 BULK_KINDS = ("prices", "dividends", "splits")
+#: Event kinds: most pairs have no event on a given day, so a complete bulk scan
+#: of a day is itself the evidence that a pair had none (see ``advance_state``).
+EVENT_KINDS = ("dividends", "splits")
 #: EODHD bills one /eod-bulk-last-day call as this many API units.
 BULK_UNITS = 100
 #: Lanes with at least one bulk-refreshable dataset (registry order). A lane
@@ -218,13 +230,17 @@ def gap_dates(
     max_days: int,
     *,
     freshness_col: str = "coverage_through",
+    rescan: bool = False,
 ) -> list[str]:
     """Business days to bulk-fetch: from the oldest last-data date (+1), capped
-    at ``max_days`` most-recent, through ``as_of`` inclusive."""
+    at ``max_days`` most-recent, through ``as_of`` inclusive.
+
+    ``rescan`` (event kinds) always takes the whole ``max_days`` window, so an
+    event the vendor lists for an already-scanned day still arrives."""
     cov = _freshness_series(state, freshness_col)
     min_cov = cov.min()
     floor = as_of.normalize() - pd.Timedelta(days=max_days - 1)
-    if pd.isna(min_cov):
+    if rescan or pd.isna(min_cov):
         start = floor
     else:
         start = max(min_cov.normalize() + pd.Timedelta(days=1), floor)
@@ -244,18 +260,28 @@ def coverage_map(
     return result
 
 
+def has_gap(coverage: pd.Timestamp, earliest_fetched: pd.Timestamp) -> bool:
+    """True when a business day lies after ``coverage`` and before the first
+    fetched day, i.e. merging the window would leave a hole."""
+    previous_bday = earliest_fetched.normalize() - pd.offsets.BDay(1)
+    return coverage.normalize() < previous_bday
+
+
 def select_new_rows(
     normalized: pd.DataFrame,
     coverage: dict[Pair, pd.Timestamp],
     *,
     date_col: str,
     earliest_fetched: pd.Timestamp,
+    keep_rescanned: bool = False,
 ) -> tuple[pd.DataFrame, set[Pair]]:
     """Keep only in-universe rows dated after each pair's coverage.
 
-    Returns (new_rows, skipped_pairs). A pair whose coverage predates
-    ``earliest_fetched`` would leave a hole, so its rows are dropped and the pair
-    is reported as skipped (needs a per-ticker refresh).
+    Returns (new_rows, skipped_pairs). A pair whose coverage leaves a business
+    day unfetched before ``earliest_fetched`` would get a hole, so its rows are
+    dropped and the pair is reported as skipped (needs a per-ticker refresh).
+    ``keep_rescanned`` (event kinds) also keeps rows on or before the coverage:
+    a late-listed event for a scanned day; the merge drops exact repeats.
     """
     if normalized.empty:
         return normalized, set()
@@ -270,12 +296,12 @@ def select_new_rows(
         if pair not in coverage:
             continue  # not in our universe
         cov = coverage[pair]
-        if pd.notna(cov) and cov < earliest_fetched - pd.Timedelta(days=1):
+        if pd.notna(cov) and has_gap(cov, earliest_fetched):
             skipped.add(pair)
             continue  # gap too large -> would hole-punch; leave for per-ticker
         if pd.isna(dt):
             continue
-        if pd.isna(cov) or dt > cov:
+        if keep_rescanned or pd.isna(cov) or dt > cov:
             keep_idx.append(idx)
     new_rows = frame.loc[keep_idx].copy()
     new_rows[date_col] = new_rows[date_col].dt.date.astype(str)
@@ -313,14 +339,23 @@ def advance_state(
     *,
     new_max_by_pair: dict[Pair, str],
     now: str,
+    scanned: frozenset[Pair] | set[Pair] = frozenset(),
+    scanned_through: str | None = None,
 ) -> pd.DataFrame:
-    """Advance state only for pairs that received new data.
+    """Advance state for pairs that received new data, and for scanned pairs.
 
-    ``coverage_through`` and ``latest_data_date`` are set to the pair's *actual*
-    newest bar/event date -- never to ``as_of``. Advancing past real data would
-    make the next run skip a not-yet-posted day (e.g. today's close before the
-    market closes). Pairs with no new data are left untouched, so the next run's
-    gap window re-scans them (one cheap bulk call) with no risk of a hole.
+    For prices, ``coverage_through`` and ``latest_data_date`` are set to the
+    pair's *actual* newest bar date -- never to ``as_of``. Advancing past real
+    data would make the next run skip a not-yet-posted day (e.g. today's close
+    before the market closes). Price pairs with no new bar are left untouched.
+
+    Event kinds also pass ``scanned``: the pairs a complete bulk scan reached
+    without a gap. A successful bulk event call lists every event its exchange
+    had that day, so a scanned pair without one had none, and its
+    ``coverage_through`` moves to ``scanned_through`` (the last scanned day);
+    ``rescan`` keeps the last ``--days`` under watch for late listings. Its
+    ``latest_data_date`` only ever moves forward (an announced future ex-date
+    stays).
     """
     s = state.reset_index(drop=True).copy()
     for col in (
@@ -338,15 +373,31 @@ def advance_state(
         s[col] = s[col].astype(object)
     for i in range(len(s)):
         pair = (str(s.at[i, "ticker"]).upper(), str(s.at[i, "exchange"]).upper())
-        if pair not in new_max_by_pair:
+        new = new_max_by_pair.get(pair)
+        through = scanned_through if pair in scanned else None
+        if new is None and through is None:
             continue
-        s.at[i, "previous_data_date"] = s.at[i, "latest_data_date"]
-        s.at[i, "latest_data_date"] = new_max_by_pair[pair]
-        s.at[i, "coverage_through"] = new_max_by_pair[pair]
+        if new is not None:
+            prev = s.at[i, "latest_data_date"]
+            if not _is_date(prev) or new > str(prev):
+                s.at[i, "previous_data_date"] = prev
+                s.at[i, "latest_data_date"] = new
+            s.at[i, "status"] = "ok"
+        if through is None:
+            s.at[i, "coverage_through"] = new
+        else:
+            s.at[i, "coverage_through"] = max(
+                str(d)
+                for d in (s.at[i, "coverage_through"], new, through)
+                if _is_date(d)
+            )
         s.at[i, "fetched_at"] = now
-        s.at[i, "status"] = "ok"
         s.at[i, "mode"] = "bulk"
     return s
+
+
+def _is_date(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 # --------------------------------------------------------------------------- #
@@ -357,12 +408,15 @@ def bulk_fetch(
     exchange: str,
     date: str,
     kind: str,
-    cache: dict[tuple[str, str, str], list[dict]],
-) -> list[dict]:
+    cache: dict[tuple[str, str, str], list[dict] | None],
+) -> list[dict] | None:
     """One /eod-bulk-last-day call (cached per exchange/date/kind).
 
-    ``session=None`` means offline (a dry-run without an API key): no request is
-    made and nothing is cached, so the call count stays honest.
+    Returns the rows, or ``None`` when the call failed (network error, non-200,
+    or a body that is not a list): an event scan must not read a failed call as
+    "no events that day". ``session=None`` means offline (a dry-run without an
+    API key): no request is made and nothing is cached, so the call count stays
+    honest.
     """
     if session is None:
         return []
@@ -370,18 +424,18 @@ def bulk_fetch(
     if key in cache:
         return cache[key]
     params: dict[str, str] = {"fmt": "json", "date": date}
-    if kind in ("dividends", "splits"):
+    if kind in EVENT_KINDS:
         params["type"] = kind
+    rows: Any
     try:
         resp = session.get(
             f"{BULK_URL}/{exchange}", params=params, timeout=HTTP_TIMEOUT
         )
-    except requests.RequestException:
-        cache[key] = []
-        return []
-    rows = resp.json() if resp.status_code == 200 else []
+        rows = resp.json() if resp.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        rows = None
     if not isinstance(rows, list):
-        rows = []
+        rows = None
     cache[key] = rows
     return rows
 
@@ -395,7 +449,7 @@ def process_dataset(
     ds: DatasetSpec,
     *,
     session: requests.Session | None,
-    cache: dict[tuple[str, str, str], list[dict]],
+    cache: dict[tuple[str, str, str], list[dict] | None],
     as_of: pd.Timestamp,
     max_days: int,
     now: str,
@@ -426,7 +480,10 @@ def process_dataset(
         return summary
 
     state = pd.read_csv(state_path)
-    dates = gap_dates(state, as_of, max_days, freshness_col=ds.freshness_col)
+    events = ds.kind in EVENT_KINDS
+    dates = gap_dates(
+        state, as_of, max_days, freshness_col=ds.freshness_col, rescan=events
+    )
     if not dates:
         summary["note"] = "up to date"
         return summary
@@ -437,21 +494,37 @@ def process_dataset(
     if planned is not None:
         planned.update((ex, d, ds.kind) for ex in exchanges for d in dates)
     frames = []
+    failed: set[str] = set()
     for exchange in exchanges:
         for date in dates:
             rows = bulk_fetch(session, exchange, date, ds.kind, cache)
-            if rows:
+            if rows is None:
+                failed.add(exchange)
+            elif rows:
                 frames.append(NORMALIZERS[ds.kind](rows))
     normalized = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     cov = coverage_map(state, freshness_col=ds.freshness_col)
     new_rows, skipped = select_new_rows(
-        normalized, cov, date_col=date_col, earliest_fetched=earliest
+        normalized,
+        cov,
+        date_col=date_col,
+        earliest_fetched=earliest,
+        keep_rescanned=events,
     )
     summary["skipped"] = len(skipped)
-    if ds.kind == "splits" and not new_rows.empty:
-        summary["splits_seen"] = int(
-            new_rows[["ticker", "exchange"]].drop_duplicates().shape[0]
+    # Event pairs the scan reached without a gap, on exchanges whose every call
+    # succeeded: their coverage moves to the last scanned day, event or not.
+    scanned: set[Pair] = set()
+    if events:
+        scanned = {
+            pair
+            for pair, c in cov.items()
+            if pair[1] not in failed and pd.notna(c) and not has_gap(c, earliest)
+        }
+    if failed:
+        summary["note"] = (
+            f"bulk call failed on {', '.join(sorted(failed))}; those pairs stay put"
         )
 
     new_max_by_pair: dict[Pair, str] = {}
@@ -463,15 +536,30 @@ def process_dataset(
                 grp[date_col].max()
             )
     summary["new_rows"] = int(len(new_rows))
-    summary["pairs_advanced"] = len(new_max_by_pair)
+    summary["pairs_advanced"] = len(scanned | set(new_max_by_pair))
     summary["dates_fetched"] = f"{dates[0]}..{dates[-1]} ({len(dates)}d)"
-    if dry_run or new_rows.empty:
+    if dry_run or (new_rows.empty and not scanned):
         return summary
 
     existing = pd.read_parquet(out_path) if out_path.exists() else pd.DataFrame()
     merged = merge_output(existing, new_rows, OUTPUT_KEYS[ds.kind])
-    _atomic.to_parquet(merged, out_path, index=False)
-    updated_state = advance_state(state, new_max_by_pair=new_max_by_pair, now=now)
+    # merge_output appends after the existing rows, so the tail is what a rescan
+    # really added (repeats of already-held events are not counted).
+    added = merged.iloc[len(existing) :]
+    summary["new_rows"] = int(len(added))
+    if ds.kind == "splits" and not added.empty:
+        summary["splits_seen"] = int(
+            added[["ticker", "exchange"]].drop_duplicates().shape[0]
+        )
+    if not added.empty:
+        _atomic.to_parquet(merged, out_path, index=False)
+    updated_state = advance_state(
+        state,
+        new_max_by_pair=new_max_by_pair,
+        now=now,
+        scanned=scanned,
+        scanned_through=dates[-1],
+    )
     _atomic.to_csv(updated_state, state_path, index=False)
     return summary
 
@@ -551,7 +639,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.run:
         session = requests.Session()
         session.params = {"api_token": _get_api_key()}  # raises without a key
-    cache: dict[tuple[str, str, str], list[dict]] = {}
+    cache: dict[tuple[str, str, str], list[dict] | None] = {}
     planned: set[tuple[str, str, str]] = set()
 
     mode = "RUN" if args.run else "DRY-RUN"
