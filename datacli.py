@@ -282,6 +282,48 @@ class RegistersPlugin(SourcePlugin):
             return int(exc.code or 0)
 
 
+class AlpacaPlugin(SourcePlugin):
+    """alpaca source -- Alpaca market data (official auction prints)."""
+
+    name = "alpaca"
+    summary = "Alpaca market data: official opening and closing auction prints (SIP, from 2016)"
+
+    def command_names(self) -> list[str]:
+        return ["status", "fetch", "qc"]
+
+    def detail(self) -> str:
+        return "1 dataset"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import alpaca.cli as alpaca_cli
+
+        try:
+            return int(alpaca_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
+class LinkagePlugin(SourcePlugin):
+    """linkage source -- point-in-time links derived from the other sources."""
+
+    name = "linkage"
+    summary = "Derived point-in-time links between names: ETF betas, auction abnormal volume and co-spikes"
+
+    def command_names(self) -> list[str]:
+        return ["status", "build", "qc"]
+
+    def detail(self) -> str:
+        return "3 datasets"
+
+    def run(self, command: str, argv: list[str]) -> int:
+        import linkage.cli as linkage_cli
+
+        try:
+            return int(linkage_cli.main([command, *argv]) or 0)
+        except SystemExit as exc:
+            return int(exc.code or 0)
+
+
 SOURCES: dict[str, SourcePlugin] = {
     "eodhd": EodhdPlugin(),
     "macro": MacroPlugin(),
@@ -290,6 +332,8 @@ SOURCES: dict[str, SourcePlugin] = {
     "sec": SecPlugin(),
     "borrow": BorrowPlugin(),
     "registers": RegistersPlugin(),
+    "alpaca": AlpacaPlugin(),
+    "linkage": LinkagePlugin(),
 }
 
 

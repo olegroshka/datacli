@@ -60,9 +60,21 @@ def connect() -> Any:
     except Exception:
         pass  # registers is optional too
     try:
+        from alpaca import views as alpaca_views
+
+        alpaca_views.register(con)
+    except Exception:
+        pass  # alpaca is optional too
+    try:
         from positioning import views as positioning_views
 
         positioning_views.register(con)
+    except Exception:
+        pass  # derived views are optional
+    try:
+        from linkage import views as linkage_views
+
+        linkage_views.register(con)
     except Exception:
         pass  # derived views are optional
     return con
@@ -120,6 +132,20 @@ def schema_text(con: Any) -> str:
             from registers import views as registers_views
 
             text += "\n\n" + registers_views.schema_snippet()
+        except Exception:
+            pass
+    if _has_view(con, "alpaca_auctions"):
+        try:
+            from alpaca import views as alpaca_views
+
+            text += "\n\n" + alpaca_views.schema_snippet()
+        except Exception:
+            pass
+    if any(_has_view(con, name) for name in ("etf_betas", "auction_abnormal", "auction_cospike")):
+        try:
+            from linkage import views as linkage_views
+
+            text += "\n\n" + linkage_views.schema_snippet()
         except Exception:
             pass
     has_ladder = _has_view(con, "positioning_short_ladder")

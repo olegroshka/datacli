@@ -226,6 +226,12 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
     ("registers", "fetch"): ("--run", "--market"),
     ("registers", "status"): ("--json",),
     ("registers", "qc"): (),
+    ("alpaca", "fetch"): ("--run", "--full", "--tickers", "--to"),
+    ("alpaca", "status"): ("--json",),
+    ("alpaca", "qc"): ("--crosscheck",),
+    ("linkage", "build"): ("--run", "--full", "--dataset"),
+    ("linkage", "status"): ("--json",),
+    ("linkage", "qc"): ("--dataset",),
     ("sync", "push"): ("--run", "--keep-going", "--with-caches"),
     ("sync", "status"): ("--with-caches",),
 }
@@ -313,6 +319,30 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
     ("sec", "qc"): (
         "sec qc",
         "read-only quality checks over the stored 13F archives",
+    ),
+    ("alpaca", "fetch"): (
+        "alpaca fetch [--full] [--tickers LIST] [--to DATE] --run",
+        "official opening and closing auction prints from Alpaca (needs APCA_API_KEY_ID / APCA_API_SECRET_KEY; skips the quiet window)",
+    ),
+    ("alpaca", "status"): (
+        "alpaca status [--json]",
+        "read-only status of the stored auction prints",
+    ),
+    ("alpaca", "qc"): (
+        "alpaca qc [--crosscheck]",
+        "read-only quality checks over the stored auctions (offline)",
+    ),
+    ("linkage", "build"): (
+        "linkage build [--dataset etf_betas|auction_abnormal|auction_cospike] [--full] --run",
+        "rebuild the point-in-time ETF betas and auction co-spike links from local data (offline)",
+    ),
+    ("linkage", "status"): (
+        "linkage status [--json]",
+        "read-only status of the derived linkage datasets",
+    ),
+    ("linkage", "qc"): (
+        "linkage qc [--dataset etf_betas|auction_abnormal|auction_cospike]",
+        "read-only quality checks over the stored linkage snapshots",
     ),
     ("sync", "push"): (
         "sync push [--with-caches] [--keep-going] --run",

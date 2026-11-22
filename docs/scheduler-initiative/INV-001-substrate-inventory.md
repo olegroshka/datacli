@@ -30,7 +30,7 @@ referenced_by: [BOOTSTRAP-SCHEDULER]
 | INV-001 | `INV-001-substrate-inventory.md` | STABLE | 1.4 | artefact register, health, priority queue |
 | KB-001 | `KB-001-initiative-charter.md` | STABLE | 1.0 | intent, scope, scenarios, success, invariants |
 | KB-002 | `KB-002-current-system.md` | STABLE | 1.2 | verified facts about current datacli execution |
-| INV-002 | `INV-002-command-capability.md` | STABLE | 1.2 | schedulable command capability matrix |
+| INV-002 | `INV-002-command-capability.md` | STABLE | 1.3 | schedulable command capability matrix |
 | INV-003 | `INV-003-implementation-work-packages.md` | STABLE | 1.3 | dependency-ordered technical expansion |
 | INV-004 | `INV-004-adversarial-scenarios.md` | STABLE | 1.4 | adversarial scenarios, corrected guarantees and failure-mode oracles |
 | DD-001 | `DD-001-scheduler-domain-contracts.md` | STABLE | 1.4 | domain records, ports, states, execution semantics |

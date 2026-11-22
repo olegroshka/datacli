@@ -1,0 +1,235 @@
+# Reviewed exceptions to the auctions universe (alpaca/universe.py).
+#
+# The store files a company's daily history under one symbol (often today's),
+# while Alpaca keys auctions by the security: a predecessor security (a merger,
+# a new holding company, an old share line) has its own history under its own
+# symbol, or under the same symbol at an earlier `asof`.
+#
+# [[alias]]  ticker  the store ticker whose span the segment fills
+#            symbol  the Alpaca symbol to ask for (dot spelling)
+#            until   last day of the segment (inclusive)
+#            from    first day (optional: default the ticker's span start)
+#            asof    the date Alpaca identifies the security by (optional: default `until`)
+#            note    why, and how it was checked
+# Every alias was verified on 2026-11-22: the closing cross matched the store's
+# daily close within 0.2% on every probed day of a week near each end of the
+# segment. The fetcher checks it again on every fetch and refuses a segment
+# whose closes match on fewer than [alpaca].alias_min_match of the days.
+#
+# [[listed]] ticker, auctions_from, note: the store has prices before a US
+#            exchange listing (OTC, or abroad), when there are no auctions.
+#            Nothing is fetched before `auctions_from` and coverage starts there.
+#
+# [[gap]]    ticker, from, until, note: a reviewed stretch inside the extent
+#            with no auctions (OTC between a delisting and a relisting). Its
+#            sessions are left out of the coverage measures.
+
+[[alias]]
+ticker = "VMW"
+symbol = "VMW"
+until = 2023-10-29
+asof = 2023-10-29
+note = "VMware: the security before 2023-10-30 is another Alpaca entity under the same symbol"
+
+[[alias]]
+ticker = "TEVA"
+symbol = "TEVA"
+until = 2026-09-13
+asof = 2026-09-13
+note = "Teva: the security before 2026-09-14 is another Alpaca entity under the same symbol"
+
+[[alias]]
+ticker = "FTI"
+symbol = "FTI"
+until = 2017-01-16
+asof = 2017-01-16
+note = "FMC Technologies before the TechnipFMC combination (same symbol, earlier entity)"
+
+[[alias]]
+ticker = "SHEL"
+symbol = "RDS.A"
+until = 2022-01-31
+asof = 2022-01-28
+note = "Royal Dutch Shell A shares before the single SHEL line"
+
+[[alias]]
+ticker = "BBWI"
+symbol = "LB"
+until = 2021-08-02
+asof = 2021-08-02
+note = "L Brands before the Bath & Body Works rename"
+
+[[alias]]
+ticker = "CHRD"
+symbol = "OAS"
+until = 2020-11-19
+asof = 2020-11-19
+note = "Oasis Petroleum before its 2020 reorganisation (no auctions in its OTC weeks)"
+
+[[alias]]
+ticker = "LIN"
+symbol = "PX"
+until = 2018-10-30
+asof = 2018-10-30
+note = "Praxair before the Linde plc listing"
+
+[[alias]]
+ticker = "DELL"
+symbol = "DVMT"
+until = 2018-12-27
+asof = 2018-12-27
+note = "the Class V tracking stock, which the store's DELL series holds before 2018-12-28"
+
+[[alias]]
+ticker = "BKR"
+symbol = "BHI"
+until = 2017-07-04
+asof = 2017-07-03
+note = "Baker Hughes Inc before the GE combination (BHGE, later BKR, follows by rename)"
+
+[[alias]]
+ticker = "DXC"
+symbol = "CSC"
+until = 2017-04-02
+asof = 2017-03-31
+note = "Computer Sciences before the DXC merger"
+
+[[alias]]
+ticker = "PSKY"
+symbol = "CBS"
+until = 2019-12-04
+asof = 2019-12-04
+note = "CBS, the first of three predecessor lines in the store's PSKY series"
+
+[[alias]]
+ticker = "PSKY"
+symbol = "VIAC"
+from = 2019-12-05
+until = 2022-02-16
+asof = 2022-02-15
+note = "ViacomCBS"
+
+[[alias]]
+ticker = "PSKY"
+symbol = "PARA"
+from = 2022-02-17
+until = 2025-08-06
+asof = 2025-08-06
+note = "Paramount Global before the Skydance merger"
+
+[[alias]]
+ticker = "VIAC"
+symbol = "CBS"
+until = 2019-12-04
+asof = 2019-12-04
+note = "CBS before the ViacomCBS merger"
+
+[[alias]]
+ticker = "VIAC"
+symbol = "PARA"
+from = 2022-02-17
+until = 2026-12-31
+asof = 2022-05-27
+note = "the store's VIAC series runs past the Paramount rename; clipped to the series end"
+
+[[alias]]
+ticker = "NLOK"
+symbol = "SYMC"
+until = 2019-11-04
+asof = 2019-11-04
+note = "Symantec before the NortonLifeLock rename"
+
+[[alias]]
+ticker = "VTRS"
+symbol = "MYL"
+until = 2020-11-11
+asof = 2020-11-18
+note = "Mylan before the Viatris combination"
+
+[[alias]]
+ticker = "CTRA"
+symbol = "COG"
+until = 2021-10-01
+asof = 2021-12-03
+note = "Cabot Oil & Gas before Coterra (CTRA itself has nothing for 2021-02-04 to 2021-10-01)"
+
+[[alias]]
+ticker = "APTV"
+symbol = "DLPH"
+until = 2017-11-16
+asof = 2020-10-02
+note = "Delphi Automotive before the Aptiv rename and spin-off"
+
+[[alias]]
+ticker = "CTL"
+symbol = "LUMN"
+from = 2020-09-18
+until = 2026-12-31
+asof = 2026-11-20
+note = "the store's CTL series runs past the 2020 rename to Lumen; clipped to the series end"
+
+[[alias]]
+ticker = "WFRD"
+symbol = "WFT"
+until = 2021-06-01
+asof = 2019-05-01
+note = "the old Weatherford, which the store's WFRD series holds before its 2019 reorganisation (S7, 2026-11-22)"
+
+[[alias]]
+ticker = "WBD"
+symbol = "DISCA"
+until = 2022-04-03
+asof = 2022-04-08
+note = "Discovery A shares before Warner Bros. Discovery"
+
+[[listed]]
+ticker = "FLUT"
+auctions_from = 2024-01-29
+note = "NYSE listing; before, an OTC ADR"
+
+[[listed]]
+ticker = "BMNR"
+auctions_from = 2025-06-05
+note = "NYSE American uplisting; before, OTC"
+
+[[listed]]
+ticker = "APLD"
+auctions_from = 2022-04-13
+note = "Nasdaq uplisting; before, OTC"
+
+[[listed]]
+ticker = "CLSK"
+auctions_from = 2020-01-27
+note = "Nasdaq uplisting; before, OTC"
+
+[[listed]]
+ticker = "FERG"
+auctions_from = 2021-03-09
+note = "NYSE listing; before, London and an OTC ADR"
+
+[[listed]]
+ticker = "ONDS"
+auctions_from = 2020-12-04
+note = "Nasdaq uplisting; before, OTC"
+
+[[listed]]
+ticker = "VST"
+auctions_from = 2017-05-10
+note = "NYSE listing; before, OTC after the reorganisation"
+
+[[listed]]
+ticker = "CELH"
+auctions_from = 2017-05-24
+note = "Nasdaq uplisting; before, OTC"
+
+[[gap]]
+ticker = "CHRD"
+from = 2020-10-01
+until = 2020-11-19
+note = "Oasis Petroleum's OTC weeks in its 2020 Chapter 11, before the new shares listed"
+
+[[gap]]
+ticker = "WFRD"
+from = 2019-05-20
+until = 2021-06-01
+note = "OTC between the NYSE delisting of the old shares and the Nasdaq listing of the new ones"

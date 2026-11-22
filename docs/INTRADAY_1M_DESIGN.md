@@ -480,7 +480,12 @@ about 65,000 units in all, 477M bars, 4,312 files, 8.4 GB, 589 pairs in state.
 1. **1m volume is not daily volume** (section 2). Done 2026-11-13: the tick
    API's sale conditions explained it, and `bars_1m_adj.volume` is
    consolidated (section 6, "Volume"). Old-regime close minutes (before
-   2023-06-22) remain estimates.
+   2023-06-22) remain estimates, and worse in the tail than the 39-day tick
+   check showed: against the official closing cross on every member day
+   (Alpaca auctions, 2026-11-22), `cross_est` / cross has median 1.087, p10
+   0.948, p90 1.875, and 29% of 748k days within 5% (new regime: median
+   1.000, 95% of 338k days within 5%). The official cross sizes are in
+   `alpaca_auctions` (`docs/AUCTIONS_AND_LINKAGE_DESIGN.md`).
 2. **Bars are unadjusted, and the daily splits data was 40 days stale on
    2026-11-12.** The cut 2 `bars_1m_adj` view needs a fresh splits pull for the
    lane's names. The QC close check catches unseen splits.

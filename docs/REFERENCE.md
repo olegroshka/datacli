@@ -32,6 +32,8 @@ Run any command with `--help` for its full options.
 | `borrow status \| fetch [--country NAME\|all] [--run] \| qc` | The borrow source: Interactive Brokers' shortable list (fee rate, rebate, shares available), one snapshot a day from its anonymous FTP, no credentials | `python -m borrow.cli` |
 | `registers status [--holdings\|--ansp] \| fetch [--market uk\|fr\|nl\|se\|no\|ie\|de] [--holdings] [--ansp [--wayback]] [--run] \| qc` | The registers source: public net short position registers per holder (FCA, frozen 2026-07; AMF, AFM, Finansinspektionen, Finanstilsynet, Central Bank of Ireland, Bundesanzeiger, live), one history file per market replaced when the regulator's files change (Norway's rolling window accumulated); `--ansp` archives the FCA's post-reform aggregated-net-short-position files as vintages, every distinct version kept with its Last-Modified | `python -m registers.cli` |
 | `positioning status \| build [--dataset short_ladder\|long_ladder\|holdings_inputs] [--run] \| qc [--dataset NAME]` | Derived positioning datasets: FIFO lot ladders over FINRA short interest and over SEC 13F holdings, and the 13F holdings inputs (offline; `build` is a dry run unless `--run`) | `python -m positioning.cli` |
+| `alpaca status [--json] \| qc [--crosscheck]` | The alpaca source's stored auction prints: fetch units by status, per-ticker coverage of the store's sessions (`ok` / `thin`, view `alpaca_auctions_coverage`), the daily file; predecessor securities are reviewed aliases in `alpaca/auctions_universe.toml`; `--crosscheck` measures the eodhd daily open and the intraday lane's closing cross estimate against the official crosses (see [`AUCTIONS_AND_LINKAGE_DESIGN.md`](AUCTIONS_AND_LINKAGE_DESIGN.md)) | `python -m alpaca.cli` |
+| `linkage status \| build [--dataset etf_betas\|auction_abnormal\|auction_cospike] [--full] [--run] \| qc [--dataset NAME]` | Derived point-in-time links: month-end trailing betas of every US stock to the 38 context ETFs (plain and net of SPY), unusual auction value per name and day, and month-end auction co-spike neighbours (offline; `build` is a dry run unless `--run`) | `python -m linkage.cli` |
 | `score plan \| run --run \| status` | Schema-driven scores over the news corpus with a **local** model by default (`event_v1`: event type, summary, sentiment, per-symbol direction); paid models only with `--budget-usd` | `python -m scoring.cli` |
 
 **Hits a provider — spends EODHD units (`$`) or needs a provider key:**
@@ -44,6 +46,7 @@ Run any command with `--help` for its full options.
 | `sec fetch [--limit N] [--full] --run` | Download the SEC's Form 13F data-set archives (public, no key, needs `SEC_USER_AGENT`; 20 to 100 MB each) | `python -m sec.cli fetch` |
 | `finra fetch [--dataset short_volume\|weekly_flow\|short_interest] [--from D] [--to D] [--limit-days N] [--run]` | Daily short sale volume from FINRA's public files (free, no key; `--transport api` uses the Query API), or the weekly ATS/OTC flow (Query API, needs credentials) | `python -m finra.cli fetch` |
 | `finra probe auth \| metadata \| partitions <dataset>` | Read-only calls against the FINRA Query API (credentials optional for public datasets) | `python -m finra.cli probe` |
+| `alpaca fetch [--tickers LIST] [--to DATE] [--full] [--run]` | Official opening and closing auction prints (SIP, from 2016) of every US stock and ETF ever in the intraday lane, from Alpaca's market data plan (needs `APCA_API_KEY_ID` + `APCA_API_SECRET_KEY`; no request starts 15:30-16:15 New York on weekdays) | `python -m alpaca.cli fetch` |
 
 **Agentic — the [Raw Data Lab](#raw-data-lab-optional-llm-backed)** ✦ *(needs a model — see note below):*
 
@@ -575,7 +578,9 @@ that predate this repo). It is never written to `datacli.toml`. `config` shows
 `FINRA_CLIENT_ID` + `FINRA_API_KEY` (the client secret) for the FINRA Query API,
 read from the environment or the Windows user environment and optional for the
 public short volume files; `SEC_USER_AGENT` (a declared name and contact email,
-required by the SEC's access policy) for the fails-to-deliver files; `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab.
+required by the SEC's access policy) for the fails-to-deliver files;
+`APCA_API_KEY_ID` + `APCA_API_SECRET_KEY` (Alpaca's key pair, environment or
+Windows user environment) for `alpaca fetch`; `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the lab.
 See `datacli.example.toml` for the full config template.
 
 ## Scheduled jobs (Windows)

@@ -271,11 +271,24 @@ def connect() -> Any:
         registers_views.register(con)
     except Exception:
         pass
-    # ... and the derived positioning views (the short ladder), once built.
+    # ... the Alpaca auction prints, once fetched ...
+    try:
+        from alpaca import views as alpaca_views  # type: ignore[import-not-found]
+
+        alpaca_views.register(con)
+    except Exception:
+        pass
+    # ... and the derived views (the short ladder, the linkage snapshots), once built.
     try:
         from positioning import views as positioning_views  # type: ignore[import-not-found]
 
         positioning_views.register(con)
+    except Exception:
+        pass
+    try:
+        from linkage import views as linkage_views  # type: ignore[import-not-found]
+
+        linkage_views.register(con)
     except Exception:
         pass
     return con

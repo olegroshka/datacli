@@ -171,6 +171,14 @@ Operator rule:
 - continue normal incremental lane reruns for the rest of the universe,
 - and only revisit these names after either provider-side changes are observed or code-level sanitation rules are introduced for explicitly handling them downstream.
 
+### The daily open is not the opening auction (measured 2026-11-22)
+
+For the 38 context ETFs of the intraday lane, against the listing exchange's
+opening cross (Alpaca auctions, `alpaca qc --crosscheck`), 27% of 101k
+ETF-days from 2016 have a daily `open` more than half a cent away from it;
+among those the median difference is 2.6 bp and the 90th percentile 12 bp
+(46% of days in 2026). Use `alpaca_auctions.open_price` for the auction price.
+
 ## 4. Maintenance rule
 
 Update this manifest when the US ETF workflow changes materially, especially when any of the following move:

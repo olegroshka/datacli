@@ -257,6 +257,7 @@ The full working record, including the dead ends, is in
 | [`eodhd/NEWS_SCORING_DESIGN.md`](eodhd/NEWS_SCORING_DESIGN.md) | the scoring design and the full experimental record |
 | [`eodhd/NEWS_ROADMAP.md`](eodhd/NEWS_ROADMAP.md) | what is built and what is next |
 | [`eodhd/EODHD_NEWS_SENTIMENT_FINDINGS.md`](eodhd/EODHD_NEWS_SENTIMENT_FINDINGS.md) | what the provider's news endpoints actually expose |
+| [`docs/AUCTIONS_AND_LINKAGE_DESIGN.md`](docs/AUCTIONS_AND_LINKAGE_DESIGN.md) | official auction prints (Alpaca) and the point-in-time ETF betas and auction co-spike links |
 
 ## Development
 

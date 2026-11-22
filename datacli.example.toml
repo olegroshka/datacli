@@ -91,3 +91,64 @@ strong = "anthropic/claude-opus-4-8"
 # ---------------------------------------------------------------------------
 [sec]
 # data_root = "C:/path/to/your/data/raw/sec"
+
+# ---------------------------------------------------------------------------
+# Alpaca market data (`alpaca fetch --run`): the official opening and closing
+# auction prints of every US stock and ETF ever in the intraday lane, from 2016
+# (SIP feed; see docs/AUCTIONS_AND_LINKAGE_DESIGN.md). The key pair is
+# APCA_API_KEY_ID and APCA_API_SECRET_KEY in the environment (or the Windows
+# user environment), never in this file. Data defaults to an `alpaca` sibling of
+# the eodhd data root. Every setting below is optional; the values shown are
+# the defaults.
+# ---------------------------------------------------------------------------
+[alpaca]
+# data_root = "C:/path/to/your/data/raw/alpaca"
+# history_start = "2016-01-01"
+# symbols_per_request = 100
+# max_requests_per_minute = 600        # the key may be shared with a live process
+# overlap_days = 3                     # a top-up re-reads the last days (late official-close reports)
+# retired_after_days = 10              # no daily price for this long -> ask Alpaca "as of" the last one
+# quiet_windows = ["15:30-16:15"]      # no request starts then (New York, Mon-Fri)
+# quiet_timezone = "America/New_York"
+# symbol_map = { "BRK-B" = "BRK.B" }   # store ticker -> Alpaca symbol, when the dot rule is not enough
+# min_coverage = 0.8                   # coverage `ok`: a closing cross on this share of the store's sessions ...
+# max_gap_sessions = 20                # ... and no run of more than this many sessions without one
+# alias_tolerance = 0.002              # an alias closing cross within 0.2% of the store's close matches
+# alias_min_match = 0.9                # share of days an alias must match before it is stored
+# Predecessor securities and reviewed gaps: alpaca/auctions_universe.toml (versioned)
+
+# ---------------------------------------------------------------------------
+# Derived point-in-time links (`linkage build --run`): ETF betas from the eodhd
+# daily lanes, unusual auction value and auction co-spike neighbours from the
+# Alpaca auctions. No network. Defaults to a `linkage` sibling of the eodhd data
+# root. Every parameter is optional; the values shown are the defaults, and a
+# change rebuilds the dataset.
+# ---------------------------------------------------------------------------
+[linkage]
+# data_root = "C:/path/to/your/data/raw/linkage"
+
+[linkage.etf_betas]
+# start = "2016-01-01"                 # first month end built
+# windows = [63, 252]                  # trading days
+# min_obs_share = 0.8
+# market = "SPY"
+# min_price = 5.0                      # median close over the window
+# min_dollar_volume = 1000000.0        # median close * volume over the window
+# event_window = 1                     # sessions masked each side of a split ex-date
+# max_abs_log_return = 0.5
+# max_dividend_yield = 0.25
+
+[linkage.auction_abnormal]
+# baseline_window = 63                 # previous auction days in the median
+# baseline_min_obs = 40
+# sides = ["close", "open"]
+
+[linkage.auction_cospike]
+# start = "2017-01-01"
+# side = "close"
+# window = 252
+# min_overlap = 150
+# top_k = 20
+# clip = 3.0
+# spike_threshold = 0.6931471805599453 # ln 2
+# include_etfs = true

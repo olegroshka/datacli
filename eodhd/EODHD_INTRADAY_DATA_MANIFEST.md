@@ -96,7 +96,12 @@ SGI) and the excluded TNT and MRIN.
    to the daily volume and puts the cross in its minute. Checked on tick truth:
    exact from 2023-06-22 (median error 0.000); before, the close minute is a
    median 7% too high (it also absorbs through-the-day prints the old bars
-   lack), so `cross_est` is an upper bound there. Days with `status` other
+   lack), so `cross_est` is an upper bound there. Against the official
+   closing cross on every member day (Alpaca, `alpaca qc --crosscheck`,
+   2026-11-22): from 2023-06-22 `cross_est` / cross has median 1.000 and 95%
+   of 338k days are within 5%; before, median 1.087, p90 1.875 and only 29%
+   of 748k days within 5%. For the closing cross size before 2023-06-22 use
+   `alpaca_auctions.close_size`, not `cross_est`. Days with `status` other
    than `ok` keep the vendor volume. Away from the close, minutes match the
    tape to within a few shares; the opening cross is in the 09:30 bar.
 3. **Extended hours.** US bars run 04:00-20:00 ET; filter `session = 'rth'`

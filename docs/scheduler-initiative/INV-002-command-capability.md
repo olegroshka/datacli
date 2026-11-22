@@ -3,8 +3,8 @@ id: INV-002
 title: Schedulable command capability inventory
 status: STABLE
 owner: Oleg Roshka
-last_reviewed: 2026-09-11
-version: 1.2
+last_reviewed: 2026-11-22
+version: 1.3
 sources:
   - KB-001
   - KB-002
@@ -30,6 +30,10 @@ substrate v1.0. A command absent from this table is unsupported. `CORE`,
 | `macro status` | reads macro coverage | none | shared `macro-data-root` | OPTIONAL | macro root resolves |
 | `sync push ... --run` | pushes through configured sync backend; continues past per-file failures by default (`--fail-fast` stops at the first), retries transient errors, rebuilds an empty manifest from the backend before uploading and fails loudly on an unreadable one | Drive token/network or local destination | shared `eodhd-data-root`; exclusive sync manifest/backend target; exclusive credential cache when refresh can write | CORE | non-interactive auth; backend configuration; source root exists |
 | `sync status ...` | local scan vs local manifest | none | shared `eodhd-data-root` | OPTIONAL | source root and backend config resolve |
+| `alpaca fetch [--full] [--tickers LIST] [--to DATE] --run` | incrementally mutates the Alpaca auction prints; flat-rate market data plan, no per-call cost; starts no request inside the configured quiet window (the key is shared with a live process) | `APCA_API_KEY_ID` + `APCA_API_SECRET_KEY`; network | exclusive `alpaca-data-root`; shared `eodhd-data-root` (universe and daily spans) | OPTIONAL | key pair readable by the scheduled user (`alpaca_key_missing` at readiness); writable root; intraday membership file exists |
+| `alpaca status [--json]`, `alpaca qc [--crosscheck]` | read the stored auctions; `--crosscheck` also reads eodhd | none | shared `alpaca-data-root` (and `eodhd-data-root`) | OPTIONAL | alpaca root resolves |
+| `linkage build [--dataset NAME] [--full] --run` | rebuilds derived month-end ETF betas, auction abnormal volume and co-spike partitions; writes only changed partitions | none | exclusive `linkage-data-root`; shared `eodhd-data-root` and `alpaca-data-root` | OPTIONAL | eodhd daily lanes and intraday membership exist; auction datasets also need the alpaca auctions |
+| `linkage status [--json]`, `linkage qc [--dataset NAME]` | read the derived partitions and manifests | none | shared `linkage-data-root` (and the read roots) | OPTIONAL | linkage root resolves |
 | `score plan ...` | reads scoring state and estimates work | model metadata; normally local | shared `eodhd-data-root` | DEFER | scoring configuration |
 | `score run ... --run` | writes scores/embeddings; may spend budget | model service and possible paid budget | exclusive score outputs; shared corpus | DEFER | explicit budget policy and model health checks |
 | `score status` | reads scoring state | none | shared `eodhd-data-root` | DEFER | scoring dependencies installed |

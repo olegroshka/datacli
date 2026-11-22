@@ -281,3 +281,16 @@ def fmt_compact(value: int | float | None) -> str:
 
 def fmt_int(value: int | None) -> str:
     return "-" if value is None else f"{value:,}"
+
+
+def describe_lock(exc: Exception) -> str:
+    """One line on who holds a resource, from a ``scheduler.locks.LockUnavailable``."""
+    holder = getattr(exc, "holder", None)
+    resource = getattr(exc, "resource_id", "") or "a resource"
+    if isinstance(holder, dict):
+        return (
+            f"{resource} is locked by '{holder.get('command', '?')}' "
+            f"(pid {holder.get('pid', '?')}, since {holder.get('acquired_at', '?')}); "
+            "try again when it ends"
+        )
+    return f"{resource} is locked; try again when the holder ends"

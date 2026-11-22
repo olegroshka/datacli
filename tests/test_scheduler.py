@@ -126,6 +126,12 @@ def test_registry_matches_admitted_inventory_and_rejects_forbidden(
         "registers fetch",
         "registers status",
         "registers qc",
+        "alpaca fetch",
+        "alpaca status",
+        "alpaca qc",
+        "linkage build",
+        "linkage status",
+        "linkage qc",
         "sync push",
         "sync status",
     }
@@ -1047,6 +1053,8 @@ def test_scheduler_completion_covers_registry_and_command_values() -> None:
         "sec",
         "borrow",
         "registers",
+        "alpaca",
+        "linkage",
         "sync",
     }
     assert set(schedule_completion_candidates(["add", "demo", "--", "eodhd", "r"])) == {

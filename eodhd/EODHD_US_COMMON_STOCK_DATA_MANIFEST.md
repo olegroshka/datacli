@@ -201,6 +201,18 @@ Interpretation:
 - reruns can now continue incrementally using the same audit/state semantics as UK/EU,
 - and the US common-stock lane now has fundamentals, prices, dividends, and splits all materialized locally.
 
+### The daily open is not the opening auction (measured 2026-11-22)
+
+The vendor's daily `open` is not the official opening cross. Against the
+opening cross of the listing exchange (Alpaca auctions, `alpaca qc
+--crosscheck`), on 1.49M stock-days of the intraday lane's members from 2016,
+27% differ by more than half a cent; among those the median difference is
+14.7 bp and the 90th percentile 64 bp. The share is about 22-30% a year to
+2024 and rises to 32% in 2025 and 39% in 2026. The S7 research session
+reached the same 28% independently and reads the vendor open as the first
+regular-session trade. A model that trades at the opening auction should take
+its price from `alpaca_auctions.open_price`.
+
 ## 4. Follow-on phases (not yet executed)
 
 After the US common-stock fundamentals + prices + events lane is stable:

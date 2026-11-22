@@ -154,6 +154,12 @@ CAPABILITIES = (
     Capability("registers", "fetch", "OPTIONAL", True, True, True),
     Capability("registers", "status", "OPTIONAL", False, False),
     Capability("registers", "qc", "OPTIONAL", False, False),
+    Capability("alpaca", "fetch", "OPTIONAL", True, True, True),
+    Capability("alpaca", "status", "OPTIONAL", False, False),
+    Capability("alpaca", "qc", "OPTIONAL", False, False),
+    Capability("linkage", "build", "OPTIONAL", True, False, True),
+    Capability("linkage", "status", "OPTIONAL", False, False),
+    Capability("linkage", "qc", "OPTIONAL", False, False),
     Capability("sync", "status", "OPTIONAL", False, False),
 )
 
@@ -162,6 +168,7 @@ POSITIONING_DATASETS: tuple[str, ...] = ("short_ladder", "long_ladder", "holding
 BORROW_COUNTRIES: tuple[str, ...] = ("usa", "germany", "france", "dutch", "british", "swedish")
 FINRA_TRANSPORTS = {"cdn", "api", "sec"}
 SEC_DATASETS = {"form13f", "adv"}
+LINKAGE_DATASETS: tuple[str, ...] = ("etf_betas", "auction_abnormal", "auction_cospike")
 
 
 def _read_config(path: Path | None) -> dict:
@@ -691,6 +698,47 @@ class CommandRegistry:
             if argv:
                 raise CommandValidationError("registers qc takes no arguments")
             options = {}
+        elif identity == "alpaca fetch":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--run", "--full"}, scalar={"--tickers", "--to"}
+            )
+            if positionals:
+                raise CommandValidationError("alpaca fetch takes flags only")
+            if options.get("--to"):
+                try:
+                    date.fromisoformat(options["--to"][-1])
+                except ValueError as exc:
+                    raise CommandValidationError("alpaca fetch --to expects YYYY-MM-DD") from exc
+        elif identity == "alpaca status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("alpaca status takes flags only")
+        elif identity == "alpaca qc":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--crosscheck"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("alpaca qc takes flags only")
+        elif identity in {"linkage build", "linkage qc"}:
+            boolean = {"--run", "--full"} if identity == "linkage build" else set()
+            positionals, options = _parse_known_options(
+                argv, boolean=boolean, scalar={"--dataset"}
+            )
+            if positionals:
+                raise CommandValidationError(f"{identity} takes flags only")
+            dataset = options["--dataset"][-1] if options.get("--dataset") else None
+            if dataset is not None and dataset not in LINKAGE_DATASETS:
+                raise CommandValidationError(
+                    f"{identity} --dataset must be one of {', '.join(LINKAGE_DATASETS)}"
+                )
+        elif identity == "linkage status":
+            positionals, options = _parse_known_options(
+                argv, boolean={"--json"}, scalar=set()
+            )
+            if positionals:
+                raise CommandValidationError("linkage status takes flags only")
         elif identity in {"sync push", "sync status"}:
             allowed_boolean = {"--with-caches"}
             if identity == "sync push":
@@ -811,6 +859,42 @@ class CommandRegistry:
             claims.append(
                 ResourceClaim(
                     registers_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "alpaca":
+            # reads the eodhd intraday universe and daily spans, owns its own root
+            read_binding = _binding("eodhd_data_root", eodhd_root, root_source)
+            bindings.append(read_binding)
+            claims.append(ResourceClaim(read_binding.resource_id, "shared"))
+            alpaca_binding = _binding(
+                "alpaca_data_root", *_sibling_root(config, "alpaca", eodhd_root)
+            )
+            bindings.append(alpaca_binding)
+            claims.append(
+                ResourceClaim(
+                    alpaca_binding.resource_id,
+                    "exclusive" if capability.mutation else "shared",
+                )
+            )
+
+        if capability.family == "linkage":
+            # derived from the eodhd and alpaca roots: read both, own its own
+            for name, path, source in (
+                ("eodhd_data_root", eodhd_root, root_source),
+                ("alpaca_data_root", *_sibling_root(config, "alpaca", eodhd_root)),
+            ):
+                read_binding = _binding(name, path, source)
+                bindings.append(read_binding)
+                claims.append(ResourceClaim(read_binding.resource_id, "shared"))
+            linkage_binding = _binding(
+                "linkage_data_root", *_sibling_root(config, "linkage", eodhd_root)
+            )
+            bindings.append(linkage_binding)
+            claims.append(
+                ResourceClaim(
+                    linkage_binding.resource_id,
                     "exclusive" if capability.mutation else "shared",
                 )
             )
@@ -1026,6 +1110,16 @@ class CommandRegistry:
                             "EODHD credentials are unavailable to the scheduled user",
                         )
                     )
+            if command.family == "alpaca" and command.verb == "fetch":
+                from alpaca import auth as alpaca_auth
+
+                if not alpaca_auth.available(validation.environment):
+                    findings.append(
+                        Finding(
+                            "alpaca_key_missing",
+                            "APCA_API_KEY_ID / APCA_API_SECRET_KEY are unavailable to the scheduled user",
+                        )
+                    )
             if command.family == "sec" and command.verb == "fetch":
                 from finra.sec import user_agent as sec_user_agent
 
@@ -1081,6 +1175,10 @@ class CommandRegistry:
             env["DATACLI_POSITIONING_ROOT"] = context.binding(
                 "positioning_data_root"
             ).resolved_value
+        with contextlib.suppress(KeyError):
+            env["DATACLI_ALPACA_ROOT"] = context.binding("alpaca_data_root").resolved_value
+        with contextlib.suppress(KeyError):
+            env["DATACLI_LINKAGE_ROOT"] = context.binding("linkage_data_root").resolved_value
         if validation.config_path is not None:
             env["DATACLI_CONFIG_PATH"] = str(validation.config_path)
 
@@ -1137,6 +1235,14 @@ class CommandRegistry:
                 str(validation.interpreter),
                 "-m",
                 "registers.cli",
+                command.verb,
+                *command.argv,
+            ]
+        elif command.family in {"alpaca", "linkage"}:
+            args = [
+                str(validation.interpreter),
+                "-m",
+                f"{command.family}.cli",
                 command.verb,
                 *command.argv,
             ]
