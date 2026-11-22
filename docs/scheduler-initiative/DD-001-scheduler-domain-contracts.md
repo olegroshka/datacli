@@ -79,7 +79,7 @@ history unless the referenced snapshot is retained.
 | `local_time` | `HH:MM` or null | conditional | present for calendar triggers |
 | `days_of_week` | ordered unique day enum list | weekly only | non-empty for weekly |
 | `time_basis` | `system_local` | calendar only | first release follows the Windows local wall clock |
-| `timezone_at_validation` | zone identifier | calendar only | diagnostic binding; change is reported as drift |
+| `timezone_at_validation` | zone identifier | calendar only | diagnostic binding; a zone change is reported as drift, a daylight-saving change is not. Recorded as the zone's standard-time name (`GMT Standard Time` all year). Records made before 2026-11-22 may hold the daylight name (`GMT Summer Time`); either name of the current zone matches. |
 | `start_when_available` | boolean | yes | allows a delayed start; does not promise replay of every miss |
 | `wake_to_run` | boolean | yes | never implied |
 | `ac_only` | boolean | yes | never implied |

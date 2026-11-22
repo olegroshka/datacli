@@ -18,6 +18,7 @@ from .model import (
     JobSpec,
     ReconciliationState,
     TriggerSpec,
+    is_same_timezone,
     local_timezone_name,
     utc_now,
     validate_job_id,
@@ -321,9 +322,9 @@ class ScheduleService:
                 findings_list.append(f"interpreter is missing: {spec.interpreter}")
             if spec.config_path and not Path(spec.config_path).is_file():
                 findings_list.append(f"config is missing: {spec.config_path}")
-            if (
-                spec.trigger.timezone_at_validation
-                and spec.trigger.timezone_at_validation != local_timezone_name()
+            recorded_zone = spec.trigger.timezone_at_validation
+            if recorded_zone and not is_same_timezone(
+                recorded_zone, local_timezone_name()
             ):
                 findings_list.append(
                     "system timezone differs from the timezone recorded at validation"

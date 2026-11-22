@@ -43,8 +43,25 @@ def new_run_id() -> str:
 
 
 def local_timezone_name() -> str:
-    index = 1 if time.localtime().tm_isdst > 0 else 0
-    return time.tzname[index] or "system-local"
+    """Identifier of the system timezone, recorded on calendar triggers.
+
+    This is the zone's standard-time name (``GMT Standard Time`` all year), so
+    it does not change when daylight saving starts or ends.
+    """
+    return time.tzname[0] or time.tzname[1] or "system-local"
+
+
+def is_same_timezone(recorded: str, current: str) -> bool:
+    """Whether a trigger's recorded timezone names the current system zone.
+
+    Until 2026-11-22 the recorded name followed daylight saving, so a job
+    validated in summer holds ``GMT Summer Time``. Either name of the current
+    zone counts as the same zone; only a real zone change is drift.
+    """
+    if recorded == current:
+        return True
+    names = {name for name in time.tzname if name}
+    return recorded in names and current in names
 
 
 def canonical_json(value: Mapping[str, Any]) -> bytes:
