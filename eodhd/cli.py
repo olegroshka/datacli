@@ -77,6 +77,10 @@ COMMAND_HELP: list[tuple[str, str]] = [
     ("bars", "One trading day of a pair's 1m bars, resampled (intraday lane)"),
     ("universe", "Intraday universe members at a date, or a quarter's changes"),
     ("qc", "Run raw-data quality checks (qc [lane] [dataset])"),
+    (
+        "fix-prices",
+        "Check US daily bars against Alpaca and keep the corrections (dry-run unless --run)",
+    ),
     ("probe", "Probe ad-hoc ticker availability (paid API; caches under probe_cache/)"),
     ("lanes", "List registered lanes, datasets, and their fetchers"),
     ("config", "Show/edit config (config set data-root <path>)"),
@@ -888,6 +892,13 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status(rest)
     if command == "qc":
         return cmd_qc(rest)
+    if command == "fix-prices":
+        from scheduler.commands import direct_mutation_lock
+
+        import price_fixes  # type: ignore[import-not-found]
+
+        with direct_mutation_lock("eodhd", "fix-prices", rest):
+            return price_fixes.main(rest)
     if command in EXPLORE_COMMANDS:
         if command == "reindex":
             from scheduler.commands import direct_mutation_lock

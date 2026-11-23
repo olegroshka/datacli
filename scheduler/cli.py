@@ -139,6 +139,7 @@ SCHEDULE_COMMAND_COMPLETIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "--tickers",
     ),
     ("eodhd", "reindex"): (),
+    ("eodhd", "fix-prices"): ("--run", "--all", "--days", "--tickers", "--limit"),
     ("eodhd", "status"): (
         "us_common",
         "uk_eu",
@@ -243,6 +244,10 @@ SCHEDULE_COMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
     ("eodhd", "reindex"): (
         "eodhd reindex",
         "rebuild local derived indexes without network access",
+    ),
+    ("eodhd", "fix-prices"): (
+        "eodhd fix-prices [--all | --days N | --tickers LIST] [--limit N] --run",
+        "check US daily bars against Alpaca's SIP bars and rewrite the corrections overlay (needs APCA_API_KEY_ID / APCA_API_SECRET_KEY; skips the quiet window)",
     ),
     ("eodhd", "status"): (
         "eodhd status [LANE] [OPTIONS]",

@@ -134,6 +134,7 @@ EODHD_KINDS = {
 CAPABILITIES = (
     Capability("eodhd", "refresh", "CORE", True, True, True),
     Capability("eodhd", "reindex", "CORE", True, False),
+    Capability("eodhd", "fix-prices", "OPTIONAL", True, True, True),
     Capability("sync", "push", "CORE", True, True, True),
     Capability("eodhd", "status", "OPTIONAL", False, False),
     Capability("eodhd", "qc", "OPTIONAL", False, False),
@@ -499,6 +500,27 @@ class CommandRegistry:
             if argv:
                 raise CommandValidationError("eodhd reindex takes no arguments")
             options = {}
+        elif identity == "eodhd fix-prices":
+            positionals, options = _parse_known_options(
+                argv,
+                boolean={"--run", "--all"},
+                scalar={"--days", "--tickers", "--limit"},
+            )
+            if positionals:
+                raise CommandValidationError("eodhd fix-prices takes flags only")
+            if "--all" in options and ("--days" in options or "--tickers" in options):
+                raise CommandValidationError(
+                    "eodhd fix-prices takes one of --all, --days, --tickers"
+                )
+            for flag in ("--days", "--limit"):
+                if flag in options:
+                    try:
+                        if int(options[flag][-1]) <= 0:
+                            raise ValueError
+                    except ValueError as exc:
+                        raise CommandValidationError(
+                            f"{flag} must be a positive integer"
+                        ) from exc
         elif identity == "eodhd status":
             positionals, options = _parse_known_options(
                 argv,
@@ -793,7 +815,7 @@ class CommandRegistry:
             bindings.append(root_binding)
             mode = (
                 "exclusive"
-                if identity in {"eodhd refresh", "eodhd reindex"}
+                if identity in {"eodhd refresh", "eodhd reindex", "eodhd fix-prices"}
                 else "shared"
             )
             claims.append(ResourceClaim(root_binding.resource_id, mode))
@@ -1110,7 +1132,10 @@ class CommandRegistry:
                             "EODHD credentials are unavailable to the scheduled user",
                         )
                     )
-            if command.family == "alpaca" and command.verb == "fetch":
+            if (command.family, command.verb) in {
+                ("alpaca", "fetch"),
+                ("eodhd", "fix-prices"),
+            }:
                 from alpaca import auth as alpaca_auth
 
                 if not alpaca_auth.available(validation.environment):

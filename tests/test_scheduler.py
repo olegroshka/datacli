@@ -107,6 +107,7 @@ def test_registry_matches_admitted_inventory_and_rejects_forbidden(
     assert {cap.identity for cap in registry.list_capabilities()} == {
         "eodhd refresh",
         "eodhd reindex",
+        "eodhd fix-prices",
         "eodhd status",
         "eodhd qc",
         "macro fetch",
@@ -1060,6 +1061,7 @@ def test_scheduler_completion_covers_registry_and_command_values() -> None:
     assert set(schedule_completion_candidates(["add", "demo", "--", "eodhd", "r"])) == {
         "refresh",
         "reindex",
+        "fix-prices",
         "status",
         "qc",
     }

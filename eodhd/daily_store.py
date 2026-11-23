@@ -18,6 +18,10 @@ is the price as traded (raw) except for serial reverse-splitters in
 later splits; ``adjusted_close`` is not re-adjusted by the bulk top-up. A
 consumer that needs returns should therefore not trust either convention
 across a corporate event: it should drop event days (``linkage.returns``).
+
+Prices are read with the Alpaca-checked fixes applied
+(``<eodhd_root>/_fixes``, :mod:`price_fixes`); ``fixes=False`` reads them as
+EODHD delivered them.
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import pandas as pd
+
+from price_fixes import fixes_path, overlay_sql  # type: ignore[import-not-found]
 
 STOCK = "stock"
 ETF = "etf"
@@ -41,9 +47,16 @@ PRICES, SPLITS, DIVIDENDS = "prices_daily", "splits_history", "dividends_history
 class DailyStore:
     """The US daily lanes under one eodhd root (DuckDB over parquet, read-only)."""
 
-    def __init__(self, root: Path, *, lanes: Sequence[tuple[str, str]] = LANES) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        lanes: Sequence[tuple[str, str]] = LANES,
+        fixes: bool = True,
+    ) -> None:
         self.root = Path(root)
         self.lanes = tuple(lanes)
+        self.fixes = fixes
 
     # ----- paths ----------------------------------------------------------- #
     def path(self, lane: str, kind: str) -> Path:
@@ -65,12 +78,18 @@ class DailyStore:
         """A UNION over the lanes with a ``lane_rank`` column (lower wins)."""
         parts = [
             f"SELECT {select}, {rank} AS lane_rank, '{asset}' AS asset_type "
-            f"FROM read_parquet('{self.path(lane, kind).as_posix()}') WHERE {where}"
+            f"FROM {self._source(lane, kind)} WHERE {where}"
             for rank, (lane, asset) in enumerate(self._lanes(asset_types, kind))
         ]
         if not parts:
             return ""
         return " UNION ALL ".join(parts)
+
+    def _source(self, lane: str, kind: str) -> str:
+        source = f"read_parquet('{self.path(lane, kind).as_posix()}')"
+        if kind == PRICES and self.fixes:
+            return overlay_sql(source, lane, fixes_path(self.root))
+        return source
 
     @staticmethod
     def _connect() -> Any:

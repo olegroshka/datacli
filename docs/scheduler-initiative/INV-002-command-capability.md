@@ -24,6 +24,7 @@ substrate v1.0. A command absent from this table is unsupported. `CORE`,
 |---|---|---|---|---|---|
 | `eodhd refresh ... --run` | incrementally mutates EODHD data | EODHD key; network; paid quota | exclusive `eodhd-data-root` | CORE | parser validation; key; writable root; non-interactive mode |
 | `eodhd reindex` | rebuilds local query catalogue | none | exclusive `eodhd-data-root` | CORE | data root exists; DuckDB available |
+| `eodhd fix-prices [--all \| --days N \| --tickers LIST] [--limit N] --run` | checks the US daily bars against Alpaca's SIP daily bars and rewrites the corrections overlay `<eodhd root>/_fixes/` (the EODHD files are not changed); flat-rate market data plan, no per-call cost; starts no request inside the alpaca quiet window | `APCA_API_KEY_ID` + `APCA_API_SECRET_KEY`; network | exclusive `eodhd-data-root` | OPTIONAL | key pair readable by the scheduled user (`alpaca_key_missing` at readiness); US daily lanes exist |
 | `eodhd status ...` | reads coverage/status; optional status-file write depends on flags | none | shared read, or exclusive if a write flag is admitted | OPTIONAL | reject mutating flags until explicitly classified |
 | `eodhd qc ...` | reads and reports quality | none | shared `eodhd-data-root` | OPTIONAL | output must be log-safe |
 | `macro fetch ... --run` | incrementally mutates macro parquet; not included by current EODHD-root sync | FRED/EODHD key; network | exclusive `macro-data-root` | OPTIONAL | selected provider credentials; writable root; no implied backup |

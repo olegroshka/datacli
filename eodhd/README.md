@@ -131,6 +131,7 @@ pre-fetch numbers. The news lane is day-keyed, so the ticker verbs skip it; use 
 - `report_eodhd_raw_quality.py`: the QC engine behind `qc` (price-bearing lanes; keeps its own per-lane audit map).
 - `explore_eodhd.py`: DuckDB views + the explore verbs; `schema.py`: the versioned canonical schema.
 - `fetch_eodhd_bulk.py`: the fast path — bulk end-of-day refresh (one call per exchange) for prices/dividends/splits; used by `refresh --fast`.
+- `price_fixes.py`: `fix-prices` — checks the US daily bars against Alpaca's SIP daily bars and keeps the corrections in `<data-root>/_fixes/` (§7a); `daily_store.py`: the read-only US daily adapter other sources use.
 - `fetch_eodhd_news.py`: the news day-crawler (backfill + top-up).
 - `fundamentals_refresh_common.py`: shared incremental-refresh helpers for the fundamentals fetchers (target selection, state sidecar, earnings-calendar lookup).
 - `FUNDAMENTALS_REFRESH_DESIGN.md`: design notes for the fundamentals refresh (why append-only was a problem, the fix).
@@ -230,7 +231,8 @@ Caveats / when to still use the per-ticker path:
   (except the news top-up). Use §2.
 - **Adjustments:** bulk appends bars with the provider's current adjustment; it
   does not re-adjust historical `adjusted_close` after a split. Tickers that split
-  are reported — run a periodic per-ticker `--full-refresh` for those.
+  are reported — run a periodic per-ticker `--full-refresh` for those. For the US
+  lanes `fix-prices` (§7a) also corrects a missing split adjustment in the overlay.
 - **Large gaps:** a pair more than `--days` behind is reported and skipped (never
   hole-punched); use the normal `refresh --run` to backfill it.
 - **New listings / universe:** `--fast` updates the existing universe; run the
@@ -238,6 +240,64 @@ Caveats / when to still use the per-ticker path:
 - **Fundamentals:** not part of `--fast`; use `refresh --datasets fundamentals --run`.
 - **Targeted reruns:** `--fast` cannot be combined with `--tickers/--to/--limit/--full-refresh/--no-universe`
   (the bulk path has no per-ticker window); drop `--fast` for those.
+
+## 7a. US daily price corrections (Alpaca cross-check)
+
+EODHD stays the source of `us_common`, `us_etf` and `us_extended`, and its files
+are never rewritten. `fix-prices` compares each ticker's EODHD history with
+Alpaca's consolidated-tape (SIP) daily bars, as traded and split-and-dividend
+adjusted, from 2016, and keeps the bars it can show are wrong in an overlay:
+
+```
+<data-root>/_fixes/us_daily_prices.parquet   one row per corrected (lane, ticker, date): drop or replace
+<data-root>/_fixes/us_daily_checks.parquet   one row per checked (lane, ticker): status, overlap, counts
+```
+
+```bash
+uv run python eodhd/cli.py fix-prices                   # dry run: pairs with a suspicious bar in 10 days + stale fixes
+uv run python eodhd/cli.py fix-prices --days 10 --run   # the daily step (after refresh --fast)
+uv run python eodhd/cli.py fix-prices --all --run       # every US pair with bars from 2016 (a sweep, ~1 h)
+uv run python eodhd/cli.py fix-prices --tickers QRVO,WTIB --out <dir>   # dry run, proposals written to <dir>
+uv run python eodhd/cli.py fix-prices --status          # offline summary, stale fixes
+```
+
+What it corrects, per (lane, ticker), over the days both sources have (the
+thresholds are in `price_fixes.Rules`):
+
+- a bar after Alpaca's last session that has no volume (a placeholder after a
+  delisting, e.g. QRVO 2026-10-06 at 2,070) is dropped; when the first traded
+  bar after it sits more than 2x *above* Alpaca's last close with no EODHD
+  split to explain it, the whole tail is another listing filed under the
+  ticker (WTIB, WILC) and is dropped. A fall is kept: it can be the real move
+  to OTC trading, and dropping it would flatter a backtest;
+- a bar Alpaca does not have, without volume, whose close moved >1.5x is dropped;
+- a close more than 1.5x off Alpaca's takes Alpaca's bar (OHLC, split-restated
+  volume), and so does a close more than 5% off on a vendor bar without volume
+  against a session that traded at least 1,000 shares (a stale price). Thin
+  names' two closes can differ by a few percent for a day, so a moderate gap
+  on a traded vendor bar is left alone;
+- on consecutive common days where both sources print the same close, an
+  adjusted return that differs from Alpaca's by more than 0.25 (log) where
+  Alpaca's move is the smaller one (a split applied on the wrong day or not at
+  all) takes Alpaca's return, and the adjusted closes are re-chained from the
+  last clean day, so the history before it moves by the missing factor
+  (moves under 1% are left alone). Where Alpaca's move is the larger one, or
+  the closes differ, EODHD is kept and the day counts as `disputed`.
+
+Nothing is fixed when the two series do not agree on 80% of their common
+closes (another security under the symbol), when they share fewer than 20
+days, or where Alpaca has no data: OTC names, bars before 2016, days with
+volume that Alpaca lacks. A retired symbol is asked `asof` its last traded day.
+
+Readers: the `prices` view (`explore_eodhd`), `daily_store.DailyStore` and
+`scripts/export_isa_inputs.py` apply the overlay; `prices_vendor` is the view of
+the rows as EODHD delivered them, `price_fixes` and `price_checks` the overlay.
+A fix applies only while the EODHD row still holds the close and adjusted close
+it was made against: a re-delivery (a `--full-refresh`) switches it off and the
+next run re-checks that pair. Deleting `_fixes/` returns every reader to plain
+EODHD. Alpaca needs `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY`; requests follow
+the `[alpaca]` rate and quiet-window settings (no request starts in
+15:30-16:15 New York, when the paper book uses the shared key).
 
 ## 8. Fundamentals refresh
 

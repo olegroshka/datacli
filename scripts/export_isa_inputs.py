@@ -28,6 +28,10 @@ from pathlib import Path
 import pandas as pd
 
 _REPO = Path(__file__).resolve().parents[1]
+if str(_REPO / "eodhd") not in sys.path:
+    sys.path.insert(0, str(_REPO / "eodhd"))
+import price_fixes  # noqa: E402  (the Alpaca-checked fixes of the US daily lanes)
+
 # A daily move this large in a total-return series is a data fault until shown otherwise.
 MAX_DAILY_MOVE = 0.5
 # The gold-line rate must agree with FRED where both exist, or the splice is not to be trusted.
@@ -117,8 +121,9 @@ def on_calendar(frame: pd.DataFrame, calendar: pd.DatetimeIndex) -> pd.DataFrame
 
 def read_line(con, root: Path, line: Line) -> pd.DataFrame:
     path = (root / line.lane / "prices_daily.parquet").as_posix()
+    source = price_fixes.overlay_sql(f"read_parquet('{path}')", line.lane, price_fixes.fixes_path(root))
     frame = con.execute(
-        f"select date,open,high,low,close,adjusted_close,volume from read_parquet('{path}') where ticker=? and exchange=?",
+        f"select date,open,high,low,close,adjusted_close,volume from {source} where ticker=? and exchange=?",
         [line.ticker, line.exchange],
     ).df()
     if frame.empty:

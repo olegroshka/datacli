@@ -42,6 +42,7 @@ import schema as sch  # type: ignore[import-not-found]  # noqa: E402
 import _atomic
 from _datadir import EODHD_RAW_ROOT  # type: ignore[import-not-found]  # noqa: E402
 from eodhd_datasets import LANES  # type: ignore[import-not-found]  # noqa: E402
+import price_fixes  # type: ignore[import-not-found]  # noqa: E402
 
 DATASETS = sch.datasets()
 # Datasets whose rows are identified by (ticker, exchange). The ticker-centric
@@ -189,7 +190,13 @@ def connect() -> Any:
     """
     import duckdb
 
+    # ``prices`` applies the Alpaca-checked fixes of the US daily lanes
+    # (``_fixes``, see price_fixes.py); when there are fixes, ``prices_vendor``
+    # holds the rows as EODHD delivered them and ``price_fixes`` /
+    # ``price_checks`` the overlay itself.
     con = duckdb.connect()
+    fixes = price_fixes.fixes_path(EODHD_RAW_ROOT)
+    vendor_parts: list[str] = []
     for kind in DATASETS:
         parts = []
         for lane in LANES.values():
@@ -200,9 +207,28 @@ def connect() -> Any:
             if src is None:
                 continue
             cols = _cols(con, src)
-            parts.append(f"SELECT {sch.projection(kind, cols, lane.name)} FROM {src}")
+            projection = sch.projection(kind, cols, lane.name)
+            if kind == "prices":
+                vendor_parts.append(f"SELECT {projection} FROM {src}")
+                src = price_fixes.overlay_sql(src, lane.name, fixes)
+            parts.append(f"SELECT {projection} FROM {src}")
         if parts:
             con.execute(f"CREATE VIEW {kind} AS " + " UNION ALL BY NAME ".join(parts))
+    if fixes.exists():
+        if vendor_parts:
+            con.execute(
+                "CREATE VIEW prices_vendor AS "
+                + " UNION ALL BY NAME ".join(vendor_parts)
+            )
+        con.execute(
+            f"CREATE VIEW price_fixes AS SELECT * FROM read_parquet('{fixes.as_posix()}')"
+        )
+        checks = price_fixes.checks_path(EODHD_RAW_ROOT)
+        if checks.exists():
+            con.execute(
+                "CREATE VIEW price_checks AS SELECT * FROM "
+                f"read_parquet('{checks.as_posix()}')"
+            )
     for kind in DATASETS:
         parts = []
         for lane in LANES.values():
