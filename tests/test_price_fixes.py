@@ -114,6 +114,14 @@ def test_another_listing_after_the_last_trade_is_dropped_unless_a_split_explains
     assert explained.fixes.empty
 
 
+def test_a_penny_securitys_jump_after_the_last_trade_is_kept() -> None:
+    # PUCKW: a warrant at half a cent doubles on its own; Yahoo has the same print
+    px = _wave(60, 0.004)
+    eod_px = np.r_[px[:50], px[49] * 2.5 * _wave(10, 1.0)]
+    result = _check(_eod(DAYS, eod_px), _bars(DAYS[:50], px[:50]))
+    assert not (result.fixes["reason"] == pf.TAIL_LISTING).any()
+
+
 def test_a_fall_after_the_last_trade_is_kept_as_a_possible_move_to_otc() -> None:
     px = _wave(60)
     eod_px = np.r_[px[:50], px[49] * 0.2 * _wave(10, 1.0)]  # -80%, still trading
@@ -138,13 +146,12 @@ def test_an_interior_bar_without_volume_is_dropped_only_when_its_price_moved() -
 
 
 def test_a_wrong_close_takes_alpacas_bar_and_split_restated_volume() -> None:
+    # WILC 2026-08-26: the vendor's close is another listing's (8948 for 28.56)
     px = _wave(60, 28.0)
     eod_px = px.copy()
-    eod_px[20] = 30.5  # stale price, no volume
-    vol = np.full(60, 1000.0)
-    vol[20] = 0.0
+    eod_px[20] = 8948.0
     adj = _bars(DAYS, px, volume=2000.0)  # split-restated volume
-    result = _check(_eod(DAYS, eod_px, volume=vol), _bars(DAYS, px), adj)
+    result = _check(_eod(DAYS, eod_px), _bars(DAYS, px), adj)
     fixes = result.fixes
     assert len(fixes) == 1
     row = fixes.iloc[0]
@@ -152,8 +159,20 @@ def test_a_wrong_close_takes_alpacas_bar_and_split_restated_volume() -> None:
     assert row["close"] == pytest.approx(px[20])
     assert row["adjusted_close"] == pytest.approx(px[20])
     assert row["volume"] == 2000.0
-    assert row["orig_close"] == 30.5
+    assert row["orig_close"] == 8948.0
     assert row["reason"] == "close,adjustment"
+
+
+def test_a_moderate_gap_on_a_volume_less_vendor_bar_is_kept() -> None:
+    # IFMK 2017-02-14: the vendor shows no volume and sits 7% off Alpaca's last
+    # trade, and Yahoo sides with the vendor: the official close, not a stale one
+    px = _wave(60, 28.0)
+    eod_px = px.copy()
+    eod_px[20] = px[20] * 1.07
+    vol = np.full(60, 1000.0)
+    vol[20] = 0.0
+    result = _check(_eod(DAYS, eod_px, volume=vol), _bars(DAYS, px, volume=5000.0))
+    assert result.fixes.empty
 
 
 def test_a_moderate_close_gap_on_a_traded_vendor_bar_is_kept() -> None:
@@ -234,6 +253,58 @@ def test_sub_cent_vendor_closes_leave_too_few_days_to_identify() -> None:
     eod_px = np.r_[np.full(50, 0.0001), px[50:]]
     result = _check(_eod(DAYS, eod_px), _bars(DAYS, px))
     assert result.summary["status"] == pf.FEW_DAYS and result.fixes.empty
+
+
+def test_alpaca_placeholders_without_volume_are_no_evidence() -> None:
+    # SMCI 2019-12 .. 2020-01-13: off Nasdaq, trading OTC; Alpaca's tape carries
+    # the last Nasdaq price (15.65) with no volume every day, the vendor the
+    # real OTC closes. Nothing may be "fixed" towards the placeholders.
+    px = _wave(60, 24.0)
+    alp = px.copy()
+    alp[30:45] = 15.65
+    vol = np.full(60, 1000.0)
+    vol[30:45] = 0.0
+    bars = _bars(DAYS, alp)
+    bars["volume"] = vol
+    result = _check(_eod(DAYS, px), bars, bars)
+    assert result.fixes.empty
+    assert result.summary["status"] == pf.CHECKED
+
+
+def test_alpacas_stray_print_against_a_steady_vendor_is_not_taken() -> None:
+    # GRN / SBET: a thin name's last trade sits 2x off the official close while
+    # the vendor's series stays where it was: the vendor did not break
+    px = _wave(60, 20.0)
+    alp = px.copy()
+    alp[30] = px[30] * 2.0
+    result = _check(_eod(DAYS, px), _bars(DAYS, alp))
+    assert result.fixes.empty
+
+
+def test_no_rechaining_across_a_spell_without_alpaca_prints() -> None:
+    # DCTH 2019-20: off the tape for months (Alpaca: placeholders only) while the
+    # vendor has the OTC trading. Comparing the last print before the spell with
+    # the first after it re-scaled 15 years and flattened the OTC months
+    # (79 fixes here without the neighbour rule); the vendor stays as it is.
+    days = pd.bdate_range("2019-01-02", periods=160)
+    raw_pre = _wave(40, 0.10)
+    vendor = np.r_[raw_pre, np.linspace(13.0, 12.75, 40), _wave(80, 7.7)]
+    alp_raw = np.r_[raw_pre, np.full(40, 0.0999), _wave(80, 7.7)]
+    alp_adj = np.r_[raw_pre * 130, np.full(40, 0.0999), _wave(80, 7.7)]
+    vol = np.r_[np.full(40, 5000.0), np.zeros(40), np.full(80, 5000.0)]
+    raw, adj = _bars(days, alp_raw), _bars(days, alp_adj)
+    raw["volume"] = adj["volume"] = vol
+    result = pf.check_ticker(_eod(days, vendor), raw, adj, lane="us_common", ticker="T")
+    assert result.summary["status"] == pf.CHECKED
+    assert result.fixes.empty
+
+
+def test_the_guard_refuses_a_move_the_vendor_does_not_have() -> None:
+    vendor = np.array([10.0, 10.1, 10.2, 10.1])
+    fixed = np.array([10.0, 10.1, 30.0, 10.1])
+    kept = np.ones(4, dtype=bool)
+    assert pf._adds_moves(vendor, fixed, kept)
+    assert not pf._adds_moves(vendor, vendor * 2, kept)  # a rescale adds none
 
 
 def test_bars_frame_puts_each_bar_on_its_new_york_session() -> None:

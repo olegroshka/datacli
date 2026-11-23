@@ -30,10 +30,10 @@ Rules, per (lane, ticker), over the days both sources have:
    real move to OTC trading);
 3. interior: a bar Alpaca does not have, with no volume and a price moved
    more than 1.5x from the bar before, is dropped;
-4. close: a common day whose close is more than 1.5x off Alpaca's, or 5% off
-   on a vendor bar without volume against a session that traded at least
-   1,000 shares, takes Alpaca's bar (open, high, low, close; split-restated
-   volume). A thin name's two closes can differ by a few percent for a day;
+4. close: a common day whose close is more than 1.5x off Alpaca's takes
+   Alpaca's bar (open, high, low, close; split-restated volume). A smaller gap
+   proves nothing: Alpaca's close is the last trade, the vendor's the official
+   close, and on a thin name they differ by several percent;
 5. adjustment: between consecutive common days on which both sources print
    the same close, EODHD's adjusted return must agree with Alpaca's within
    0.25 in log terms. Where it does not and Alpaca's move is the smaller one
@@ -42,6 +42,12 @@ Rules, per (lane, ticker), over the days both sources have:
    history before the event moves by the missing factor (moves under 1% are
    left alone). Where Alpaca's move is the larger one, or the closes differ,
    EODHD is kept and the day is counted as ``disputed``.
+
+An Alpaca bar without volume is a placeholder (the last price carried over a
+halt or a spell off the tape) and counts as no bar. Finally, do no harm: a
+ticker's fixes are kept only if the corrected adjusted series has no more
+moves beyond 1.5x, and not clearly more total movement, than the vendor's
+(else the drops alone, else nothing; counted as ``rejected``).
 
 Bars Alpaca cannot speak to (before 2016, OTC names, days it has no bar for
 that carry volume) are left as EODHD delivered them.
@@ -124,6 +130,7 @@ CHECK_COLUMNS: tuple[str, ...] = (
     "closes",
     "adjustments",
     "disputed",
+    "rejected",
     "max_adjustment",
     "checked_at",
 )
@@ -180,10 +187,13 @@ class Rules:
     close_tolerance: float = 0.05  # log; a vendor bar without volume this far off
     # a close or a volume-less bar's move this far off (log) is wrong on its face
     gross_move: float = math.log(1.5)
-    # an Alpaca bar with this many shares traded is a real session
-    min_traded_volume: float = 1000.0
     return_tolerance: float = 0.25  # log
+    # adjusted returns are compared only between sessions this close (calendar
+    # days) with no vendor trading day between them
+    max_gap_days: int = 10
     listing_jump: float = math.log(2.0)
+    # the other-listing rule needs a last Alpaca close at least this high
+    min_listing_price: float = 1.0
     split_match: float = 0.1  # log distance at which a split explains a jump
     split_window_days: int = 7
     # adjusted closes below this are rounded too coarsely to compare returns
@@ -194,6 +204,10 @@ class Rules:
     # two sources' returns across an event rarely cancel exactly, and a 0.3%
     # shift of years of history is noise, not a fix
     min_adjustment: float = 0.01
+    # do no harm: fixes may not add total log movement beyond this (absolute,
+    # or as a share of the vendor's), nor any move beyond 1.5x
+    movement_slack: float = 0.25
+    movement_slack_share: float = 0.02
 
 
 RULES = Rules()
@@ -265,6 +279,33 @@ def _share_within(
     return share, int(valid.sum())
 
 
+def _roughness(adjusted: np.ndarray) -> tuple[int, float]:
+    """(moves beyond 1.5x either way, total absolute log movement) of a price series."""
+    values = adjusted[np.isfinite(adjusted) & (adjusted > 0)]
+    if len(values) < 2:
+        return 0, 0.0
+    steps = np.abs(np.diff(np.log(values)))
+    return int((steps > math.log(1.5)).sum()), float(steps.sum())
+
+
+def _adds_moves(vendor: np.ndarray, fixed: np.ndarray, kept: np.ndarray) -> bool:
+    """Whether the fixes put a move beyond 1.5x on a day the vendor has none."""
+    rows = kept & np.isfinite(vendor) & (vendor > 0) & np.isfinite(fixed) & (fixed > 0)
+    if rows.sum() < 2:
+        return False
+    step_v = np.abs(np.diff(np.log(vendor[rows])))
+    step_f = np.abs(np.diff(np.log(fixed[rows])))
+    big = math.log(1.5)
+    return bool(((step_f > big) & (step_v <= big)).any())
+
+
+def _worse(fixed: tuple[int, float], vendor: tuple[int, float], rules: "Rules") -> bool:
+    jumps_f, total_f = fixed
+    jumps_v, total_v = vendor
+    slack = max(rules.movement_slack, rules.movement_slack_share * total_v)
+    return jumps_f > jumps_v or total_f > total_v + slack
+
+
 def _other_listing(
     tail: pd.DataFrame,
     ref_close: float,
@@ -278,7 +319,8 @@ def _other_listing(
     it errs against a backtest, dropping it would flatter one).
     """
     traded = tail[(tail["volume"].fillna(0) > 0) & (tail["close"] > 0)]
-    if traded.empty or not ref_close > 0:
+    # a penny security (a warrant) doubles in a day on its own (PUCKW)
+    if traded.empty or not ref_close >= rules.min_listing_price:
         return False
     first = traded.iloc[0]
     if not first["close"] > 0:
@@ -334,9 +376,15 @@ def check_ticker(
         "closes": 0,
         "adjustments": 0,
         "disputed": 0,
+        "rejected": 0,
         "max_adjustment": 0.0,
         "checked_at": checked_at,
     }
+    # A session without volume is a placeholder (the last price carried over a
+    # halt or a spell off the tape: SMCI's OTC months in 2019 show 15.65 every
+    # day), not a print, so it is no evidence against the vendor.
+    raw = raw[raw["volume"].fillna(0) > 0]
+    adj = adj[adj["volume"].fillna(0) > 0]
     if e.empty or raw.empty or adj.empty:
         return TickerCheck(empty_fixes(), summary)
     a_raw = raw.set_index("date")
@@ -399,16 +447,25 @@ def check_ticker(
     dropped = reason != ""
 
     # ----- closes -------------------------------------------------------- #
-    # A thin security's two closes can differ by several percent for a day
-    # (a quote-based close against a stale odd-lot print), so a moderate gap
-    # is fixed only on a vendor bar without volume against a day that traded.
+    # Only a gross gap is proof, and only where the vendor's own series breaks:
+    # Alpaca's daily close is the session's last trade, the vendor's (and
+    # Yahoo's) the official close, and on a thin name the last trade can be a
+    # stray print far from it (GRN, SBET; IFMK 2017-02-14 at 7%). A vendor error
+    # jumps away from the vendor's last close that agreed with Alpaca while
+    # Alpaca's close stays near it (WILC 8948, QUBX's split a day early).
     comparable = both & ~dropped & (basis_close >= rules.min_close)
     off = np.abs(_log_ratio(close, basis_close))
-    alp_volume = bars["volume"].reindex(dates).to_numpy(float)
-    stale = (volume <= 0) & (alp_volume >= rules.min_traded_volume)
-    bad_close = comparable & (
-        ~(off <= rules.gross_move)  # NaN (no vendor close) counts
-        | ((off > rules.close_tolerance) & stale)
+    agrees = comparable & (off <= rules.close_tolerance)
+    ref = pd.Series(np.where(agrees, close, np.nan)).ffill().shift(1).to_numpy()
+    has_ref = np.isfinite(ref)
+    vendor_jump = np.abs(np.nan_to_num(_log_ratio(close, ref), nan=np.inf))
+    alpaca_jump = np.abs(np.nan_to_num(_log_ratio(basis_close, ref), nan=np.inf))
+    bad_close = (
+        comparable
+        & has_ref
+        & ~(off <= rules.gross_move)  # NaN (no vendor close) counts
+        & (vendor_jump > rules.gross_move)
+        & (alpaca_jump <= rules.gross_move)
     )
 
     # ----- adjustment chain --------------------------------------------- #
@@ -435,8 +492,14 @@ def check_ticker(
             i, j = pos[:-1], pos[1:]
             ret_e = level_e[j] - level_e[i]
             ret_a = level_a[j] - level_a[i]
-            forced = bad_k[i] | bad_k[j]
-            differs = np.abs(ret_e - ret_a) > rules.return_tolerance
+            # Compare neighbouring sessions only: across a spell Alpaca has no
+            # prints for (DCTH's OTC months), the vendor's series is the real one.
+            k_dates = dates.to_numpy()[k]
+            traded = np.cumsum(volume[k] > 0)
+            gap_days = (k_dates[j] - k_dates[i]) / np.timedelta64(1, "D")
+            near = (gap_days <= rules.max_gap_days) & (traded[j - 1] - traded[i] == 0)
+            forced = (bad_k[i] | bad_k[j]) & near
+            differs = near & (np.abs(ret_e - ret_a) > rules.return_tolerance)
             smaller = np.abs(ret_a) < np.abs(ret_e)
             same_prints = agree_k[i] & agree_k[j]
             take = forced | (differs & smaller & same_prints)
@@ -462,6 +525,23 @@ def check_ticker(
                 np.exp(np.abs(level - level_e)[moved_k].max())
             )
     summary["disputed"] = disputed
+
+    # ----- do no harm ---------------------------------------------------- #
+    # Every rule exists to remove a false move. A set of fixes that leaves the
+    # adjusted series with more big moves, or clearly more total movement, than
+    # the vendor's is wrong somewhere: fall back to the drops alone, else to nothing.
+    vendor = _roughness(adj_e)
+    proposed = int((dropped | bad_close | adj_changed).sum())
+    if _worse(_roughness(new_adj[~dropped]), vendor, rules) or _adds_moves(
+        adj_e, new_adj, ~dropped
+    ):
+        bad_close = np.zeros(n, dtype=bool)
+        adj_changed = np.zeros(n, dtype=bool)
+        new_adj = adj_e.copy()
+        if _worse(_roughness(adj_e[~dropped]), vendor, rules):
+            dropped = np.zeros(n, dtype=bool)
+        summary["rejected"] = proposed - int(dropped.sum())
+        summary["max_adjustment"] = 0.0
 
     # ----- fix rows ------------------------------------------------------ #
     replace = ~dropped & (bad_close | adj_changed)
@@ -765,6 +845,7 @@ def _unchecked(
         closes=0,
         adjustments=0,
         disputed=0,
+        rejected=0,
         max_adjustment=0.0,
     )
     return row
@@ -986,6 +1067,11 @@ def summarize(checks: pd.DataFrame, fixes: pd.DataFrame) -> list[str]:
         lines.append(
             f"disputed days (EODHD kept): {int(checks['disputed'].fillna(0).sum()):,}"
         )
+        if "rejected" in checks.columns:
+            lines.append(
+                "fixes rejected by the do-no-harm check: "
+                f"{int(checks['rejected'].fillna(0).sum()):,}"
+            )
     if fixes.empty:
         lines.append("fixes: none")
         return lines

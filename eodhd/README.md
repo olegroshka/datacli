@@ -272,10 +272,9 @@ thresholds are in `price_fixes.Rules`):
   to OTC trading, and dropping it would flatter a backtest;
 - a bar Alpaca does not have, without volume, whose close moved >1.5x is dropped;
 - a close more than 1.5x off Alpaca's takes Alpaca's bar (OHLC, split-restated
-  volume), and so does a close more than 5% off on a vendor bar without volume
-  against a session that traded at least 1,000 shares (a stale price). Thin
-  names' two closes can differ by a few percent for a day, so a moderate gap
-  on a traded vendor bar is left alone;
+  volume). A smaller gap proves nothing: Alpaca's close is the last trade, the
+  vendor's (and Yahoo's) the official close, and on thin names they differ by
+  several percent, even on vendor bars that show no volume;
 - on consecutive common days where both sources print the same close, an
   adjusted return that differs from Alpaca's by more than 0.25 (log) where
   Alpaca's move is the smaller one (a split applied on the wrong day or not at
@@ -284,10 +283,16 @@ thresholds are in `price_fixes.Rules`):
   (moves under 1% are left alone). Where Alpaca's move is the larger one, or
   the closes differ, EODHD is kept and the day counts as `disputed`.
 
+An Alpaca bar without volume is a placeholder, not a print (SMCI's OTC months
+in 2019-20 show the last Nasdaq price, 15.65, every day) and counts as no bar.
+Do no harm: a ticker's fixes are kept only if the corrected adjusted series
+has no more moves beyond 1.5x, and not clearly more total movement, than the
+vendor's; otherwise the drops alone, or nothing (`rejected` in the checks).
+
 Nothing is fixed when the two series do not agree on 80% of their common
 closes (another security under the symbol), when they share fewer than 20
-days, or where Alpaca has no data: OTC names, bars before 2016, days with
-volume that Alpaca lacks. A retired symbol is asked `asof` its last traded day.
+comparable days, or where Alpaca has no data: OTC names, bars before 2016, days
+with volume that Alpaca lacks. A retired symbol is asked `asof` its last traded day.
 
 Readers: the `prices` view (`explore_eodhd`), `daily_store.DailyStore` and
 `scripts/export_isa_inputs.py` apply the overlay; `prices_vendor` is the view of
