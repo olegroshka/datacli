@@ -17,8 +17,14 @@
 # whose closes match on fewer than [alpaca].alias_min_match of the days.
 #
 # [[listed]] ticker, auctions_from, note: the store has prices before a US
-#            exchange listing (OTC, or abroad), when there are no auctions.
+#            exchange listing (OTC, or abroad), when there are no auctions, or
+#            prices of a predecessor that no alias can match.
 #            Nothing is fetched before `auctions_from` and coverage starts there.
+#
+# A retired symbol is asked as of its last daily price, so a change to the
+# store's last day (the price fixes overlay dropping placeholder days) can move
+# Alpaca's answer to another security. Pin such a ticker here: an alias with an
+# explicit `asof`, or a `[[listed]]` start.
 #
 # [[gap]]    ticker, from, until, note: a reviewed stretch inside the extent
 #            with no auctions (OTC between a delisting and a relisting). Its
@@ -161,6 +167,13 @@ asof = 2020-10-02
 note = "Delphi Automotive before the Aptiv rename and spin-off"
 
 [[alias]]
+ticker = "DLPH"
+symbol = "DLPH"
+until = 2017-12-04
+asof = 2020-10-02
+note = "Delphi Automotive, which the store's DLPH series holds before the 2017-12-05 spin-off; as of the series' last day (2020-10-01) Alpaca maps DLPH to Delphi Technologies alone, the day after to everything traded as DLPH (2026-11-25)"
+
+[[alias]]
 ticker = "CTL"
 symbol = "LUMN"
 from = 2020-09-18
@@ -221,6 +234,11 @@ note = "NYSE listing; before, OTC after the reorganisation"
 ticker = "CELH"
 auctions_from = 2017-05-24
 note = "Nasdaq uplisting; before, OTC"
+
+[[listed]]
+ticker = "DWDP"
+auctions_from = 2017-09-01
+note = "DowDuPont's first day; the store's earlier DWDP days are Dow Chemical's closes times a constant 1.423, which no alias can match, and Alpaca's DWDP as of the series end returns Dow Chemical's prints for them (2026-11-25)"
 
 [[gap]]
 ticker = "CHRD"

@@ -23,7 +23,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from dataclasses import dataclass, field, replace
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Mapping, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -158,12 +158,19 @@ def refresh(
     policy: CoveragePolicy = CoveragePolicy(),
     quiet: QuietSchedule | None = None,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc),
+    partial: bool = False,
 ) -> RefreshReport:
+    """Plan, and with ``run`` fetch, store and assess the auctions up to ``target``.
+
+    ``partial`` says the universe is a subset (``--tickers``): the coverage of
+    the tickers outside it is kept instead of being dropped.
+    """
     report = RefreshReport(target=target, run=run)
     resolved = universe.resolve(target)
     report.spans, report.skipped = len(resolved.spans), dict(resolved.skipped)
     report.tickers = len({s.ticker for s in resolved.spans})
-    states = _with_spans(store.load_state(), resolved.spans)
+    before = store.load_state()
+    states = _with_spans(before, resolved.spans)
     report.tasks = plan_tasks(
         resolved.spans, states, overlap_days=overlap_days, full=full
     )
@@ -172,13 +179,16 @@ def refresh(
     if not run:
         return report
     store.save_state(states)  # spans may have moved even when nothing is fetched
+    # a unit whose span moved (a new override, a store series that now ends
+    # earlier) can leave prints outside every unit without fetching anything
+    touched = {t.ticker for t in report.tasks} | _moved_tickers(before, states)
     changed = False
-    if report.batches:
-        if client_factory is None:
-            raise ValueError("a run needs a client factory")
-        client = client_factory()
-        spans = {s.unit: s for s in resolved.spans}
-        try:
+    try:
+        if report.batches:
+            if client_factory is None:
+                raise ValueError("a run needs a client factory")
+            client = client_factory()
+            spans = {s.unit: s for s in resolved.spans}
             for batch in report.batches:
                 if quiet is not None and (window := quiet.active(now())) is not None:
                     report.stopped = f"quiet window {window} {quiet.timezone}"
@@ -190,12 +200,14 @@ def refresh(
                 changed = changed or not outcome.error
                 store.save_state(states)
                 store.append_audit([_audit_row(outcome)])
-        finally:
-            report.pruned = _prune(store, resolved, {t.ticker for t in report.tasks})
-            if changed or report.pruned:
-                report.daily_rows = store.rebuild_daily(au.select_crosses)
+    finally:
+        report.pruned = _prune(store, resolved, touched)
+        if changed or report.pruned:
+            report.daily_rows = store.rebuild_daily(au.select_crosses)
     if closes is not None and resolved.extents:
-        report.coverage = assess_coverage(store, resolved, closes, policy)
+        report.coverage = assess_coverage(
+            store, resolved, closes, policy, keep_others=partial
+        )
     return report
 
 
@@ -204,8 +216,13 @@ def assess_coverage(
     resolved: UniverseResult,
     closes: StoreCloses,
     policy: CoveragePolicy,
+    *,
+    keep_others: bool = False,
 ) -> pd.DataFrame:
-    """Write and return the per-ticker coverage of the stored auctions."""
+    """Write and return the per-ticker coverage of the stored auctions.
+
+    With ``keep_others`` the stored rows of tickers outside ``resolved`` stay.
+    """
     start = min(s for s, _ in resolved.extents.values())
     end = max(e for _, e in resolved.extents.values())
     store_days = closes.closes(sorted(resolved.extents), start, end)
@@ -217,8 +234,26 @@ def assess_coverage(
         max_gap_sessions=policy.max_gap_sessions,
         gaps=resolved.gaps,
     )
+    if keep_others:
+        old = store.read_coverage()
+        if not old.empty:
+            others = old[~old["ticker"].isin(list(resolved.extents))]
+            frame = pd.concat([others, frame], ignore_index=True)
+            frame = frame.sort_values("ticker", ignore_index=True)
     store.write_coverage(frame)
     return frame
+
+
+def _moved_tickers(
+    before: Mapping[str, SymbolState], after: Mapping[str, SymbolState]
+) -> set[str]:
+    """Tickers with a unit that is new or whose span changed since the last run."""
+    return {
+        state.ticker
+        for key, state in after.items()
+        if (old := before.get(key)) is None
+        or (old.span_from, old.span_to) != (state.span_from, state.span_to)
+    }
 
 
 def _with_spans(

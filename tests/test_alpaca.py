@@ -1075,6 +1075,53 @@ def test_a_matching_alias_is_stored_under_the_ticker_and_coverage_is_written(
     assert "thin" in qc.coverage_findings(target)[0][2]
 
 
+def test_a_span_that_moves_without_a_fetch_still_prunes_its_old_prints(
+    tmp_path: Path,
+) -> None:
+    whole = _span("AAPL", D(2026, 11, 16), D(2026, 11, 20), asof=D(2026, 11, 20))
+    _refresh(tmp_path, _FakeSource(), run=True, spans=[whole])
+    # a [[listed]] start (or a store series that now ends earlier) shrinks the span
+    later = _span("AAPL", D(2026, 11, 18), D(2026, 11, 20), asof=D(2026, 11, 20))
+    source = _FakeSource()
+    report = _refresh(tmp_path, source, run=True, spans=[later])
+    assert not report.tasks and not source.calls  # covered: nothing to fetch
+    assert report.pruned == 12 and report.daily_rows == 3
+    kept = store.AuctionStore(tmp_path).read_prints("AAPL")
+    assert kept["date"].min() == D(2026, 11, 18)
+    assert _refresh(tmp_path, _FakeSource(), run=True, spans=[later]).pruned == 0
+
+
+def test_a_ticker_limited_run_keeps_the_other_tickers_coverage(
+    tmp_path: Path,
+) -> None:
+    _alias_refresh(tmp_path, _Closes())
+    aapl = _span("AAPL", D(2026, 11, 16), D(2026, 11, 20))
+
+    def limited(partial: bool) -> refresh.RefreshReport:
+        return refresh.refresh(
+            _AliasUniverse([aapl], {"AAPL": (aapl.start, aapl.end)}),
+            store.AuctionStore(tmp_path),
+            target=D(2026, 11, 20),
+            run=True,
+            overlap_days=3,
+            per_request=100,
+            page_limit=10_000,
+            client_factory=lambda: _FakeSource(),
+            closes=_Closes(),
+            now=lambda: SUNDAY_EVENING,
+            partial=partial,
+        )
+
+    report = limited(True)
+    assert list(report.coverage["ticker"]) == ["AAPL", "PSKY"]
+    assert list(store.AuctionStore(tmp_path).read_coverage()["ticker"]) == [
+        "AAPL",
+        "PSKY",
+    ]
+    limited(False)  # a whole-universe run writes exactly its tickers
+    assert list(store.AuctionStore(tmp_path).read_coverage()["ticker"]) == ["AAPL"]
+
+
 def test_an_alias_whose_closes_do_not_match_the_store_is_refused(
     tmp_path: Path,
 ) -> None:

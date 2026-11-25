@@ -750,8 +750,8 @@ class CommandRegistry:
             )
             if positionals:
                 raise CommandValidationError(f"{identity} takes flags only")
-            dataset = options["--dataset"][-1] if options.get("--dataset") else None
-            if dataset is not None and dataset not in LINKAGE_DATASETS:
+            chosen = options["--dataset"][-1] if options.get("--dataset") else None
+            if chosen is not None and chosen not in LINKAGE_DATASETS:
                 raise CommandValidationError(
                     f"{identity} --dataset must be one of {', '.join(LINKAGE_DATASETS)}"
                 )

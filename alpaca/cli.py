@@ -331,6 +331,7 @@ def cmd_fetch(argv: list[str]) -> int:
             ),
             quiet=quiet,
             now=_now,
+            partial=tickers is not None,
         )
     except FileNotFoundError as exc:
         console.print(Text(str(exc), style="red"))

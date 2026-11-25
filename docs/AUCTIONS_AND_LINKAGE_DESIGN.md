@@ -79,7 +79,7 @@ and the eodhd daily open are from the official crosses. `alpaca qc
 |---|---|---|
 | A1 | Alpaca is a datacli source (`alpaca/`), keys from the environment only | the auctions are a vendor dataset like any other; S7 reads datacli read-only |
 | A2 | Universe: every US stock and ETF ever in the intraday lane (`universe_membership.parquet`), each over its own daily-price span from 2016 | lines up with the names that have minute bars (S7's universe); about 670 tickers |
-| A3 | A retired symbol (no daily price for 10 days) is asked for `asof` its last daily price, and its span stops there | the only way to get its history; it never duplicates its successor's later prints |
+| A3 | A retired symbol (no daily price for 10 days) is asked for `asof` its last daily price, and its span stops there; where that answer depends on the exact day, the ticker is pinned in `auctions_universe.toml` | the only way to get its history; it never duplicates its successor's later prints. Alpaca's answer can change from one day to the next (DLPH, DWDP), so a moved last price must not silently change the security |
 | A4 | Store every print, and one chosen row per ticker and day | the choice (largest cross) is a rule that could be revisited; raw prints keep that possible |
 | A5 | No request starts in 15:30-16:15 New York on weekdays; at most 600 requests a minute | the key is shared with the paper book, which fetches its bars at 15:45 |
 | A6 | Betas for every US stock with daily prices (us_common and us_extended), screened per snapshot by median close >= $5 and median dollar volume >= $1M over the window | the context nodes of S7 section 8; the screen is point in time |
@@ -323,7 +323,25 @@ WBD 42% to 99.9%; with the nine `[[listed]]` names, 661 tickers are `ok`.
 The derived datasets restated accordingly (auction_abnormal all 11 years,
 auction_cospike 105 of 118 month ends; etf_betas unchanged).
 
-With the longest-gap rule, 23 tickers stay `thin` (651 `ok`). Only five
+**Retired symbols after the price fixes** (2026-11-24/25). The eodhd price
+fixes overlay (`eodhd fix-prices`, read through `DailyStore`) drops volume-less
+placeholder days after a delisting, so 21 retired tickers' last daily price
+moved earlier, and with it the `asof` they are asked for (A3). All 21 were
+re-fetched in full. A close check of every stored unit against the store
+(696 units) found two that changed security with the `asof`: DLPH (as of
+2020-10-01 Alpaca maps it to Delphi Technologies alone, losing the store's
+2017 Delphi Automotive days; the day after, to everything traded as DLPH) and
+DWDP (as of 2019-05-31 it returns Dow Chemical's prints before the merger,
+while the store's DWDP days there are Dow Chemical's closes times a constant
+1.423). Both are pinned in `auctions_universe.toml`: an alias DLPH as of
+2020-10-02 for 2017, and a `[[listed]]` start for DWDP at 2017-09-01. Both
+now match the store on every compared day. A unit whose span moves without
+a fetch now has its prints outside the new span pruned; before, only tickers
+with a fetch task were pruned. The remaining units below 95% match are current
+names whose store closes are spin-off adjusted before a date (HON, LEN, LH,
+GSK, BHP, MTCH, RTX, JCI, UAA, MARA); the security is the same.
+
+With the longest-gap rule, 22 tickers stay `thin` (652 `ok`). Only five
 have their gap inside a quarter in which they are a member of the intraday
 lane, which is what a reader of member names sees:
 
@@ -335,9 +353,9 @@ lane, which is what a reader of member names sees:
 | VRX | 31 | 2018-07 to 2019-06 | 2 | the store's VRX series after the rename to BHC is a few scattered days |
 | UAA | 66 | 2016-01 to 2016-04 | 1 | the store's closes before the 2016 share-class dividend are adjusted for it |
 
-The other 17 (HWM, MARA, SMCI, DWDP, DKNG, OSTK, ASTS, HIMS, FLT, COG,
+The other 17 (HWM, MARA, SMCI, DKNG, OSTK, ASTS, HIMS, FLT, COG,
 FTCH, GPS, CIFR, OKLO, RGTI, VRT, IAC, WULF) have their gap outside every
-member quarter: spin-off-adjusted store closes (HWM, DWDP), OTC stretches
+member quarter: spin-off-adjusted store closes (HWM), OTC stretches
 (SMCI 2018-2020, OSTK, FTCH), SPAC weeks (DKNG, ASTS, HIMS, CIFR, RGTI, VRT,
 OKLO), an old symbol's tail after a rename (COG, FLT, GPS) and MARA, whose
 earlier entity matches on 4 of 5 days only. `alpaca_auctions_coverage`
